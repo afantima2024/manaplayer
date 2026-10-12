@@ -1,0 +1,11 @@
+<resources>
+    <color name="primary">#67E3CB</color>
+    <color name="on_primary">#00382F</color>
+    <color name="primary_container">#194A43</color>
+    <color name="surface">#101B24</color>
+    <color name="surface_variant">#20323E</color>
+    <color name="on_surface">#F0F7FA</color>
+    <color name="on_surface_variant">#BBCCD5</color>
+    <color name="error_container">#61291F</color>
+    <color name="on_error_container">#FFE5DF</color>
+</resources>

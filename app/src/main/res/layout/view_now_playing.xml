@@ -1,0 +1,26 @@
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="16dp">
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/artwork"
+            android:layout_width="180dp"
+            android:layout_height="180dp"
+            android:layout_marginBottom="12dp"
+            android:contentDescription="@string/cover_art"
+            android:scaleType="fitCenter"
+            app:srcCompat="@drawable/ic_launcher" />
+        <include
+            android:id="@+id/controls"
+            layout="@layout/view_player_controls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+</ScrollView>

@@ -1,0 +1,51 @@
+package com.macarmusic.app.data
+
+import com.macarmusic.app.model.*
+import kotlinx.serialization.SerializationException
+import org.junit.Assert.*
+import org.junit.Test
+
+class LibraryCodecTest {
+    @Test fun libraryRoundTripRetainsAllMetadataAndReferences() {
+        val track = Track(
+            "content://disk/document/id", "content://disk/tree/music/document/id", "file.flac", "Song",
+            "Artist", "Album", 101_000, "2/10", "2024", "Jazz", "audio/flac",
+            mapOf("content://disk/tree/music" to "content://disk/tree/music/document/id"),
+            "content://disk/document/id", true, true,
+        )
+        val library = Library(sources = listOf(FolderSource("content://disk/tree/music", "Music", true, 100, 1)),
+            tracks = listOf(track), favorites = setOf(track.id), playlists = listOf(LocalPlaylist("p", "Road", listOf(track.id))))
+        assertEquals(library, LibraryCodec.decodeLibrary(LibraryCodec.encode(library)))
+    }
+
+    @Test fun queueRoundTripRetainsSettingsAndPositionWithoutAutoplayField() {
+        val snapshot = PlaybackSnapshot(queue = listOf(Track("id", "content://local/id", "song.ogg", "Song")),
+            positionMs = 4_000, repeat = 2, shuffle = true)
+        val encoded = LibraryCodec.encode(snapshot)
+        assertEquals(snapshot, LibraryCodec.decodePlayback(encoded))
+        assertFalse(encoded.contains("playWhenReady"))
+        assertFalse(encoded.contains("autoplay"))
+    }
+
+    @Test fun emptyAndForwardCompatibleFieldsAreAccepted() {
+        assertEquals(Library(), LibraryCodec.decodeLibrary("""{"version":1,"futureField":true}"""))
+    }
+
+    @Test(expected = SerializationException::class) fun corruptDataIsNotSilentlyReset() {
+        LibraryCodec.decodeLibrary("{ broken ")
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun unknownSchemaIsNotOverwritten() {
+        LibraryCodec.decodeLibrary("""{"version":99}""")
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun duplicateTrackIdsAreRejected() {
+        val track = Track("id", "content://local/id", "a.mp3", "A")
+        LibraryCodec.decodeLibrary(LibraryCodec.encode(Library(tracks = listOf(track, track))))
+    }
+
+    @Test fun escapedNamesRoundTrip() {
+        val playlist = LocalPlaylist("p", "Road \"Mix\"\n2026")
+        assertEquals(playlist, LibraryCodec.decodeLibrary(LibraryCodec.encode(Library(playlists = listOf(playlist)))).playlists.single())
+    }
+}

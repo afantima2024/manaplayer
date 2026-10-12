@@ -1,0 +1,7 @@
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/nav_player" android:icon="@drawable/ic_note" android:title="@string/now_playing" />
+    <item android:id="@+id/nav_library" android:icon="@drawable/ic_library" android:title="@string/library" />
+    <item android:id="@+id/nav_folders" android:icon="@drawable/ic_folder" android:title="@string/folders" />
+    <item android:id="@+id/nav_queue" android:icon="@drawable/ic_queue" android:title="@string/queue" />
+    <item android:id="@+id/nav_playlists" android:icon="@drawable/ic_playlist" android:title="@string/playlists" />
+</menu>

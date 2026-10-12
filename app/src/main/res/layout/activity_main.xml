@@ -1,0 +1,121 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        app:title="@string/app_name"
+        app:menu="@menu/toolbar" />
+    <LinearLayout
+        android:id="@+id/noticeBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:minHeight="64dp"
+        android:background="?attr/colorErrorContainer"
+        android:paddingStart="16dp"
+        android:paddingEnd="4dp"
+        android:visibility="gone">
+        <TextView
+            android:id="@+id/noticeText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:textColor="?attr/colorOnErrorContainer"
+            android:textSize="14sp"
+            android:accessibilityLiveRegion="polite" />
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/dismissNotice"
+            style="@style/PlayerIconButton"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:contentDescription="@string/dismiss"
+            app:srcCompat="@drawable/ic_close"
+            app:tint="?attr/colorOnErrorContainer" />
+    </LinearLayout>
+    <FrameLayout
+        android:id="@+id/screenContainer"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+    <LinearLayout
+        android:id="@+id/miniPlayer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/colorSurfaceVariant"
+        android:gravity="center_vertical"
+        android:minHeight="80dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp">
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/miniArtwork"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="@string/cover_art"
+            android:scaleType="centerCrop"
+            app:srcCompat="@drawable/ic_launcher" />
+        <LinearLayout
+            android:id="@+id/miniInfo"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minHeight="56dp"
+            android:gravity="center_vertical"
+            android:orientation="vertical"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true">
+            <TextView
+                android:id="@+id/miniTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/no_track"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/miniArtist"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="14sp" />
+        </LinearLayout>
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/miniPlay"
+            style="@style/PlayerIconButton"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:contentDescription="@string/play"
+            app:srcCompat="@drawable/ic_play" />
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/miniNext"
+            style="@style/PlayerIconButton"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:contentDescription="@string/next"
+            app:srcCompat="@drawable/ic_next" />
+    </LinearLayout>
+    <com.google.android.material.bottomnavigation.BottomNavigationView
+        android:id="@+id/navigation"
+        android:layout_width="match_parent"
+        android:layout_height="80dp"
+        android:background="?attr/colorSurface"
+        app:itemTextAppearanceActive="@style/NavText"
+        app:itemTextAppearanceInactive="@style/NavText"
+        app:labelVisibilityMode="labeled"
+        app:menu="@menu/navigation" />
+</LinearLayout>
