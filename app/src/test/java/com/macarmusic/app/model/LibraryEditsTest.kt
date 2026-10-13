@@ -18,6 +18,16 @@ class LibraryEditsTest {
         assertEquals(original.favorites, result.favorites)
     }
 
+    @Test fun lyricParentsMergePerSourceAndRemovedGrantsArePruned() {
+        val original = track.copy(sourceParents = mapOf(source.uri to "opaque-parent"))
+        val incoming = track.copy(sourceUris = mapOf(other.uri to "content://disk/other"),
+            sourceParents = mapOf(other.uri to "other-parent"))
+        val merged = LibraryEdits.upsertTracks(Library(tracks = listOf(original)), listOf(incoming))
+        assertEquals(mapOf(source.uri to "opaque-parent", other.uri to "other-parent"), merged.tracks.single().sourceParents)
+        val removed = LibraryEdits.removeSource(merged, source.uri)
+        assertEquals(mapOf(other.uri to "other-parent"), removed.tracks.single().sourceParents)
+    }
+
     @Test fun emptyScanRetainsLibraryFavoritesAndPlaylistEntries() {
         val original = Library(sources = listOf(source), tracks = listOf(track),
             favorites = setOf(track.id), playlists = listOf(LocalPlaylist("p", "Road", listOf(track.id))))

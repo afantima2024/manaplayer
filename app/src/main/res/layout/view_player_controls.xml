@@ -3,100 +3,154 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical">
-    <TextView
-        android:id="@+id/title"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:ellipsize="end"
-        android:maxLines="2"
-        android:text="@string/no_track"
-        android:textColor="?attr/colorOnSurface"
-        android:textSize="24sp"
-        android:textStyle="bold" />
-    <TextView
-        android:id="@+id/artist"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:maxLines="1"
-        android:ellipsize="end"
-        android:text="@string/no_track_hint"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="16sp" />
-    <TextView
-        android:id="@+id/album"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:maxLines="1"
-        android:ellipsize="end"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="14sp" />
-    <TextView
-        android:id="@+id/status"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:text="@string/paused"
-        android:textColor="?attr/colorPrimary"
-        android:textSize="14sp" />
-    <TextView
-        android:id="@+id/playbackOptions"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="14sp" />
-    <SeekBar
-        android:id="@+id/seek"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:contentDescription="@string/seek_position"
-        android:max="10000" />
     <LinearLayout
+        android:id="@+id/metadataRow"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content">
-        <TextView
-            android:id="@+id/position"
+        android:layout_height="wrap_content"
+        android:baselineAligned="false"
+        android:orientation="horizontal">
+        <LinearLayout
+            android:id="@+id/trackInformation"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:layout_weight="1"
-            android:text="@string/empty_time"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            android:textSize="14sp" />
-        <TextView
-            android:id="@+id/duration"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/empty_time"
-            android:textColor="?attr/colorOnSurfaceVariant"
-            android:textSize="14sp" />
+            android:gravity="center_vertical"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:text="@string/no_track"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+            <TextView
+                android:id="@+id/artist"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:text="@string/no_track_hint"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="16sp" />
+            <TextView
+                android:id="@+id/album"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="14sp" />
+            <TextView
+                android:id="@+id/status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:text="@string/paused"
+                android:textColor="?attr/colorPrimary"
+                android:textSize="14sp" />
+            <TextView
+                android:id="@+id/playbackOptions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="14sp" />
+        </LinearLayout>
+        <com.macarmusic.app.ui.SpectrumView
+            android:id="@+id/spectrum"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginStart="@dimen/player_gap"
+            android:padding="8dp"
+            android:minHeight="132dp"
+            android:contentDescription="@string/spectrum"
+            android:visibility="gone" />
     </LinearLayout>
     <LinearLayout
+        android:id="@+id/seekBlock"
         android:layout_width="match_parent"
-        android:layout_height="72dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/player_gap"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
+            <TextView
+                android:id="@+id/position"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:minWidth="48dp"
+                android:gravity="center"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackground"
+                android:text="@string/empty_time"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="14sp" />
+            <SeekBar
+                android:id="@+id/seek"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:contentDescription="@string/seek_position"
+                android:max="10000" />
+            <TextView
+                android:id="@+id/duration"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:gravity="center_vertical"
+                android:text="@string/empty_time"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="14sp" />
+    </LinearLayout>
+    <LinearLayout
+        android:id="@+id/transportRow"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_marginTop="@dimen/player_gap"
         android:gravity="center">
         <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/shuffle"
             style="@style/PlayerIconButton"
             android:layout_width="0dp"
-            android:layout_height="64dp"
+            android:layout_height="match_parent"
             android:layout_weight="1"
+            android:layout_marginEnd="@dimen/player_gap"
             android:contentDescription="@string/shuffle_off"
             app:srcCompat="@drawable/ic_shuffle" />
         <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/previous"
             style="@style/PlayerIconButton"
             android:layout_width="0dp"
-            android:layout_height="64dp"
+            android:layout_height="match_parent"
             android:layout_weight="1"
+            android:layout_marginEnd="@dimen/player_gap"
             android:contentDescription="@string/previous"
             app:srcCompat="@drawable/ic_previous" />
         <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/play"
             style="@style/PlayerIconButton"
             android:layout_width="0dp"
-            android:layout_height="72dp"
+            android:layout_height="match_parent"
             android:layout_weight="1"
+            android:layout_marginEnd="@dimen/player_gap"
             android:contentDescription="@string/play"
             app:tint="?attr/colorPrimary"
             app:srcCompat="@drawable/ic_play" />
@@ -104,44 +158,60 @@
             android:id="@+id/next"
             style="@style/PlayerIconButton"
             android:layout_width="0dp"
-            android:layout_height="64dp"
+            android:layout_height="match_parent"
             android:layout_weight="1"
+            android:layout_marginEnd="@dimen/player_gap"
             android:contentDescription="@string/next"
             app:srcCompat="@drawable/ic_next" />
         <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/repeat"
             style="@style/PlayerIconButton"
             android:layout_width="0dp"
-            android:layout_height="64dp"
+            android:layout_height="match_parent"
             android:layout_weight="1"
             android:contentDescription="@string/repeat_off"
             app:srcCompat="@drawable/ic_repeat" />
     </LinearLayout>
     <LinearLayout
+        android:id="@+id/footerRow"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content">
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/player_gap"
+        android:orientation="vertical">
+    <LinearLayout
+        android:id="@+id/actionRow"
+        android:layout_width="match_parent"
+        android:layout_height="48dp">
         <com.google.android.material.button.MaterialButton
             android:id="@+id/favorite"
             style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="0dp"
-            android:layout_height="56dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
-            android:layout_marginEnd="8dp"
+            android:layout_marginEnd="@dimen/player_gap"
+            android:contentDescription="@string/favorite"
             android:text="@string/favorite"
             app:icon="@drawable/ic_favorite_border" />
         <com.google.android.material.button.MaterialButton
             android:id="@+id/details"
             style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="0dp"
-            android:layout_height="56dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
-            android:text="@string/details" />
+            android:text="@string/details"
+            android:contentDescription="@string/details"
+            app:icon="@drawable/ic_info" />
     </LinearLayout>
     <LinearLayout
+        android:id="@+id/volumeBlock"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="48dp"
+        android:layout_marginTop="@dimen/player_gap"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
         android:gravity="center_vertical">
         <TextView
+            android:id="@+id/volumeLabel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/volume"
@@ -150,7 +220,7 @@
         <SeekBar
             android:id="@+id/volume"
             android:layout_width="0dp"
-            android:layout_height="56dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
             android:contentDescription="@string/volume" />
         <TextView
@@ -160,5 +230,6 @@
             android:gravity="end"
             android:textColor="?attr/colorOnSurfaceVariant"
             android:textSize="14sp" />
+    </LinearLayout>
     </LinearLayout>
 </LinearLayout>

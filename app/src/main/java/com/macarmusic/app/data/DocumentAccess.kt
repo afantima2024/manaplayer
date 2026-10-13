@@ -11,11 +11,16 @@ import com.macarmusic.app.R
 import com.macarmusic.app.model.AudioFiles
 import com.macarmusic.app.model.DocumentEntry
 import com.macarmusic.app.model.FolderSource
+import com.macarmusic.app.lyrics.LyricFiles
 import java.io.IOException
 import java.util.Locale
 
 class DocumentAccess(private val context: Context) {
     private val resolver = context.contentResolver
+    val deviceMusic by lazy { MediaStoreAccess(context) }
+
+    fun displayName(source: FolderSource): String =
+        MediaStoreAccess.folder(Uri.parse(source.uri))?.let(deviceMusic::displayName) ?: source.name
 
     fun requireContentUri(uri: Uri) {
         if (uri.scheme != "content" || uri.authority.isNullOrBlank()) {
@@ -23,7 +28,10 @@ class DocumentAccess(private val context: Context) {
         }
     }
 
-    fun rootId(sourceUri: String): String = DocumentsContract.getTreeDocumentId(Uri.parse(sourceUri))
+    fun rootId(sourceUri: String): String {
+        val uri = Uri.parse(sourceUri)
+        return MediaStoreAccess.folder(uri)?.path ?: DocumentsContract.getTreeDocumentId(uri)
+    }
 
     fun identity(uri: Uri): String {
         requireContentUri(uri)
@@ -49,6 +57,7 @@ class DocumentAccess(private val context: Context) {
 
     fun source(uri: Uri, resultFlags: Int): FolderSource {
         requireContentUri(uri)
+        MediaStoreAccess.folder(uri)?.let { return deviceMusic.source(it) }
         val treeId = DocumentsContract.getTreeDocumentId(uri)
         val persisted = retainReadPermission(uri, resultFlags)
         val documentUri = DocumentsContract.buildDocumentUriUsingTree(uri, treeId)
@@ -81,23 +90,29 @@ class DocumentAccess(private val context: Context) {
         }
     }
 
-    fun children(sourceUri: String, documentId: String): List<DocumentEntry> {
+    suspend fun children(sourceUri: String, documentId: String, includeLyrics: Boolean = false): List<DocumentEntry> {
         val tree = Uri.parse(sourceUri)
         requireContentUri(tree)
+        MediaStoreAccess.folder(tree)?.let {
+            return sorted(deviceMusic.children(it, documentId))
+        }
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId)
         val cursor = resolver.query(childrenUri, DOCUMENT_COLUMNS, null, null, null)
             ?: throw IOException(context.getString(R.string.provider_no_response))
         val entries = cursor.use {
             checkProviderState(it)
             buildList {
+                var examined = 0
                 while (it.moveToNext()) {
+                    if (++examined > 100_000) throw IOException(context.getString(R.string.folder_safety_limit))
                     val id = it.text(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
                     if (id.isBlank()) throw IOException(context.getString(R.string.invalid_document_id))
                     val name = it.text(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
                         .ifBlank { context.getString(R.string.unnamed_file) }
                     val mime = it.text(DocumentsContract.Document.COLUMN_MIME_TYPE)
                     val folder = mime == DocumentsContract.Document.MIME_TYPE_DIR
-                    if (folder || AudioFiles.accepts(name, mime)) {
+                    val lyric = LyricFiles.accepts(name)
+                    if (folder || (lyric && includeLyrics) || (!lyric && AudioFiles.accepts(name, mime))) {
                         add(DocumentEntry(
                             id, DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(),
                             name, mime, folder, it.flags() and FLAG_VIRTUAL_DOCUMENT != 0,
@@ -106,14 +121,17 @@ class DocumentAccess(private val context: Context) {
                 }
             }
         }
-        return entries.sortedWith(
-            compareByDescending<DocumentEntry> { it.isDirectory }
-                .thenBy { it.name.lowercase(Locale.ROOT) }.thenBy { it.id },
-        )
+        return sorted(entries)
     }
+
+    private fun sorted(entries: List<DocumentEntry>): List<DocumentEntry> = entries.sortedWith(
+        compareByDescending<DocumentEntry> { it.isDirectory }
+            .thenBy { it.name.lowercase(Locale.ROOT) }.thenBy { it.id },
+    )
 
     fun releaseReadPermission(sourceUri: String) {
         val uri = Uri.parse(sourceUri)
+        if (MediaStoreAccess.folder(uri) != null) return
         if (resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }) {
             resolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -141,8 +159,7 @@ class DocumentAccess(private val context: Context) {
 
     private companion object {
         const val TAG = "DocumentAccess"
-        // The flag is a wire value; providers on API 23 may return it as well.
-        const val FLAG_VIRTUAL_DOCUMENT = 1 shl 9
+        const val FLAG_VIRTUAL_DOCUMENT = DocumentsContract.Document.FLAG_VIRTUAL_DOCUMENT
         val DOCUMENT_COLUMNS = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,

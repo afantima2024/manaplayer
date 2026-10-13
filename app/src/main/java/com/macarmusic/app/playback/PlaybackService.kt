@@ -14,6 +14,9 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
@@ -72,10 +75,20 @@ class PlaybackService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
         app = application as MaCarMusicApp
+        app.playbackReady.value = false
         val trackSelector = DefaultTrackSelector(this).apply {
             parameters = buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build()
         }
-        player = ExoPlayer.Builder(this)
+        val renderers = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean): AudioSink =
+                DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(false)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioProcessors(arrayOf(app.spectrum.audioProcessor()))
+                    .build()
+        }
+        player = ExoPlayer.Builder(this, renderers)
             .setTrackSelector(trackSelector)
             .setMediaSourceFactory(ProgressiveMediaSource.Factory(DataSource.Factory { LocalDataSource(this) }))
             .setUsePlatformDiagnostics(false)
@@ -106,8 +119,11 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             app.repository.awaitReady()
             val saved = app.playback.read()
-            val snapshot = withContext(Dispatchers.Default) {
-                if (app.repository.isReadable) PlaybackEdits.reconcile(saved, app.repository.library.value.tracks) else saved
+            val (snapshot, items) = withContext(Dispatchers.Default) {
+                val snapshot = if (app.repository.isReadable) {
+                    PlaybackEdits.reconcile(saved, app.repository.library.value.tracks)
+                } else saved
+                snapshot to snapshot.queue.map(Track::toMediaItem)
             }
             cachedQueue = snapshot.queue
             app.playbackSettings.migrate(snapshot)
@@ -115,11 +131,12 @@ class PlaybackService : MediaLibraryService() {
             applyPlayerOptions(appliedOptions)
             player.playWhenReady = false
             if (snapshot.queue.isNotEmpty()) {
-                player.setMediaItems(snapshot.queue.map(Track::toMediaItem), snapshot.index, snapshot.positionMs)
+                player.setMediaItems(items, snapshot.index, snapshot.positionMs)
             }
             // Do not prepare or acquire audio focus until an explicit Play command.
             restoring = false
             restored.complete(Unit)
+            app.playbackReady.value = true
             notifyBrowsers()
             observeLibraryReferences()
             observePlaybackSettings()
@@ -219,6 +236,10 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onEvents(player: Player, events: Player.Events) {
+            app.spectrum.setPlaying(player.isPlaying)
+            if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
+                events.contains(Player.EVENT_POSITION_DISCONTINUITY)
+            ) app.spectrum.reset()
             if (restoring || released) return
             if (events.contains(Player.EVENT_TIMELINE_CHANGED) ||
                 events.contains(Player.EVENT_MEDIA_METADATA_CHANGED)
@@ -276,11 +297,13 @@ class PlaybackService : MediaLibraryService() {
     override fun onDestroy() {
         persist()
         released = true
+        app.playbackReady.value = false
         scope.cancel()
         player.removeListener(playerListener)
         session?.release()
         session = null
         player.release()
+        app.spectrum.setPlaying(false)
         clearListener()
         super.onDestroy()
     }

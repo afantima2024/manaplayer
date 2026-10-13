@@ -19,6 +19,7 @@ data class Track(
     val standaloneUri: String? = null,
     val standalonePersisted: Boolean = false,
     val missing: Boolean = false,
+    val sourceParents: Map<String, String> = emptyMap(),
 )
 
 @Serializable

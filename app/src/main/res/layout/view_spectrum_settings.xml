@@ -1,0 +1,145 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:visibility="gone">
+    <TextView
+        style="@style/SettingLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/spectrum_position"
+        android:labelFor="@id/spectrumPosition" />
+    <Spinner
+        android:id="@+id/spectrumPosition"
+        style="@style/SettingChoice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+    <TextView
+        style="@style/SettingLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/spectrum_style"
+        android:labelFor="@id/spectrumStyle" />
+    <Spinner
+        android:id="@+id/spectrumStyle"
+        style="@style/SettingChoice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+    <TextView
+        style="@style/SettingLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/spectrum_band_width"
+        android:labelFor="@id/spectrumBands" />
+    <Spinner
+        android:id="@+id/spectrumBands"
+        style="@style/SettingChoice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+    <TextView
+        style="@style/SettingLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/spectrum_colors"
+        android:labelFor="@id/spectrumPalette" />
+    <Spinner
+        android:id="@+id/spectrumPalette"
+        style="@style/SettingChoice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+    <LinearLayout
+        android:id="@+id/spectrumColorControls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/spectrumColorLow"
+            style="@style/SettingButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/spectrum_color_low" />
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/spectrumColorMiddle"
+            style="@style/SettingButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/spectrum_color_middle" />
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/spectrumColorHigh"
+            style="@style/SettingButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/spectrum_color_high" />
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/spectrumResetColors"
+            style="@style/SettingButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/spectrum_reset_colors" />
+    </LinearLayout>
+    <LinearLayout
+        android:id="@+id/fireStyleControls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+        <TextView
+            style="@style/SettingLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/spectrum_fire_style"
+            android:labelFor="@id/spectrumFireStyle" />
+        <Spinner
+            android:id="@+id/spectrumFireStyle"
+            style="@style/SettingChoice"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+    <com.google.android.material.materialswitch.MaterialSwitch
+        android:id="@+id/spectrumPeaks"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="64dp"
+        android:text="@string/spectrum_peaks"
+        android:textColor="?attr/colorOnSurface"
+        android:textSize="18sp" />
+    <TextView
+        style="@style/SettingLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/spectrum_falloff"
+        android:labelFor="@id/spectrumFalloff" />
+    <Spinner
+        android:id="@+id/spectrumFalloff"
+        style="@style/SettingChoice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+    <TextView
+        style="@style/SettingLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/spectrum_peak_falloff"
+        android:labelFor="@id/spectrumPeakFalloff" />
+    <Spinner
+        android:id="@+id/spectrumPeakFalloff"
+        style="@style/SettingChoice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+    <TextView
+        style="@style/SettingLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/spectrum_refresh"
+        android:labelFor="@id/spectrumRefreshRate" />
+    <Spinner
+        android:id="@+id/spectrumRefreshRate"
+        style="@style/SettingChoice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:text="@string/spectrum_help"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="16sp" />
+</LinearLayout>

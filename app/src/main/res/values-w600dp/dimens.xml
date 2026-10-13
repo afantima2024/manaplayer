@@ -1,0 +1,5 @@
+<resources>
+    <dimen name="navigation_side_width">80dp</dimen>
+    <dimen name="settings_category_width">168dp</dimen>
+    <dimen name="settings_detail_padding">16dp</dimen>
+</resources>

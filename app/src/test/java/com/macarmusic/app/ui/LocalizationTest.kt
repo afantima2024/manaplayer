@@ -49,10 +49,11 @@ class LocalizationTest {
     @Test fun playerBrandingMatchesEachLanguage() {
         val english = strings("values")
         val chinese = strings("values-zh")
-        assertEquals(listOf("ManaPlayer"), english["app_name"])
-        assertEquals(listOf("小悦播放器"), chinese["app_name"])
+        assertEquals(listOf("ManaMusicPlayer"), english["app_name"])
+        assertEquals(listOf("小悦音乐播放器"), chinese["app_name"])
         for (values in english.values + chinese.values) {
-            assertTrue("Old player name remains visible", values.none { it.contains("MaCarMusic") })
+            assertTrue("Old player name remains visible",
+                values.none { it.contains("MaCarMusic") || it.contains("ManaPlayer") || it.contains("小悦播放器") })
         }
     }
 }

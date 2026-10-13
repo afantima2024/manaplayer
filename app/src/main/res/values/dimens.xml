@@ -1,0 +1,6 @@
+<resources>
+    <dimen name="player_gap">8dp</dimen>
+    <dimen name="navigation_side_width">64dp</dimen>
+    <dimen name="settings_category_width">120dp</dimen>
+    <dimen name="settings_detail_padding">8dp</dimen>
+</resources>

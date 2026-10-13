@@ -19,6 +19,12 @@ public class FixtureGrantActivity extends Activity {
             flags | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
         grantUriPermission("com.macarmusic.app",
             DocumentsContract.buildDocumentUri(authority, "music/one"), flags);
+        grantUriPermission("com.macarmusic.app",
+            DocumentsContract.buildDocumentUri(authority, "pictures/background"), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        grantUriPermission("com.macarmusic.app",
+            DocumentsContract.buildDocumentUri(authority, "pictures/second"), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        grantUriPermission("com.macarmusic.app",
+            DocumentsContract.buildDocumentUri(authority, "pictures/invalid"), Intent.FLAG_GRANT_READ_URI_PERMISSION);
         finish();
     }
 }

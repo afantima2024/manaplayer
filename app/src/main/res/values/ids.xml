@@ -1,0 +1,14 @@
+<resources>
+    <item type="id" name="navigationArtwork" />
+    <item type="id" name="colorPreview" />
+    <item type="id" name="colorRed" />
+    <item type="id" name="colorGreen" />
+    <item type="id" name="colorBlue" />
+    <item type="id" name="blockCharacterInput" />
+    <item type="id" name="aboutPhoto" />
+    <item type="id" name="aboutHeading" />
+    <item type="id" name="fullResolutionPhoto" />
+    <item type="id" name="photoZoomIn" />
+    <item type="id" name="photoZoomOut" />
+    <item type="id" name="photoReset" />
+</resources>

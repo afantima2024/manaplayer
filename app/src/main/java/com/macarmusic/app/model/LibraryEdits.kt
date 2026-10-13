@@ -12,6 +12,7 @@ object LibraryEdits {
             val old = tracks[track.id]
             tracks[track.id] = if (old == null) track else track.copy(
                 sourceUris = old.sourceUris + track.sourceUris,
+                sourceParents = old.sourceParents + track.sourceParents,
                 standaloneUri = if (old.standalonePersisted && !track.standalonePersisted)
                     old.standaloneUri else track.standaloneUri ?: old.standaloneUri,
                 standalonePersisted = track.standalonePersisted || old.standalonePersisted,
@@ -50,7 +51,7 @@ object LibraryEdits {
             if (sourceUri !in track.sourceUris) return@mapNotNull track
             val locations = track.sourceUris - sourceUri
             val uri = locations.values.firstOrNull() ?: track.standaloneUri ?: return@mapNotNull null
-            track.copy(uri = uri, sourceUris = locations)
+            track.copy(uri = uri, sourceUris = locations, sourceParents = track.sourceParents - sourceUri)
         }
         return prune(
             library.copy(sources = library.sources.filterNot { it.uri == sourceUri }),

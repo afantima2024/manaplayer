@@ -1,0 +1,75 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+    <FrameLayout
+        android:id="@+id/mediaArea"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/artwork"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@string/cover_art"
+            android:scaleType="fitCenter"
+            app:srcCompat="@drawable/ic_launcher" />
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/lyricsList"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@string/lyrics"
+            android:clipToPadding="false"
+            android:paddingTop="32dp"
+            android:paddingBottom="64dp"
+            android:visibility="gone" />
+        <LinearLayout
+            android:id="@+id/lyricDragGuide"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_vertical"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:importantForAccessibility="no"
+            android:visibility="gone">
+        <TextView
+            android:id="@+id/lyricSeekPreview"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingEnd="8dp"
+            android:textColor="?attr/colorPrimary"
+            android:textSize="14sp"
+            android:importantForAccessibility="no" />
+        <View
+            android:id="@+id/lyricDragLine"
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1"
+            android:background="?attr/colorPrimary"
+            android:alpha="0.6"
+            android:importantForAccessibility="no" />
+        </LinearLayout>
+    </FrameLayout>
+    <TextView
+        android:id="@+id/lyricsStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:minHeight="32dp"
+        android:maxLines="4"
+        android:ellipsize="end"
+        android:padding="4dp"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="12sp"
+        android:visibility="gone" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/retryLyrics"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:text="@string/retry_lyrics"
+        android:textAllCaps="false"
+        android:visibility="gone" />
+</LinearLayout>

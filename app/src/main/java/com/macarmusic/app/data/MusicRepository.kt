@@ -74,18 +74,24 @@ class MusicRepository(
         }
     }
 
-    suspend fun addSource(uri: Uri, flags: Int): FolderSource = withContext(Dispatchers.IO) {
-        val source = documents.source(uri, flags)
+    suspend fun addSource(uri: Uri, flags: Int): FolderSource = addSources(listOf(uri), flags).single()
+
+    suspend fun addSources(uris: List<Uri>, flags: Int): List<FolderSource> = withContext(Dispatchers.IO) {
+        require(uris.isNotEmpty()) { context.getString(R.string.select_folders_first) }
+        val sources = uris.distinct().map { documents.source(it, flags) }
         update { library ->
-            val existing = library.sources.firstOrNull { it.uri == source.uri }
-            val refreshed = source.copy(
-                lastScanMs = existing?.lastScanMs ?: 0,
-                lastScanCount = existing?.lastScanCount ?: 0,
-                selectedForPlayback = existing?.selectedForPlayback ?: true,
-            )
-            library.copy(sources = library.sources.filterNot { it.uri == source.uri } + refreshed)
+            val refreshed = sources.map { source ->
+                val existing = library.sources.firstOrNull { it.uri == source.uri }
+                source.copy(
+                    lastScanMs = existing?.lastScanMs ?: 0,
+                    lastScanCount = existing?.lastScanCount ?: 0,
+                    selectedForPlayback = existing?.selectedForPlayback ?: true,
+                )
+            }
+            val keys = sources.mapTo(hashSetOf()) { it.uri }
+            library.copy(sources = library.sources.filterNot { it.uri in keys } + refreshed)
         }
-        source
+        sources
     }
 
     suspend fun openDocument(uri: Uri, flags: Int): MetadataResult = withContext(Dispatchers.IO) {
@@ -95,8 +101,9 @@ class MusicRepository(
         result
     }
 
-    suspend fun browserTrack(uri: String, sourceUri: String): MetadataResult = withContext(Dispatchers.IO) {
-        val result = metadata.read(documents.describe(Uri.parse(uri)), sourceUri)
+    suspend fun browserTrack(uri: String, sourceUri: String, parentId: String): MetadataResult = withContext(Dispatchers.IO) {
+        val metadata = metadata.read(documents.describe(Uri.parse(uri)), sourceUri)
+        val result = metadata.copy(track = metadata.track.copy(sourceParents = mapOf(sourceUri to parentId)))
         update { LibraryEdits.upsertTracks(it, listOf(result.track)) }
         result
     }
@@ -112,7 +119,8 @@ class MusicRepository(
         val folders = ArrayDeque<Pair<String, Int>>().apply { add(startingId to 0) }
         val visited = hashSetOf<String>()
         val entries = linkedMapOf<String, com.macarmusic.app.model.DocumentEntry>()
-        val label = location?.name ?: source.name
+        val parents = hashMapOf<String, String>()
+        val label = if (location == null || fullSource) documents.displayName(source) else location.name
         onProgress(ScanProgress(label))
         while (folders.isNotEmpty()) {
             currentCoroutineContext().ensureActive()
@@ -124,7 +132,10 @@ class MusicRepository(
             for (entry in documents.children(source.uri, id)) {
                 currentCoroutineContext().ensureActive()
                 if (entry.isDirectory) folders.add(entry.id to depth + 1)
-                else entries[entry.id] = entry
+                else {
+                    entries[entry.id] = entry
+                    parents[entry.id] = id
+                }
                 if (folders.size + visited.size + entries.size > 100_000) {
                     throw IOException(context.getString(R.string.folder_safety_limit))
                 }
@@ -136,7 +147,7 @@ class MusicRepository(
         for ((index, entry) in entries.values.withIndex()) {
             currentCoroutineContext().ensureActive()
             val result = metadata.read(entry, source.uri)
-            tracks.add(result.track)
+            tracks.add(result.track.copy(sourceParents = mapOf(source.uri to parents.getValue(entry.id))))
             if (result.warning) warnings++
             if (index % 10 == 0) onProgress(ScanProgress(label, index + 1))
         }

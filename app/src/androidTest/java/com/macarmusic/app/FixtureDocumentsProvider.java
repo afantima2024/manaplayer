@@ -2,24 +2,46 @@ package com.macarmusic.app;
 
 import android.database.Cursor;
 import android.database.MatrixCursor;
+import android.content.ContentValues;
+import android.content.Context;
+import android.graphics.Bitmap;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsProvider;
+import android.provider.MediaStore;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
+import java.io.OutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 
 // This standalone test-APK process deliberately depends only on the Android/Java runtime.
 public class FixtureDocumentsProvider extends DocumentsProvider {
     private static volatile Bundle controllerStatus = Bundle.EMPTY;
     private volatile boolean unavailable;
+    private volatile String lyricsMode = "available";
+    private volatile long lyricDelayMs;
+    private final AtomicInteger activeLyricReads = new AtomicInteger();
+    private final AtomicInteger lyricReads = new AtomicInteger();
     private File tone;
+    private File lyrics;
+    private File scrollableLyrics;
+    private File plainLyrics;
+    private File badLyrics;
+    private File picture;
+    private File secondPicture;
     private static final String[] COLUMNS = {
         DocumentsContract.Document.COLUMN_DOCUMENT_ID,
         DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -48,7 +70,49 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
                 throw new IllegalStateException("Cannot create synthetic test audio", error);
             }
         }
+        lyrics = fixture("synthetic.lrc", "[ti:Test fixture]\n[00:05.00]Synthetic start\n[00:10.00]Synthetic middle\n[00:30.00]Synthetic ending");
+        StringBuilder scrolling = new StringBuilder();
+        for (int index = 0; index < 30; index++) {
+            scrolling.append(String.format(java.util.Locale.ROOT, "[00:%02d.00]Synthetic lyric %02d\n", index * 2, index));
+        }
+        scrollableLyrics = fixture("scrollable.lrc", scrolling.toString());
+        plainLyrics = fixture("synthetic.txt", "Nested text fixture\nSecond plain marker");
+        badLyrics = fixture("invalid.txt", "<html>Simulated invalid lyric document</html>");
+        picture = new File(getContext().getFilesDir(), "synthetic-background.png");
+        Bitmap bitmap = Bitmap.createBitmap(256, 128, Bitmap.Config.ARGB_8888);
+        for (int y = 0; y < bitmap.getHeight(); y++) {
+            for (int x = 0; x < bitmap.getWidth(); x++) {
+                bitmap.setPixel(x, y, (x / 16 + y / 16) % 2 == 0 ? 0xff3474c0 : 0xffffbe5d);
+            }
+        }
+        try (FileOutputStream output = new FileOutputStream(picture)) {
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) throw new IOException("Fixture compression failed");
+        } catch (IOException error) {
+            throw new IllegalStateException("Cannot create synthetic image", error);
+        } finally {
+            bitmap.recycle();
+        }
+        secondPicture = new File(getContext().getFilesDir(), "synthetic-second-background.png");
+        Bitmap second = Bitmap.createBitmap(256, 128, Bitmap.Config.ARGB_8888);
+        second.eraseColor(0xff82386f);
+        try (FileOutputStream output = new FileOutputStream(secondPicture)) {
+            if (!second.compress(Bitmap.CompressFormat.PNG, 100, output)) throw new IOException("Fixture compression failed");
+        } catch (IOException error) {
+            throw new IllegalStateException("Cannot create second synthetic image", error);
+        } finally {
+            second.recycle();
+        }
         return true;
+    }
+
+    private File fixture(String name, String text) {
+        File file = new File(getContext().getFilesDir(), name);
+        try (FileOutputStream output = new FileOutputStream(file)) {
+            output.write(text.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException error) {
+            throw new IllegalStateException("Cannot create synthetic fixture", error);
+        }
+        return file;
     }
 
     @Override public Cursor queryRoots(String[] projection) {
@@ -84,8 +148,10 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             documentRow(cursor, "music/album");
             documentRow(cursor, "music/one");
             documentRow(cursor, "music/ignored");
+            if (!lyricsMode.equals("missing")) documentRow(cursor, "music/lyric-data");
         } else if (parent.equals("music/album")) {
             documentRow(cursor, "music/album/two");
+            if (!lyricsMode.equals("missing")) documentRow(cursor, "music/album/lyric-data");
         } else if (!parent.equals("empty")) {
             throw new FileNotFoundException(parent);
         }
@@ -95,10 +161,28 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
     @Override public ParcelFileDescriptor openDocument(String id, String mode, CancellationSignal signal)
             throws FileNotFoundException {
         checkAvailable();
-        if (!mode.equals("r") || !(id.equals("music/one") || id.equals("music/album/two"))) {
-            throw new FileNotFoundException(id);
+        if (!mode.equals("r")) throw new FileNotFoundException(id);
+        File selected;
+        switch (id) {
+            case "music/one": case "music/album/two": selected = tone; break;
+            case "music/lyric-data":
+                lyricReads.incrementAndGet();
+                activeLyricReads.incrementAndGet();
+                try {
+                    android.os.SystemClock.sleep(lyricDelayMs);
+                } finally {
+                    activeLyricReads.decrementAndGet();
+                }
+                if (lyricsMode.equals("unreadable")) throw new FileNotFoundException("Synthetic lyric read failure");
+                selected = lyricsMode.equals("invalid") ? badLyrics : lyricsMode.equals("scrollable") ? scrollableLyrics : lyrics;
+                break;
+            case "music/album/lyric-data": selected = plainLyrics; break;
+            case "pictures/background": selected = picture; break;
+            case "pictures/second": selected = secondPicture; break;
+            case "pictures/invalid": selected = badLyrics; break;
+            default: throw new FileNotFoundException(id);
         }
-        return ParcelFileDescriptor.open(tone, ParcelFileDescriptor.MODE_READ_ONLY);
+        return ParcelFileDescriptor.open(selected, ParcelFileDescriptor.MODE_READ_ONLY);
     }
 
     @Override public boolean isChildDocument(String parent, String id) {
@@ -106,6 +190,29 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
     }
 
     @Override public Bundle call(String method, String arg, Bundle extras) {
+        if (method.equals("seedIndexedMusic")) {
+            if (Build.VERSION.SDK_INT < 29) throw new UnsupportedOperationException("This fixture requires API 29+");
+            try {
+                return seedIndexedMusic();
+            } catch (IOException error) {
+                throw new IllegalStateException("Could not create indexed audio fixtures", error);
+            }
+        }
+        if (method.equals("clearIndexedMusic")) {
+            clearIndexedMusic();
+            return Bundle.EMPTY;
+        }
+        if (method.equals("setLyricReadDelay")) {
+            lyricDelayMs = Math.max(0, Math.min(10000, Long.parseLong(arg)));
+            lyricReads.set(0);
+            return Bundle.EMPTY;
+        }
+        if (method.equals("lyricReadState")) {
+            Bundle state = new Bundle();
+            state.putInt("active", activeLyricReads.get());
+            state.putInt("reads", lyricReads.get());
+            return state;
+        }
         if (method.equals("controllerStatus")) return new Bundle(controllerStatus);
         if (method.equals("resetControllerStatus")) {
             controllerStatus = Bundle.EMPTY;
@@ -119,7 +226,59 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             unavailable = extras != null && extras.getBoolean("value");
             return Bundle.EMPTY;
         }
+        if (method.equals("setLyricsMode")) {
+            lyricsMode = arg == null ? "available" : arg;
+            return Bundle.EMPTY;
+        }
         return super.call(method, arg, extras);
+    }
+
+    @android.annotation.TargetApi(29)
+    private Bundle seedIndexedMusic() throws IOException {
+        clearIndexedMusic();
+        String[] folders = {
+            "Music/ManaPlayer_Compatibility/", "Music/ManaPlayer_Compatibility/Child/",
+            "Music/ManaPlayer_Compatibility 2/", "Music/ManaPlayerXCompatibility/"
+        };
+        ArrayList<String> uris = new ArrayList<>();
+        for (int index = 0; index < folders.length; index++) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Audio.Media.DISPLAY_NAME, "Indexed fixture " + index + ".wav");
+            values.put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav");
+            values.put(MediaStore.Audio.Media.RELATIVE_PATH, folders[index]);
+            values.put(MediaStore.Audio.Media.IS_PENDING, 1);
+            Uri uri = getContext().getContentResolver().insert(
+                MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+            if (uri == null) throw new IOException("MediaStore rejected the fixture");
+            uris.add(uri.toString());
+            if (!getContext().getSharedPreferences("indexed-fixture", Context.MODE_PRIVATE).edit()
+                .putStringSet("uris", new HashSet<>(uris)).commit()) {
+                getContext().getContentResolver().delete(uri, null, null);
+                throw new IOException("Could not record fixture ownership");
+            }
+            try (FileInputStream input = new FileInputStream(tone);
+                 OutputStream output = getContext().getContentResolver().openOutputStream(uri, "w")) {
+                if (output == null) throw new IOException("Could not open the indexed fixture");
+                byte[] bytes = new byte[8192];
+                int count;
+                while ((count = input.read(bytes)) != -1) output.write(bytes, 0, count);
+            }
+            values.clear();
+            values.put(MediaStore.Audio.Media.IS_PENDING, 0);
+            getContext().getContentResolver().update(uri, values, null, null);
+        }
+        Bundle result = new Bundle();
+        result.putStringArrayList("uris", uris);
+        return result;
+    }
+
+    private void clearIndexedMusic() {
+        Set<String> uris = getContext().getSharedPreferences("indexed-fixture", Context.MODE_PRIVATE)
+            .getStringSet("uris", java.util.Collections.emptySet());
+        for (String uri : uris) getContext().getContentResolver().delete(Uri.parse(uri), null, null);
+        if (!getContext().getSharedPreferences("indexed-fixture", Context.MODE_PRIVATE).edit().remove("uris").commit()) {
+            throw new IllegalStateException("Could not clear fixture ownership");
+        }
     }
 
     static void setControllerStatus(Bundle status) {
@@ -139,9 +298,17 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             case "music/one": name = "01 - Synthetic.wav"; break;
             case "music/album/two": name = "02 - Nested.WAV"; break;
             case "music/ignored": name = "notes.txt"; break;
+            case "music/lyric-data": name = "01 - Synthetic.LRC"; break;
+            case "music/album/lyric-data": name = "02 - Nested.txt"; break;
+            case "pictures/background": name = "Test background.png"; break;
+            case "pictures/second": name = "Second background.png"; break;
+            case "pictures/invalid": name = "Invalid picture.png"; break;
             default: name = "Empty";
         }
-        String mime = folder ? DocumentsContract.Document.MIME_TYPE_DIR
+        String mime = id.startsWith("pictures/") ? "image/png"
+            : id.equals("music/lyric-data") ? "audio/mpeg"
+            : id.endsWith("lyric-data") ? "application/octet-stream"
+            : folder ? DocumentsContract.Document.MIME_TYPE_DIR
             : id.equals("music/ignored") ? "text/plain"
             : id.equals("music/album/two") ? "application/octet-stream" : "audio/wav";
         MatrixCursor.RowBuilder row = cursor.newRow();

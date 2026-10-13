@@ -20,6 +20,9 @@ import com.macarmusic.app.model.PlaybackScope
 import com.macarmusic.app.model.ScanProgress
 import com.macarmusic.app.model.SortOrder
 import com.macarmusic.app.model.Track
+import com.macarmusic.app.lyrics.LyricState
+import com.macarmusic.app.lyrics.LyricResult
+import com.macarmusic.app.lyrics.LyricIssue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,6 +30,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -37,12 +42,19 @@ import kotlin.random.Random
 
 enum class QueueMode { REPLACE, APPEND, NEXT }
 data class PlayRequest(val token: Long, val tracks: List<Track>, val index: Int, val mode: QueueMode)
+data class DeviceMusicPicker(
+    val token: Long,
+    val loading: Boolean = true,
+    val folders: List<FolderSource> = emptyList(),
+    val selected: Set<String> = emptySet(),
+)
 
 class MusicViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
     val app = application as MaCarMusicApp
     val repository = app.repository
     val library = repository.library
     val selectedScreen = saved.getStateFlow("screen", R.id.nav_player)
+    val settingsCategory = saved.getStateFlow("settingsCategory", SettingsCategory.GENERAL)
     val query = saved.getStateFlow("query", "")
     val favoritesOnly = saved.getStateFlow("favorites", false)
     val selectedPlaylist = saved.getStateFlow<String?>("playlist", null)
@@ -51,7 +63,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     val visibleTracks = combine(library, query, favoritesOnly, sort) { library, query, favorites, sort ->
         AudioFiles.sortAndFilter(library.tracks, query, sort, if (favorites) library.favorites else null)
     }.flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000, replayExpirationMillis = 0), emptyList())
     private val mutableBrowser = MutableStateFlow(BrowserState())
     val browser = mutableBrowser.asStateFlow()
     private val mutableScan = MutableStateFlow<ScanProgress?>(null)
@@ -61,6 +73,89 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     private var requestToken = 0L
     private var browserJob: Job? = null
     private var scanJob: Job? = null
+    private var deviceMusicJob: Job? = null
+    private var deviceMusicToken = 0L
+    private val mutableDeviceMusic = MutableStateFlow<DeviceMusicPicker?>(null)
+    val deviceMusic = mutableDeviceMusic.asStateFlow()
+    private var lyricJob: Job? = null
+    private var lyricTrack: Track? = null
+    private var lyricRequest: Triple<Track?, Boolean, Boolean>? = null
+    internal var lyricsActive = false
+        private set
+    private val mutableLyrics = MutableStateFlow(LyricState())
+    val lyrics = mutableLyrics.asStateFlow()
+    private val mutableImportingBackground = MutableStateFlow(false)
+    val importingBackground = mutableImportingBackground.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            app.displaySettings.options.map { it.lyricsEnabled to it.onlineLyrics }.distinctUntilChanged().collect {
+                requestLyrics(lyricTrack)
+            }
+        }
+    }
+
+    fun setLyricsActive(active: Boolean) {
+        if (lyricsActive == active) return
+        lyricsActive = active
+        requestLyrics(lyricTrack)
+    }
+
+    fun requestLyrics(track: Track?, refresh: Boolean = false) {
+        lyricTrack = track
+        val settings = app.displaySettings.options.value
+        val request = Triple(track, lyricsActive && settings.lyricsEnabled, settings.onlineLyrics)
+        if (!refresh && lyricRequest == request) return
+        lyricRequest = request
+        lyricJob?.cancel()
+        if (!request.second || track == null) {
+            mutableLyrics.value = LyricState()
+            return
+        }
+        mutableLyrics.value = LyricState(track.id, loading = true)
+        lyricJob = viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { app.lyrics.load(track, settings.onlineLyrics, refresh) }
+                if (lyricRequest == request) mutableLyrics.value = LyricState(track.id, result = result)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: IOException) {
+                lyricFailure(track, error)
+            } catch (error: SecurityException) {
+                lyricFailure(track, error)
+            }
+        }
+    }
+
+    private fun lyricFailure(track: Track, error: Exception) {
+        Log.w(TAG, "Could not load lyrics", error)
+        mutableLyrics.value = LyricState(track.id, result = LyricResult(issue = LyricIssue.LOOKUP_FAILED))
+    }
+
+    fun importBackground(uri: Uri) = importBackgrounds(listOf(uri))
+
+    fun importBackgrounds(uris: List<Uri>) {
+        if (mutableImportingBackground.value) return
+        mutableImportingBackground.value = true
+        operation {
+            try {
+                app.backgrounds.importImages(uris, app.displaySettings::installImages)
+                app.inform(app.text(R.string.background_saved))
+            } finally {
+                mutableImportingBackground.value = false
+            }
+        }
+    }
+
+    fun backgroundIndex(version: Long, count: Int): Int {
+        if (saved.get<Long>("backgroundVersion") != version) {
+            saved["backgroundVersion"] = version
+            saved["backgroundIndex"] = 0
+        }
+        return (saved.get<Int>("backgroundIndex") ?: 0).coerceIn(0, (count - 1).coerceAtLeast(0))
+    }
+
+    fun backgroundIndex(index: Int) { saved["backgroundIndex"] = index }
 
     fun screen(id: Int) { saved["screen"] = id }
     fun openSettings() {
@@ -68,6 +163,9 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         screen(R.id.action_settings)
     }
     fun closeSettings() { screen(saved["settingsReturn"] ?: R.id.nav_player) }
+    fun settingsCategory(category: SettingsCategory) { saved["settingsCategory"] = category }
+    fun settingsScroll(category: SettingsCategory): Int = saved["settingsScroll.${category.name}"] ?: 0
+    fun settingsScroll(category: SettingsCategory, y: Int) { saved["settingsScroll.${category.name}"] = y }
     fun query(value: String) { saved["query"] = value }
     fun toggleFavorites() { saved["favorites"] = !favoritesOnly.value }
     fun playlist(id: String?) { saved["playlist"] = id }
@@ -143,6 +241,67 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         scanFolders(listOf(source))
     }
 
+    fun loadDeviceMusicFolders() {
+        if (scanJob?.isCompleted == false) {
+            app.inform(app.text(R.string.scan_busy))
+            return
+        }
+        deviceMusicJob?.cancel()
+        val loading = DeviceMusicPicker(++deviceMusicToken)
+        mutableDeviceMusic.value = loading
+        deviceMusicJob = viewModelScope.launch {
+            try {
+                guard {
+                    val folders = repository.documents.deviceMusic.folders()
+                    if (folders.isEmpty()) {
+                        mutableDeviceMusic.value = null
+                        app.inform(app.text(R.string.device_music_empty))
+                    } else {
+                        val savedUris = library.value.sources.mapTo(hashSetOf()) { it.uri }
+                        mutableDeviceMusic.value = loading.copy(loading = false, folders = folders,
+                            selected = folders.map { it.uri }.filter { it in savedUris }.toSet())
+                        app.inform(app.text(R.string.device_music_selection_help))
+                    }
+                }
+            } finally {
+                mutableDeviceMusic.compareAndSet(loading, null)
+            }
+        }
+    }
+
+    fun selectDeviceMusicFolder(uri: String, selected: Boolean) {
+        val choice = mutableDeviceMusic.value ?: return
+        if (choice.folders.none { it.uri == uri }) return
+        mutableDeviceMusic.value = choice.copy(selected = if (selected) choice.selected + uri else choice.selected - uri)
+    }
+
+    fun dismissDeviceMusic() {
+        deviceMusicJob?.cancel()
+        mutableDeviceMusic.value = null
+    }
+
+    fun addDeviceMusicFolders() {
+        val choice = mutableDeviceMusic.value ?: return
+        val selected = choice.folders.filter { it.uri in choice.selected }
+        if (selected.isEmpty()) {
+            app.inform(app.text(R.string.select_folders_first))
+            return
+        }
+        dismissDeviceMusic()
+        operation {
+            if (scanJob?.isCompleted == false) {
+                app.inform(app.text(R.string.scan_busy))
+                return@operation
+            }
+            val sources = repository.addSources(selected.map { Uri.parse(it.uri) }, 0)
+            if (selectedScreen.value != R.id.action_settings) {
+                showPath(emptyList())
+                screen(R.id.nav_folders)
+            }
+            scanFolders(sources)
+        }
+    }
+
     fun openFile(uri: Uri, flags: Int) = operation {
         val result = repository.openDocument(uri, flags)
         if (!result.track.standalonePersisted) app.inform(app.text(R.string.temporary_grant))
@@ -151,15 +310,16 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     }
 
     fun playBrowserFile(entry: DocumentEntry) = operation {
-        val source = browser.value.path.lastOrNull()?.sourceUri ?: return@operation
-        val result = repository.browserTrack(entry.uri, source)
+        val location = browser.value.path.lastOrNull() ?: return@operation
+        val result = repository.browserTrack(entry.uri, location.sourceUri, location.documentId)
         if (result.warning) app.inform(app.text(R.string.metadata_warning))
         requestPlay(listOf(result.track))
     }
 
     fun openSource(source: FolderSource) {
         operation {
-            showPath(listOf(BrowserLocation(source.uri, repository.documents.rootId(source.uri), source.name)))
+            showPath(listOf(BrowserLocation(source.uri, repository.documents.rootId(source.uri),
+                repository.documents.displayName(source))))
         }
     }
 
@@ -251,6 +411,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
                     }
                 }
                 app.artwork.clear()
+                requestLyrics(lyricTrack, refresh = true)
                 if (failures.isNotEmpty()) app.report(failures.joinToString("\n"))
                 else {
                     val summary = app.text(R.string.scan_finished, resultTracks.size, warnings)
@@ -273,7 +434,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         Log.w(TAG, "Source scan failed", error)
         val detail = if (error is SecurityException) app.text(R.string.permission_lost)
         else error.localizedMessage.orEmpty()
-        val message = app.text(R.string.source_failed, source.name, detail)
+        val message = app.text(R.string.source_failed, repository.documents.displayName(source), detail)
         failures.add(message)
         try {
             repository.markSourceError(source.uri, detail)

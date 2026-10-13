@@ -1,19 +1,43 @@
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical">
+    android:layout_height="match_parent">
+    <ImageView
+        android:id="@+id/backgroundImage"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:scaleType="centerCrop"
+        android:visibility="gone" />
+    <ImageView
+        android:id="@+id/backgroundIncoming"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:scaleType="centerCrop"
+        android:visibility="gone" />
+    <View
+        android:id="@+id/backgroundTint"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no"
+        android:visibility="gone" />
+    <RelativeLayout
+        android:id="@+id/content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
-        android:layout_height="64dp"
+        android:layout_height="48dp"
         app:title="@string/app_name"
         app:menu="@menu/toolbar" />
     <LinearLayout
         android:id="@+id/noticeBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_below="@id/toolbar"
         android:gravity="center_vertical"
         android:minHeight="64dp"
         android:background="?attr/colorErrorContainer"
@@ -39,6 +63,18 @@
             app:srcCompat="@drawable/ic_close"
             app:tint="?attr/colorOnErrorContainer" />
     </LinearLayout>
+    <RelativeLayout
+        android:id="@+id/playerWorkspace"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="@dimen/player_gap"
+        android:layout_below="@id/noticeBar">
+    <LinearLayout
+        android:id="@+id/playerBody"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_above="@id/navigation"
+        android:orientation="vertical">
     <FrameLayout
         android:id="@+id/screenContainer"
         android:layout_width="match_parent"
@@ -49,12 +85,16 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="?attr/colorSurfaceVariant"
-        android:gravity="center_vertical"
+        android:orientation="vertical"
         android:minHeight="80dp"
         android:paddingStart="12dp"
         android:paddingEnd="12dp"
         android:paddingTop="8dp"
         android:paddingBottom="8dp">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical">
         <androidx.appcompat.widget.AppCompatImageView
             android:id="@+id/miniArtwork"
             android:layout_width="48dp"
@@ -108,14 +148,35 @@
             android:layout_height="56dp"
             android:contentDescription="@string/next"
             app:srcCompat="@drawable/ic_next" />
+        </LinearLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical">
+            <SeekBar
+                android:id="@+id/miniSeek"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:contentDescription="@string/seek_position"
+                android:max="10000" />
+            <TextView
+                android:id="@+id/miniTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="8dp"
+                android:paddingEnd="4dp"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="14sp" />
+        </LinearLayout>
     </LinearLayout>
-    <com.google.android.material.bottomnavigation.BottomNavigationView
+    </LinearLayout>
+    <com.macarmusic.app.ui.PlayerNavigationView
         android:id="@+id/navigation"
         android:layout_width="match_parent"
         android:layout_height="80dp"
-        android:background="?attr/colorSurface"
-        app:itemTextAppearanceActive="@style/NavText"
-        app:itemTextAppearanceInactive="@style/NavText"
-        app:labelVisibilityMode="labeled"
-        app:menu="@menu/navigation" />
-</LinearLayout>
+        android:layout_alignParentBottom="true"
+        android:background="?attr/colorSurface" />
+    </RelativeLayout>
+    </RelativeLayout>
+</FrameLayout>

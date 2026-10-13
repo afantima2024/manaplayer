@@ -8,8 +8,13 @@ import com.macarmusic.app.data.LocalizedContext
 import com.macarmusic.app.data.MusicRepository
 import com.macarmusic.app.data.PlaybackRepository
 import com.macarmusic.app.data.PlaybackSettings
+import com.macarmusic.app.data.BackgroundRepository
+import com.macarmusic.app.data.BackgroundTint
+import com.macarmusic.app.data.DisplaySettings
+import com.macarmusic.app.lyrics.LyricsRepository
 import com.macarmusic.app.model.Notice
 import com.macarmusic.app.model.SortOrder
+import com.macarmusic.app.playback.SpectrumSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,23 +27,22 @@ class MaCarMusicApp : Application() {
     private val noticeSequence = AtomicLong()
     private val mutableNotice = MutableStateFlow<Notice?>(null)
     val notice = mutableNotice.asStateFlow()
-    lateinit var repository: MusicRepository
+    val repository by lazy { MusicRepository(localizedContext, applicationScope, ::report) }
+    val artwork by lazy { ArtworkRepository(localizedContext) }
+    val playback by lazy { PlaybackRepository(localizedContext, applicationScope, ::report) }
+    val playbackSettings by lazy { PlaybackSettings(this) }
+    lateinit var displaySettings: DisplaySettings
         private set
-    lateinit var artwork: ArtworkRepository
-        private set
-    lateinit var playback: PlaybackRepository
-        private set
-    lateinit var playbackSettings: PlaybackSettings
-        private set
+    val backgrounds by lazy { BackgroundRepository(localizedContext) }
+    val lyrics by lazy { LyricsRepository(localizedContext, repository, applicationScope) }
+    internal val playbackReady = MutableStateFlow(false)
+    val spectrum by lazy { SpectrumSource(applicationScope) }
     val localizedContext by lazy { LocalizedContext(this) }
 
     override fun onCreate() {
         super.onCreate()
-        AppCompatDelegate.setDefaultNightMode(themeMode)
-        artwork = ArtworkRepository(localizedContext)
-        repository = MusicRepository(localizedContext, applicationScope, ::report)
-        playback = PlaybackRepository(localizedContext, applicationScope, ::report)
-        playbackSettings = PlaybackSettings(this)
+        displaySettings = DisplaySettings(this, ::applyTheme)
+        applyTheme()
     }
 
     fun text(@StringRes id: Int, vararg arguments: Any): String =
@@ -58,12 +62,26 @@ class MaCarMusicApp : Application() {
     }
 
     var themeMode: Int
-        get() = getSharedPreferences("settings", MODE_PRIVATE)
-            .getInt("theme", AppCompatDelegate.MODE_NIGHT_YES)
+        get() = if (displaySettings.options.value.customTheme) DisplaySettings.CUSTOM_THEME
+            else getSharedPreferences("settings", MODE_PRIVATE).getInt("theme", AppCompatDelegate.MODE_NIGHT_YES)
         set(value) {
-            getSharedPreferences("settings", MODE_PRIVATE).edit().putInt("theme", value).apply()
-            AppCompatDelegate.setDefaultNightMode(value)
+            require(value in setOf(DisplaySettings.CUSTOM_THEME, AppCompatDelegate.MODE_NIGHT_YES,
+                AppCompatDelegate.MODE_NIGHT_NO, AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM))
+            if (value != DisplaySettings.CUSTOM_THEME) {
+                getSharedPreferences("settings", MODE_PRIVATE).edit().putInt("theme", value).apply()
+            }
+            displaySettings.update { it.copy(customTheme = value == DisplaySettings.CUSTOM_THEME) }
+            applyTheme()
         }
+
+    private fun applyTheme() {
+        val appearance = displaySettings.options.value
+        AppCompatDelegate.setDefaultNightMode(
+            if (!appearance.customTheme) themeMode
+            else if (appearance.tint == BackgroundTint.LIGHT) AppCompatDelegate.MODE_NIGHT_NO
+            else AppCompatDelegate.MODE_NIGHT_YES,
+        )
+    }
 
     var sortOrder: SortOrder
         get() {

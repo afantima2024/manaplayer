@@ -31,6 +31,14 @@ class LibraryCodecTest {
         assertEquals(Library(), LibraryCodec.decodeLibrary("""{"version":1,"futureField":true}"""))
     }
 
+    @Test fun previousLibrariesRemainReadableAndNewLyricParentsRoundTrip() {
+        val old = """{"version":1,"tracks":[{"id":"id","uri":"content://local/id","fileName":"song.mp3","title":"Song"}]}"""
+        val track = LibraryCodec.decodeLibrary(old).tracks.single()
+        assertTrue(track.sourceParents.isEmpty())
+        val enriched = Library(tracks = listOf(track.copy(sourceParents = mapOf("content://local/tree" to "opaque:id"))))
+        assertEquals(enriched, LibraryCodec.decodeLibrary(LibraryCodec.encode(enriched)))
+    }
+
     @Test(expected = SerializationException::class) fun corruptDataIsNotSilentlyReset() {
         LibraryCodec.decodeLibrary("{ broken ")
     }

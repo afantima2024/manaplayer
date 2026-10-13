@@ -1,4 +1,4 @@
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<com.macarmusic.app.ui.PlayerLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -6,18 +6,16 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="16dp">
-        <androidx.appcompat.widget.AppCompatImageView
-            android:id="@+id/artwork"
+        android:baselineAligned="false"
+        android:gravity="top"
+        android:orientation="horizontal">
+        <include
+            android:id="@+id/cover"
+            layout="@layout/view_cover"
             android:layout_width="0dp"
-            android:layout_height="220dp"
+            android:layout_height="match_parent"
             android:layout_weight="1"
-            android:layout_marginEnd="24dp"
-            android:contentDescription="@string/cover_art"
-            android:scaleType="fitCenter"
-            app:srcCompat="@drawable/ic_launcher" />
+            android:layout_marginEnd="@dimen/player_gap" />
         <include
             android:id="@+id/controls"
             layout="@layout/view_player_controls"
@@ -25,4 +23,4 @@
             android:layout_height="wrap_content"
             android:layout_weight="2" />
     </LinearLayout>
-</ScrollView>
+</com.macarmusic.app.ui.PlayerLayout>
