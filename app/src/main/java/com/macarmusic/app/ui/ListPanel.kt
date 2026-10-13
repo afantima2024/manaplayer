@@ -14,7 +14,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.macarmusic.app.R
 
-class ListPanel(context: Context) : LinearLayout(context) {
+class ListPanel @JvmOverloads constructor(context: Context, private val compact: Boolean = false) : LinearLayout(context) {
     val top = LinearLayout(context).apply { orientation = VERTICAL }
     val heading = TextView(context).apply {
         textSize = 16f
@@ -36,6 +36,7 @@ class ListPanel(context: Context) : LinearLayout(context) {
 
     init {
         orientation = VERTICAL
+        heading.isVisible = !compact
         addView(top, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         addView(heading, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         addView(FrameLayout(context).apply {
@@ -49,7 +50,7 @@ class ListPanel(context: Context) : LinearLayout(context) {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), 0, dp(12), 0)
             buttons.forEach { button ->
-                addView(button, LayoutParams(LayoutParams.WRAP_CONTENT, dp(56)).apply { marginEnd = dp(8) })
+                addView(button, LayoutParams(LayoutParams.WRAP_CONTENT, dp(if (compact) 48 else 56)).apply { marginEnd = dp(8) })
             }
         }
         return HorizontalScrollView(context).apply {
@@ -63,7 +64,7 @@ class ListPanel(context: Context) : LinearLayout(context) {
         MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             setText(label)
             isAllCaps = false
-            minHeight = dp(56)
+            minHeight = dp(if (compact) 48 else 56)
             setOnClickListener { click() }
         }
 

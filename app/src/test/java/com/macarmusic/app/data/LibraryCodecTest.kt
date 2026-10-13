@@ -56,4 +56,18 @@ class LibraryCodecTest {
         val playlist = LocalPlaylist("p", "Road \"Mix\"\n2026")
         assertEquals(playlist, LibraryCodec.decodeLibrary(LibraryCodec.encode(Library(playlists = listOf(playlist)))).playlists.single())
     }
+
+    @Test fun pinsPlaylistFoldersAndLocationsSurviveRoundTripWithoutBreakingOldFiles() {
+        val legacy = LibraryCodec.decodeLibrary("""{"sources":[{"uri":"content://disk/tree/music","name":"Music","persisted":true}],"playlists":[{"id":"p","name":"Road","trackIds":["song"]}]}""")
+        assertFalse(legacy.sources.single().pinned)
+        assertNull(legacy.playlists.single().manualTrackIds)
+        assertTrue(legacy.playlists.single().folders.isEmpty())
+        val source = legacy.sources.single().copy(pinned = true)
+        val track = Track("song", "content://disk/song", "song.mp3", "Song",
+            sourcePaths = mapOf(source.uri to "Artist/song.mp3"))
+        val folder = PlaylistFolder(source.uri, "opaque-folder", "Artist", listOf(track.id), "Artist")
+        val library = Library(sources = listOf(source), tracks = listOf(track),
+            playlists = listOf(legacy.playlists.single().copy(folders = listOf(folder), manualTrackIds = emptyList())))
+        assertEquals(library, LibraryCodec.decodeLibrary(LibraryCodec.encode(library)))
+    }
 }

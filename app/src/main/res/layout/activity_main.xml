@@ -80,7 +80,7 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1" />
-    <LinearLayout
+    <com.macarmusic.app.ui.MiniPlayerLayout
         android:id="@+id/miniPlayer"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -139,6 +139,7 @@
             style="@style/PlayerIconButton"
             android:layout_width="56dp"
             android:layout_height="56dp"
+            android:layout_marginEnd="@dimen/player_gap"
             android:contentDescription="@string/play"
             app:srcCompat="@drawable/ic_play" />
         <androidx.appcompat.widget.AppCompatImageButton
@@ -169,7 +170,7 @@
                 android:textColor="?attr/colorOnSurface"
                 android:textSize="14sp" />
         </LinearLayout>
-    </LinearLayout>
+    </com.macarmusic.app.ui.MiniPlayerLayout>
     </LinearLayout>
     <com.macarmusic.app.ui.PlayerNavigationView
         android:id="@+id/navigation"

@@ -4,20 +4,19 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.color.MaterialColors
 import com.macarmusic.app.lyrics.Lyrics
+import com.macarmusic.app.model.LyricAppearance
 
 class LyricsAdapter : RecyclerView.Adapter<LyricsAdapter.Holder>() {
     var lyrics: Lyrics? = null
         private set
     var activeLine: Int = -1
         private set
-    private var enlargementPercent = 20
+    private var appearance = LyricAppearance()
 
-    fun setEnlargement(percent: Int): Boolean {
-        require(percent in 0..60)
-        if (enlargementPercent == percent) return false
-        enlargementPercent = percent
+    fun configure(value: LyricAppearance): Boolean {
+        if (appearance == value) return false
+        appearance = value
         notifyItemRangeChanged(0, itemCount)
         return true
     }
@@ -58,14 +57,15 @@ class LyricsAdapter : RecyclerView.Adapter<LyricsAdapter.Holder>() {
         val active = position == activeLine
         holder.text.apply {
             val density = resources.displayMetrics.density
-            textSize = 20f * if (active) 1 + enlargementPercent / 100f else 1f
+            textSize = (if (active) appearance.activeSizeSp else appearance.otherSizeSp).toFloat()
             val verticalPadding = ((if (active) 10 else 2) * density).toInt()
             setPadding(paddingLeft, verticalPadding, paddingRight, verticalPadding)
             minHeight = if (active) (48 * density).toInt() else 0
             text = lyrics?.lines?.get(position)?.text
             isSelected = active
-            alpha = if (active) 1f else 0.75f
-            setTextColor(MaterialColors.getColor(this,
+            val customColor = if (active) appearance.activeColor else appearance.otherColor
+            alpha = if (active || customColor != null) 1f else 0.75f
+            setTextColor(customColor?.let { it or 0xff000000.toInt() } ?: AccentTheme.color(this,
                 if (active) com.google.android.material.R.attr.colorPrimary else com.google.android.material.R.attr.colorOnSurface))
         }
     }

@@ -1,0 +1,59 @@
+<resources>
+    <color name="accent_blue">#1565C0</color>
+    <color name="accent_blue_container">#DBEAFE</color>
+    <color name="accent_indigo">#4338A1</color>
+    <color name="accent_indigo_container">#E0E7FF</color>
+    <color name="accent_purple">#7B319D</color>
+    <color name="accent_purple_container">#F3E1FA</color>
+    <color name="accent_pink">#AD2869</color>
+    <color name="accent_pink_container">#FCE4EC</color>
+    <color name="accent_red">#B32635</color>
+    <color name="accent_red_container">#FCE1DF</color>
+    <color name="accent_orange">#8D4B00</color>
+    <color name="accent_orange_container">#FFE9CC</color>
+    <color name="accent_green">#386B30</color>
+    <color name="accent_green_container">#DFF3D9</color>
+    <color name="accent_teal">#00796B</color>
+    <color name="accent_teal_container">#D5F3ED</color>
+    <style name="ThemeOverlay.ManaPlayer.Accent" parent="">
+        <item name="colorSecondary">?attr/colorPrimary</item>
+        <item name="colorOnSecondary">?attr/colorOnPrimary</item>
+        <item name="colorSecondaryContainer">?attr/colorPrimaryContainer</item>
+        <item name="colorOnSecondaryContainer">?attr/colorOnPrimaryContainer</item>
+        <item name="colorControlActivated">?attr/colorPrimary</item>
+        <item name="colorAccent">?attr/colorPrimary</item>
+        <item name="android:colorAccent">?attr/colorPrimary</item>
+    </style>
+    <style name="ThemeOverlay.ManaPlayer.Accent.Blue">
+        <item name="colorPrimary">@color/accent_blue</item>
+        <item name="colorPrimaryContainer">@color/accent_blue_container</item>
+    </style>
+    <style name="ThemeOverlay.ManaPlayer.Accent.Indigo">
+        <item name="colorPrimary">@color/accent_indigo</item>
+        <item name="colorPrimaryContainer">@color/accent_indigo_container</item>
+    </style>
+    <style name="ThemeOverlay.ManaPlayer.Accent.Purple">
+        <item name="colorPrimary">@color/accent_purple</item>
+        <item name="colorPrimaryContainer">@color/accent_purple_container</item>
+    </style>
+    <style name="ThemeOverlay.ManaPlayer.Accent.Pink">
+        <item name="colorPrimary">@color/accent_pink</item>
+        <item name="colorPrimaryContainer">@color/accent_pink_container</item>
+    </style>
+    <style name="ThemeOverlay.ManaPlayer.Accent.Red">
+        <item name="colorPrimary">@color/accent_red</item>
+        <item name="colorPrimaryContainer">@color/accent_red_container</item>
+    </style>
+    <style name="ThemeOverlay.ManaPlayer.Accent.Orange">
+        <item name="colorPrimary">@color/accent_orange</item>
+        <item name="colorPrimaryContainer">@color/accent_orange_container</item>
+    </style>
+    <style name="ThemeOverlay.ManaPlayer.Accent.Green">
+        <item name="colorPrimary">@color/accent_green</item>
+        <item name="colorPrimaryContainer">@color/accent_green_container</item>
+    </style>
+    <style name="ThemeOverlay.ManaPlayer.Accent.Teal">
+        <item name="colorPrimary">@color/accent_teal</item>
+        <item name="colorPrimaryContainer">@color/accent_teal_container</item>
+    </style>
+</resources>

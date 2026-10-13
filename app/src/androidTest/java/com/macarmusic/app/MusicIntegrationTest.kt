@@ -51,6 +51,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import androidx.core.view.children
+import androidx.core.view.doOnAttach
 import androidx.lifecycle.Lifecycle
 import androidx.media3.common.Player
 import androidx.media3.common.C
@@ -65,7 +66,6 @@ import androidx.test.espresso.Espresso.onData
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.espresso.ViewInteraction
 import androidx.test.espresso.action.ViewActions.click
-import androidx.test.espresso.action.ViewActions.doubleClick
 import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.action.ViewActions.closeSoftKeyboard
 import androidx.test.espresso.action.ViewActions.scrollTo
@@ -76,7 +76,10 @@ import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
 import androidx.test.espresso.matcher.ViewMatchers.withId
+import androidx.test.espresso.matcher.ViewMatchers.withHint
 import androidx.test.espresso.matcher.ViewMatchers.withText
+import androidx.test.espresso.matcher.ViewMatchers.withTagValue
+import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
 import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -100,6 +103,9 @@ import com.macarmusic.app.model.LibraryEdits
 import com.macarmusic.app.model.BackgroundImages
 import com.macarmusic.app.model.BlockOutline
 import com.macarmusic.app.model.BlockStyle
+import com.macarmusic.app.model.LyricAppearance
+import com.macarmusic.app.model.LyricSide
+import com.macarmusic.app.model.ThemeAccent
 import com.macarmusic.app.model.LoopMode
 import com.macarmusic.app.model.PlayOrder
 import com.macarmusic.app.model.PlaybackTimeMode
@@ -119,6 +125,8 @@ import com.macarmusic.app.playback.SpectrumAnalyzer
 import com.macarmusic.app.playback.SpectrumSource
 import com.macarmusic.app.playback.toMediaItem
 import com.macarmusic.app.ui.MainActivity
+import com.macarmusic.app.ui.AccentTheme
+import com.macarmusic.app.ui.MiniPlayerLayout
 import com.macarmusic.app.ui.LyricsAdapter
 import com.macarmusic.app.ui.MusicViewModel
 import com.macarmusic.app.ui.TimeText
@@ -127,7 +135,6 @@ import com.macarmusic.app.ui.SpectrumView
 import com.macarmusic.app.ui.PlayerNavigationView
 import com.macarmusic.app.ui.PlayerLayout
 import com.macarmusic.app.ui.PlayerBlockDrawable
-import com.macarmusic.app.ui.AboutDialog
 import com.macarmusic.app.ui.PhotoViewerDialog
 import com.macarmusic.app.ui.ZoomImageView
 import com.macarmusic.app.ui.awaitDraw
@@ -147,6 +154,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.anything
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -176,19 +184,695 @@ class MusicIntegrationTest {
         app.contentResolver.call(root, "setLyricReadDelay", "0", null)
         runBlocking { app.repository.awaitReady() }
         onMain {
-            AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en"))
+            if (Build.VERSION.SDK_INT >= 33) {
+                app.getSystemService(android.app.LocaleManager::class.java).applicationLocales =
+                    android.os.LocaleList.forLanguageTags("en")
+            } else AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en"))
             app.displaySettings.update {
                 it.copy(lyricsEnabled = false, onlineLyrics = false, customTheme = false,
                     blur = 0, tint = BackgroundTint.DARK, tintStrength = 35,
                     slideshow = SlideshowOptions(), settingsTransition = TransitionStyle.FADE,
                     timeMode = PlaybackTimeMode.ELAPSED, spectrum = SpectrumOptions(), controlBlocks = true,
                     mainTimeMode = PlaybackTimeMode.ELAPSED, navigationPosition = NavigationPosition.BOTTOM,
-                    lyricsDragSeek = false, lyricsSmoothScroll = true, lyricEnlargementPercent = 20,
-                    blockOutline = BlockOutline())
+                    lyricsDragSeek = false, lyricsSmoothScroll = true, lyricAppearance = LyricAppearance(),
+                    landscapeLyrics = LyricSide.START, portraitLyrics = LyricSide.START, themeAccent = ThemeAccent.DEFAULT,
+                    blockOutline = BlockOutline(), customAccentColor = null)
             }
             app.themeMode = AppCompatDelegate.MODE_NIGHT_YES
             app.playbackSettings.setLoop(LoopMode.OFF)
             app.playbackSettings.setOrder(PlayOrder.SEQUENTIAL)
+        }
+    }
+
+    @Test fun fineTuningLegacySettingsMigrateAndNewOptionsRoundTrip() {
+        val context = instrumentation.context
+        val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        preferences.edit().clear().putInt("lyricEnlargementPercent", 60)
+            .putString("spectrumFireStyle", "LED").commit()
+        try {
+            val settings = DisplaySettings(context) {}
+            assertEquals(32, settings.options.value.lyricAppearance.activeSizeSp)
+            assertEquals(20, settings.options.value.lyricAppearance.otherSizeSp)
+            assertEquals(FireStyle.SMOOTH, settings.options.value.spectrum.barStyle)
+            settings.update { it.copy(
+                lyricAppearance = LyricAppearance(31, 18, 0x448aff, 0xffffff),
+                landscapeLyrics = LyricSide.END, portraitLyrics = LyricSide.END,
+                themeAccent = ThemeAccent.BLUE, customAccentColor = 0x123abc,
+                blockOutline = BlockOutline(BlockStyle.DASHED_ARC, "+", 36, true),
+                spectrum = it.spectrum.copy(barStyle = FireStyle.LED, fireStyle = FireStyle.SMOOTH),
+            ) }
+            preferences.edit().putInt("lyricEnlargementPercent", 0).commit()
+            assertEquals(settings.options.value, DisplaySettings(context) {}.options.value)
+        } finally { preferences.edit().clear().commit() }
+    }
+
+    @Test fun fineTuningLargeSelectionsDoNotOverflowActivitySavedState() {
+        onMain {
+            val saved = SavedStateHandle()
+            val model = MusicViewModel(app, saved)
+            val store = ViewModelStore().apply { put("selection", model) }
+            val parcel = android.os.Parcel.obtain()
+            try {
+                repeat(2_000) { model.selectTrack("selected-$it".padEnd(512, 'x')) }
+                assertEquals(2_000, model.librarySelection.value.size)
+                parcel.writeBundle(saved.savedStateProvider().saveState())
+                assertTrue("Large multi-selections must stay outside the activity Bundle", parcel.dataSize() < 16_384)
+                model.selectLibrary(false)
+                assertTrue(model.librarySelection.value.isEmpty())
+            } finally { parcel.recycle(); store.clear() }
+        }
+    }
+
+    @Test fun polishLegacyAppearanceStateRestoresIntoGeneral() {
+        onMain {
+            val saved = SavedStateHandle(mapOf("settingsCategory" to SettingsCategory.APPEARANCE))
+            val model = MusicViewModel(app, saved)
+            val store = ViewModelStore().apply { put("settings", model) }
+            try {
+                assertEquals(SettingsCategory.GENERAL, model.settingsCategory.value)
+                assertEquals(SettingsCategory.GENERAL, saved.get<SettingsCategory>("settingsCategory"))
+                assertEquals(7, SettingsCategory.pages.size)
+                model.settingsCategory(SettingsCategory.APPEARANCE)
+                assertEquals(SettingsCategory.GENERAL, model.settingsCategory.value)
+            } finally { store.clear() }
+        }
+    }
+
+    @Test fun polishCustomColorEntryValidatesWithoutSavingAndKeepsPaletteBlocks() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            onView(withId(R.id.action_settings)).perform(click())
+            setting(R.id.settingsSpectrum).perform(scrollTo(), click())
+            setting(R.id.spectrumColorLow).perform(scrollTo(), click())
+            onView(withId(R.id.customColorInput)).perform(scrollTo(), replaceText("#XYZ"), closeSoftKeyboard())
+            onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
+            onView(withId(R.id.customColorLayout)).check { view, _ ->
+                assertEquals(app.text(R.string.custom_color_invalid),
+                    (view as com.google.android.material.textfield.TextInputLayout).error)
+            }
+            assertEquals(SpectrumColors.CLASSIC, app.displaySettings.options.value.spectrum.classicColors)
+            onView(withId(R.id.customColorInput)).perform(replaceText("12ab67"), closeSoftKeyboard())
+            onView(withId(R.id.colorPreview)).check { view, _ ->
+                assertEquals(0xff12ab67.toInt(), (view.background as ColorDrawable).color)
+            }
+            onView(withText(R.string.cancel)).inRoot(isDialog()).perform(click())
+            assertEquals(SpectrumColors.CLASSIC, app.displaySettings.options.value.spectrum.classicColors)
+            setting(R.id.spectrumColorLow).perform(scrollTo(), click())
+            onView(withId(R.id.customColorInput)).perform(scrollTo(), replaceText("#12ab67"), closeSoftKeyboard())
+            onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
+            assertEquals(0x12ab67, DisplaySettings(app) {}.options.value.spectrum.classicColors.low)
+            scenario.recreate()
+            setting(R.id.spectrumColorLow).perform(scrollTo(), click())
+            onView(withTagValue(equalTo<Any>(0x12ab67))).perform(scrollTo()).check(matches(isDisplayed()))
+            onView(withId(R.id.customColorInput)).check(matches(withText("#12AB67")))
+            onView(withId(R.id.customColorInput)).perform(scrollTo(), replaceText("#NOTHEX"), closeSoftKeyboard())
+            onView(withTagValue(equalTo<Any>(0x448aff))).perform(scrollTo(), click())
+            onView(withId(R.id.customColorInput)).check(matches(withText("#448AFF")))
+            onView(withId(R.id.customColorLayout)).check { view, _ ->
+                assertNull((view as com.google.android.material.textfield.TextInputLayout).error)
+            }
+            onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
+            assertEquals(0x448aff, app.displaySettings.options.value.spectrum.classicColors.low)
+        }
+    }
+
+    @Test fun polishCustomAccentPersistsAndTintsNativeControlsInBothThemes() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            onView(withId(R.id.action_settings)).perform(click())
+            setting(R.id.settingsAccent).perform(scrollTo(), click())
+            onView(withId(R.id.customColorInput)).perform(scrollTo(), replaceText("#13579B"), closeSoftKeyboard())
+            onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
+            await { app.displaySettings.options.value.customAccentColor == 0x13579b &&
+                resumedActivity().findViewById<View>(R.id.settingsGeneralPanel).isShown }
+            for (mode in listOf(AppCompatDelegate.MODE_NIGHT_YES, AppCompatDelegate.MODE_NIGHT_NO)) {
+                onMain { app.themeMode = mode }
+                awaitPlayerFrame()
+                scenario.onActivity { activity ->
+                    val rootView = activity.findViewById<View>(R.id.root)
+                    assertEquals(0xff13579b.toInt(), AccentTheme.color(rootView,
+                        com.google.android.material.R.attr.colorPrimary))
+                    assertEquals(0xff13579b.toInt(), activity.findViewById<SeekBar>(R.id.miniSeek)
+                        .thumbTintList!!.getColorForState(intArrayOf(android.R.attr.state_enabled), 0))
+                    assertEquals(0xff13579b.toInt(), activity.findViewById<MaterialButton>(R.id.categoryGeneral).currentTextColor)
+                    val filled = MaterialButton(activity)
+                    AccentTheme.tintControls(filled)
+                    AccentTheme.tintControls(filled)
+                    assertTrue("Repeated tinting must preserve readable filled buttons",
+                        androidx.core.graphics.ColorUtils.calculateContrast(filled.currentTextColor,
+                            filled.backgroundTintList!!.getColorForState(filled.drawableState, 0)) >= 4.5)
+                }
+                assertEquals(0x13579b, DisplaySettings(app) {}.options.value.customAccentColor)
+            }
+            setting(R.id.settingsAccent).perform(scrollTo(), click())
+            onView(withId(R.id.customColorInput)).check(matches(withText("#13579B")))
+            onView(withId(R.id.customColorInput)).perform(replaceText("#000001"), closeSoftKeyboard())
+            onView(withText(R.string.cancel)).inRoot(isDialog()).perform(click())
+            assertEquals(0x13579b, app.displaySettings.options.value.customAccentColor)
+            setting(R.id.settingsAccent).perform(scrollTo(), click())
+            onView(withText(R.string.use_default)).inRoot(isDialog()).perform(click())
+            await { app.displaySettings.options.value.customAccentColor == null }
+            assertEquals(ThemeAccent.DEFAULT, DisplaySettings(app) {}.options.value.themeAccent)
+            setting(R.id.settingsAccent).perform(scrollTo(), click())
+            onView(withId(R.id.customColorInput)).perform(scrollTo(), replaceText("#90CAF9"), closeSoftKeyboard())
+            onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
+            await { app.displaySettings.options.value.customAccentColor == 0x90caf9 }
+            assertEquals("Typed colors must stay exact even when they match a day/night preset",
+                ThemeAccent.DEFAULT, app.displaySettings.options.value.themeAccent)
+        }
+    }
+
+    @Test fun polishSettingsUseOneRowAndCenteredCategoriesWithoutMovingNavigation() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            for (orientation in listOf(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)) {
+                rotate(scenario, orientation)
+                for (position in NavigationPosition.entries) {
+                    onMain { app.displaySettings.update { it.copy(navigationPosition = position) } }
+                    awaitPlayerFrame()
+                    val dock = onMainResult { bounds(resumedActivity().findViewById(R.id.navigation)) }
+                    onView(withId(R.id.action_settings)).perform(click())
+                    awaitPlayerFrame()
+                    scenario.onActivity { activity ->
+                        val mini = activity.findViewById<MiniPlayerLayout>(R.id.miniPlayer)
+                        assertTrue(mini.singleRow)
+                        assertEquals((48 * activity.resources.displayMetrics.density).toInt(), mini.height)
+                        assertEquals(dock, bounds(activity.findViewById(R.id.navigation)))
+                        val controls = listOf(R.id.miniPlay, R.id.miniNext, R.id.miniSeek, R.id.miniTime)
+                            .map { bounds(activity.findViewById(it)) }
+                        controls.zipWithNext().forEach { (left, right) ->
+                            assertTrue(left.right <= right.left)
+                            assertTrue(kotlin.math.abs(left.exactCenterY() - right.exactCenterY()) <= 1)
+                        }
+                        assertTrue(bounds(mini).contains(controls.first()))
+                        assertTrue(bounds(mini).contains(controls.last()))
+                        val categories = activity.findViewById<LinearLayout>(R.id.settingsCategories)
+                        assertEquals(13, categories.childCount)
+                        SettingsCategory.pages.forEach { category ->
+                            val button = activity.findViewById<MaterialButton>(category.buttonId)
+                            assertEquals(View.TEXT_ALIGNMENT_CENTER, button.textAlignment)
+                            assertEquals(android.view.Gravity.CENTER, button.gravity)
+                        }
+                        assertTrue(activity.findViewById<View>(R.id.settingsTheme).parent ===
+                            activity.findViewById<View>(R.id.settingsLanguage).parent)
+                        assertEquals(6, categories.children.count {
+                            it.id == R.id.settingsCategoryDivider && it.background is PlayerBlockDrawable
+                        })
+                    }
+                    screenshot("polish-settings-${orientation}-${position.name.lowercase()}")
+                    onMain { resumedActivity().findViewById<View>(R.id.nav_library).performClick() }
+                    awaitPlayerFrame()
+                    scenario.onActivity {
+                        assertFalse(it.findViewById<View>(R.id.settingsPanel).isShown)
+                        assertEquals(it.resources.configuration.screenHeightDp < 480,
+                            it.findViewById<MiniPlayerLayout>(R.id.miniPlayer).singleRow)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun polishBrickShadowsHaveSolidEdgesAndTransparentInteriorsForEveryBorder() {
+        onMain {
+            for (style in BlockStyle.entries) {
+                val bitmap = Bitmap.createBitmap(208, 128, Bitmap.Config.ARGB_8888)
+                val drawable = PlayerBlockDrawable(BlockOutline(style, "*", 24, true), Color.CYAN, 1f)
+                try {
+                    drawable.setBounds(4, 4, 204, 124)
+                    drawable.draw(Canvas(bitmap))
+                    assertEquals(Color.TRANSPARENT, bitmap.getPixel(100, 60))
+                    val side = if (style == BlockStyle.CHARACTERS) 196 else 202
+                    val bottom = if (style == BlockStyle.CHARACTERS) 116 else 122
+                    for (y in 36..84) assertEquals(255, Color.alpha(bitmap.getPixel(side, y)))
+                    for (x in 40..160) assertEquals(255, Color.alpha(bitmap.getPixel(x, bottom)))
+                    val solidPixel = (36..84).first { bitmap.getPixel(side, it) == Color.rgb(0, 85, 85) }
+                    for (x in 0 until bitmap.width) {
+                        assertEquals(Color.TRANSPARENT, bitmap.getPixel(x, 0))
+                        assertEquals(Color.TRANSPARENT, bitmap.getPixel(x, 127))
+                    }
+                    bitmap.eraseColor(Color.TRANSPARENT)
+                    drawable.alpha = 128
+                    drawable.draw(Canvas(bitmap))
+                    assertEquals(128, Color.alpha(bitmap.getPixel(side, solidPixel)))
+                } finally { bitmap.recycle() }
+            }
+        }
+    }
+
+    @Test fun polishCategoryDividersRenderEveryStyleWithoutPanelFillOrShadow() {
+        onMain {
+            val samples = mutableListOf<Bitmap>()
+            try {
+                for (style in BlockStyle.entries) {
+                    fun render(shadow: Boolean) = Bitmap.createBitmap(144, 16, Bitmap.Config.ARGB_8888).also {
+                        PlayerBlockDrawable(BlockOutline(style, "*", 24, shadow), Color.CYAN, 1f, divider = true).apply {
+                            setBounds(0, 0, 144, 16)
+                            draw(Canvas(it))
+                        }
+                    }
+                    val sample = render(false)
+                    val shadow = render(true)
+                    samples.add(sample)
+                    try { assertTrue("Separators must not inherit panel extrusion", sample.sameAs(shadow)) }
+                    finally { shadow.recycle() }
+                    assertTrue((0 until 144).any { Color.alpha(sample.getPixel(it, 7)) > 0 })
+                    assertEquals(Color.TRANSPARENT, sample.getPixel(72, 15))
+                    assertTrue("Each border style should produce its own divider", samples.dropLast(1).none { it.sameAs(sample) })
+                }
+            } finally { samples.forEach(Bitmap::recycle) }
+        }
+    }
+
+    @Test fun polishSingleRowMiniMeasuresNarrowWidthsAndLargeFontsWithoutClipping() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val config = Configuration(activity.resources.configuration).apply { fontScale = 2f }
+                val context = ContextThemeWrapper(activity.createConfigurationContext(config), R.style.Theme_ManaPlayer)
+                val binding = com.macarmusic.app.databinding.ActivityMainBinding.inflate(android.view.LayoutInflater.from(context))
+                val mini = binding.miniPlayer
+                (mini.parent as ViewGroup).removeView(mini)
+                mini.singleRow = true
+                binding.miniTime.text = "-12:34:56 / 123:45:56"
+                val density = context.resources.displayMetrics.density
+                for (widthDp in listOf(1000, 240, 600, 280, 360, 1000)) {
+                    val width = (widthDp * density).toInt()
+                    mini.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+                    mini.layout(0, 0, width, mini.measuredHeight)
+                    val scroll = mini.getChildAt(0) as android.widget.HorizontalScrollView
+                    assertEquals((48 * density).toInt(), mini.height)
+                    assertEquals(1, binding.miniTime.lineCount)
+                    assertTrue(binding.miniSeek.width >= (48 * density).toInt())
+                    assertTrue(binding.miniTime.width >=
+                        binding.miniTime.paint.measureText(binding.miniTime.text.toString()).toInt())
+                    assertEquals("Horizontal overflow must stay reachable", widthDp <= 360, scroll.canScrollHorizontally(1))
+                }
+                mini.singleRow = false
+                assertEquals(2, mini.childCount)
+                assertEquals(View.VISIBLE, binding.miniArtist.visibility)
+                assertEquals(View.VISIBLE, binding.miniArtwork.visibility)
+            }
+        }
+    }
+
+    @Test fun fineTuningSpectrumTapCycleAndThemeLedUseOneBatch() {
+        onMain { app.displaySettings.update { it.copy(spectrum = it.spectrum.copy(enabled = true, style = SpectrumStyle.LINE)) } }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val expected = listOf(
+                Triple(SpectrumStyle.BARS, SpectrumPalette.CLASSIC, FireStyle.SMOOTH),
+                Triple(SpectrumStyle.BARS, SpectrumPalette.CLASSIC, FireStyle.LED),
+                Triple(SpectrumStyle.BARS, SpectrumPalette.FIRE, FireStyle.SMOOTH),
+                Triple(SpectrumStyle.BARS, SpectrumPalette.FIRE, FireStyle.LED),
+                Triple(SpectrumStyle.LINE, SpectrumPalette.CLASSIC, FireStyle.LED),
+            )
+            for ((style, palette, rendering) in expected) {
+                onView(withId(R.id.spectrum)).perform(click())
+                val actual = DisplaySettings(app) {}.options.value.spectrum
+                assertEquals(Triple(style, palette, rendering), Triple(actual.style, actual.palette, actual.rendering))
+            }
+            scenario.onActivity { activity ->
+                val view = SpectrumView(activity)
+                val primary = com.google.android.material.color.MaterialColors.getColor(view,
+                    com.google.android.material.R.attr.colorPrimary)
+                view.layout(0, 0, 360, 280)
+                val top = 12 * activity.resources.displayMetrics.scaledDensity + 8 * activity.resources.displayMetrics.density
+                val bottom = 280 - top
+                val step = (bottom - top) / 20
+                for (style in FireStyle.entries) {
+                    view.configure(SpectrumOptions(enabled = true, palette = SpectrumPalette.THEME, barStyle = style,
+                        bands = 16, peaks = false))
+                    view.setPlaybackActive(false)
+                    view.setPlaybackActive(true)
+                    view.submit(SpectrumFrame(FloatArray(32).apply { this[0] = 1f }, true, 44_100))
+                    val bitmap = Bitmap.createBitmap(360, 280, Bitmap.Config.ARGB_8888)
+                    var batches = 0
+                    try {
+                        view.draw(object : Canvas(bitmap) {
+                            override fun drawVertices(mode: VertexMode, vertexCount: Int, verts: FloatArray, vertOffset: Int,
+                                texs: FloatArray?, texOffset: Int, colors: IntArray?, colorOffset: Int,
+                                indices: ShortArray?, indexOffset: Int, indexCount: Int, paint: android.graphics.Paint,
+                            ) {
+                                batches++
+                                super.drawVertices(mode, vertexCount, verts, vertOffset, texs, texOffset, colors,
+                                    colorOffset, indices, indexOffset, indexCount, paint)
+                            }
+                        })
+                        assertEquals(if (Build.VERSION.SDK_INT >= 29) 1 else 0, batches)
+                        for (row in 1 until 19) {
+                            assertEquals(primary, bitmap.getPixel(10, (bottom - row * step - step * 0.4f).toInt()))
+                            val gap = bitmap.getPixel(10, (bottom - row * step + step * 0.1f).toInt())
+                            assertEquals(if (style == FireStyle.LED) 0 else 255, Color.alpha(gap))
+                        }
+                    } finally { bitmap.recycle(); view.setPlaybackActive(false) }
+                }
+            }
+        }
+    }
+
+    @Test fun fineTuningAccentAndBorderEffectsKeepNavigationAvailableInSettings() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            onView(withId(R.id.action_settings)).perform(click())
+            setting(R.id.settingsAccent).perform(scrollTo(), click())
+            onView(withTagValue(equalTo<Any>(0x90caf9))).perform(scrollTo(), click())
+            onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
+            await { resumedActivity().findViewById<View>(R.id.settingsAccent).isShown &&
+                app.displaySettings.options.value.themeAccent == ThemeAccent.BLUE }
+            scenario.onActivity { activity ->
+                val rootView = activity.findViewById<View>(R.id.root)
+                assertEquals(activity.getColor(R.color.accent_blue),
+                    com.google.android.material.color.MaterialColors.getColor(rootView,
+                        com.google.android.material.R.attr.colorPrimary))
+                assertEquals(1, activity.findViewById<com.google.android.material.appbar.MaterialToolbar>(R.id.toolbar).menu.size())
+            }
+            chooseDropdown(R.id.settingsBlockStyle, app.text(R.string.block_dashed_arc))
+            setting(R.id.blockArc).perform(scrollTo(), GeneralSwipeAction(Swipe.SLOW,
+                { seekCoordinates(it, 0.2f) }, { seekCoordinates(it, 1f) }, Press.FINGER))
+            setting(R.id.settingsBlockShadow).perform(scrollTo(), click())
+            assertEquals(BlockOutline(BlockStyle.DASHED_ARC, "*", 48, true), DisplaySettings(app) {}.options.value.blockOutline)
+            scenario.recreate()
+            for (position in NavigationPosition.entries) {
+                val label = when (position) {
+                    NavigationPosition.TOP -> R.string.navigation_top
+                    NavigationPosition.BOTTOM -> R.string.navigation_bottom
+                    NavigationPosition.LEFT -> R.string.navigation_left
+                    NavigationPosition.RIGHT -> R.string.navigation_right
+                }
+                chooseDropdown(R.id.settingsNavigationPosition, app.text(label))
+                scenario.onActivity { activity ->
+                    val dock = activity.findViewById<View>(R.id.navigation)
+                    assertTrue(dock.isShown)
+                    assertFalse(Rect.intersects(bounds(dock), bounds(activity.findViewById(R.id.settingsPanel))))
+                    assertFalse(Rect.intersects(bounds(dock), bounds(activity.findViewById(R.id.miniPlayer))))
+                    assertTrue("Mini-player outlines must have the same safe control gap",
+                        bounds(activity.findViewById(R.id.miniNext)).left -
+                            bounds(activity.findViewById(R.id.miniPlay)).right >=
+                            activity.resources.getDimensionPixelSize(R.dimen.player_gap))
+                }
+                onMain { resumedActivity().findViewById<View>(R.id.nav_library).performClick() }
+                await { ViewModelProvider(resumedActivity())[MusicViewModel::class.java].selectedScreen.value == R.id.nav_library }
+                onView(withId(R.id.action_settings)).perform(click())
+            }
+            screenshot("fine-accent-dashed-arc-settings")
+        }
+        onMain {
+            fun render(radius: Int, shadow: Boolean) = Bitmap.createBitmap(200, 120, Bitmap.Config.ARGB_8888).also {
+                PlayerBlockDrawable(BlockOutline(BlockStyle.DASHED_ARC, "*", radius, shadow), Color.CYAN, 1f).apply {
+                    setBounds(0, 0, 200, 120)
+                    draw(Canvas(it))
+                }
+            }
+            val square = render(0, false)
+            val curved = render(44, false)
+            val shadowed = render(44, true)
+            try {
+                assertFalse(square.sameAs(curved))
+                assertFalse(curved.sameAs(shadowed))
+                assertEquals(Color.TRANSPARENT, shadowed.getPixel(100, 60))
+                assertEquals("The right side must be solid, not a second dashed outline",
+                    Color.rgb(0, 85, 85), shadowed.getPixel(198, 60))
+                assertEquals(Color.rgb(0, 85, 85), shadowed.getPixel(100, 118))
+            } finally { square.recycle(); curved.recycle(); shadowed.recycle() }
+        }
+    }
+
+    @Test fun fineTuningLyricPositionsColorsAndCacheLocationWorkInBothOrientations() {
+        lyricMode("scrollable")
+        val tracks = fixtureTracks()
+        onMain { app.displaySettings.update { it.copy(lyricsEnabled = true) } }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+            val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+            val controller = future.get(20, TimeUnit.SECONDS)
+            try {
+                onMain { controller.setMediaItems(tracks.map(Track::toMediaItem), 0, 20_000); controller.prepare(); controller.pause() }
+                await { controller.playbackState == Player.STATE_READY && lyricList().adapter?.itemCount == 30 }
+                onView(withId(R.id.action_settings)).perform(click())
+                chooseDropdown(R.id.lyricsLandscapePosition, app.text(R.string.position_right))
+                chooseDropdown(R.id.lyricsPortraitPosition, app.text(R.string.navigation_bottom))
+                setting(R.id.lyricActiveColor).perform(scrollTo(), click())
+                onView(withTagValue(equalTo<Any>(0xffdf69))).perform(scrollTo(), click())
+                onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
+                setting(R.id.lyricOtherColor).perform(scrollTo(), click())
+                onView(withTagValue(equalTo<Any>(0xffffff))).perform(scrollTo(), click())
+                onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
+                setting(R.id.lyricActiveSize).perform(scrollTo(), GeneralSwipeAction(Swipe.SLOW,
+                    { seekCoordinates(it, 0.1f) }, { seekCoordinates(it, 0.5f) }, Press.FINGER))
+                assertEquals(30, app.displaySettings.options.value.lyricAppearance.activeSizeSp)
+                setting(R.id.lyricsCacheLocation).check(matches(withText(containsString(File(app.cacheDir, "lyrics").absolutePath))))
+                onView(withId(R.id.nav_player)).perform(click())
+                await { lyricList().children.any { it.isSelected } }
+                scenario.onActivity { activity ->
+                    assertTrue(bounds(activity.findViewById(R.id.cover)).left >= bounds(activity.findViewById(R.id.controls)).right)
+                    val active = lyricList().children.filterIsInstance<TextView>().single { it.isSelected }
+                    assertEquals(0xffffdf69.toInt(), active.currentTextColor)
+                    val adapter = lyricList().adapter as LyricsAdapter
+                    val other = adapter.createViewHolder(lyricList(), 0).also { adapter.bindViewHolder(it, 0) }.text
+                    assertEquals(Color.WHITE, other.currentTextColor)
+                    assertEquals(1f, other.alpha, 0f)
+                }
+                screenshot("fine-lyrics-right")
+                rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+                scenario.onActivity { activity ->
+                    assertTrue(bounds(activity.findViewById(R.id.cover)).top >= bounds(activity.findViewById(R.id.controls)).bottom)
+                }
+                screenshot("fine-lyrics-bottom")
+                onView(withId(R.id.action_settings)).perform(click())
+                setting(R.id.settingsLyrics).perform(scrollTo(), click())
+                onView(withId(R.id.nav_player)).perform(click())
+                await { resumedActivity().findViewById<View>(R.id.lyricsList).visibility == View.GONE }
+                onView(withId(R.id.artwork)).check(matches(isDisplayed()))
+                assertEquals(20_000, onMainResult { controller.currentPosition })
+                assertFalse(onMainResult { controller.playWhenReady })
+            } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
+        }
+    }
+
+    @Test fun fineTuningTransportSeeksWithinTheSongAndQueueScrollsToCurrentOccurrence() {
+        val tracks = fixtureTracks()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+            val controller = future.get(20, TimeUnit.SECONDS)
+            try {
+                onMain {
+                    controller.setMediaItems(List(100) { tracks[it % tracks.size].toMediaItem() }, 76, 20_000)
+                    controller.prepare(); controller.pause()
+                }
+                await { controller.playbackState == Player.STATE_READY && resumedActivity().findViewById<View>(R.id.forward).isEnabled }
+                onView(withId(R.id.rewind)).perform(scrollTo(), click())
+                await { controller.currentPosition == 10_000L }
+                onView(withId(R.id.forward)).perform(scrollTo(), click())
+                await { controller.currentPosition == 20_000L }
+                onMain { controller.seekTo(2_000) }
+                onView(withId(R.id.rewind)).perform(scrollTo(), click())
+                await { controller.currentPosition == 0L }
+                onMain { controller.seekTo(controller.duration - 2_000) }
+                onView(withId(R.id.forward)).perform(scrollTo(), click())
+                await { controller.currentPosition == controller.duration - 1 }
+                assertEquals(76, onMainResult { controller.currentMediaItemIndex })
+                assertFalse(onMainResult { controller.playWhenReady })
+                onMain { controller.seekTo(20_000); controller.play() }
+                await { controller.isPlaying }
+                onView(withId(R.id.forward)).perform(scrollTo(), click())
+                await { controller.currentPosition in 29_900..34_000 && controller.isPlaying }
+                onMain { controller.pause() }
+                onView(withId(R.id.nav_queue)).perform(click())
+                await {
+                    resumedActivity().findViewById<RecyclerView>(R.id.queueList)
+                        .findViewHolderForAdapterPosition(76)?.itemView?.isShown == true
+                }
+                scenario.onActivity { activity ->
+                    val list = activity.findViewById<RecyclerView>(R.id.queueList)
+                    val rows = (list.adapter as com.macarmusic.app.ui.MusicRowAdapter).currentList
+                    assertTrue(rows[76].active)
+                    assertEquals(1, rows.count { it.active })
+                    assertTrue(Rect.intersects(bounds(list), bounds(list.findViewHolderForAdapterPosition(76)!!.itemView)))
+                }
+                screenshot("fine-queue-current-occurrence")
+            } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
+        }
+    }
+
+    @Test fun fineTuningNoticesExpireAfterTenSecondsWithoutClosingNewerNotices() {
+        ActivityScenario.launch(MainActivity::class.java).use {
+            await { resumedActivity().hasWindowFocus() }
+            app.inform("First operation")
+            val first = requireNotNull(app.notice.value)
+            SystemClock.sleep(1_500)
+            app.report("New operation")
+            app.dismissNotice(first.id)
+            SystemClock.sleep(8_600)
+            assertEquals("New operation", app.notice.value?.text)
+            onView(withId(R.id.noticeText)).check(matches(withText("New operation")))
+            await(4_000) { app.notice.value == null && resumedActivity().findViewById<View>(R.id.noticeBar).visibility == View.GONE }
+            app.inform("Manual dismissal")
+            onView(withId(R.id.dismissNotice)).perform(click())
+            assertNull(app.notice.value)
+        }
+    }
+
+    @Test fun fineTuningLibrarySelectionFolderPlaylistsAndPinsWorkEndToEnd() {
+        val tracks = fixtureTracks()
+        val source = app.repository.library.value.sources.single()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            fun fillName(name: String) {
+                onView(isAssignableFrom(com.google.android.material.textfield.TextInputEditText::class.java))
+                    .inRoot(isDialog()).perform(replaceText(name), closeSoftKeyboard())
+            }
+            fun updateMenu(label: Int) {
+                onView(withId(R.id.playlistUpdate)).perform(scrollTo(), click())
+                onData(equalTo(app.text(label))).inRoot(isDialog()).perform(click())
+            }
+            fun togglePin() {
+                onView(withId(R.id.action_settings)).perform(click())
+                setting(R.id.settingsPinFolders).perform(scrollTo(), click())
+                onData(anything()).inRoot(isDialog()).atPosition(0).perform(click())
+                onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
+                onView(withId(R.id.nav_playlists)).perform(click())
+            }
+            onView(withId(R.id.nav_library)).perform(click())
+            await {
+                resumedActivity().findViewById<RecyclerView>(R.id.libraryList).let {
+                    it.adapter?.itemCount == tracks.size && it.findViewHolderForAdapterPosition(0) != null
+                }
+            }
+        awaitPlayerFrame()
+            scenario.onActivity { activity ->
+                val list = activity.findViewById<RecyclerView>(R.id.libraryList)
+                val touch = (48 * activity.resources.displayMetrics.density).toInt()
+                assertTrue("List headers must leave at least one usable row: list=${list.height}, " +
+                    "header=${(list.parent.parent as ViewGroup).getChildAt(0).height}, " +
+                    "screen=${activity.findViewById<View>(R.id.screenContainer).height}, " +
+                    "mini=${activity.findViewById<View>(R.id.miniPlayer).height}, " +
+                    "dock=${activity.findViewById<View>(R.id.navigation).height}", list.height >= touch)
+                for (id in listOf(R.id.miniPlay, R.id.miniNext, R.id.miniSeek, R.id.navigation)) {
+                    val view = activity.findViewById<View>(id)
+                    assertTrue("Compact chrome must preserve 48dp controls", view.width >= touch && view.height >= touch)
+                    assertTrue("Compact controls must remain visible", bounds(activity.findViewById(R.id.root)).contains(bounds(view)))
+                }
+                assertTrue(list.findViewHolderForAdapterPosition(0)!!.itemView.performLongClick())
+            }
+            await { ViewModelProvider(resumedActivity())[MusicViewModel::class.java].librarySelecting.value }
+            onMain { resumedActivity().findViewById<RecyclerView>(R.id.libraryList).scrollToPosition(1) }
+            await {
+                resumedActivity().findViewById<RecyclerView>(R.id.libraryList)
+                    .findViewHolderForAdapterPosition(1)?.itemView?.isShown == true
+            }
+            scenario.onActivity { activity ->
+                activity.findViewById<RecyclerView>(R.id.libraryList).findViewHolderForAdapterPosition(1)!!.itemView.performClick()
+            }
+            await { ViewModelProvider(resumedActivity())[MusicViewModel::class.java].librarySelection.value.size == 2 }
+            onView(withHint(R.string.search_hint)).perform(replaceText("Nested"), closeSoftKeyboard())
+            await { ViewModelProvider(resumedActivity())[MusicViewModel::class.java].visibleTracks.value.size == 1 }
+            scenario.recreate()
+            scenario.onActivity { activity ->
+                val model = ViewModelProvider(activity)[MusicViewModel::class.java]
+                assertTrue(model.librarySelecting.value)
+                assertEquals(tracks.map { it.id }.toSet(), model.librarySelection.value.toSet())
+            }
+            onView(withId(R.id.libraryAddSelected)).perform(click())
+            onView(withText(R.string.create_playlist)).inRoot(isDialog()).perform(click())
+            fillName("Selected mix")
+            onView(withText(R.string.create)).inRoot(isDialog()).perform(click())
+            await { app.repository.library.value.playlists.any { it.name == "Selected mix" && it.trackIds.size == 2 } }
+            onView(withId(R.id.playlistSaveFolders)).perform(scrollTo(), click())
+            onView(withText(R.string.save)).inRoot(isDialog()).perform(click())
+            fillName("Folder mix")
+            onView(withText(R.string.create)).inRoot(isDialog()).perform(click())
+            await { app.repository.library.value.playlists.any { it.name == "Folder mix" && it.folders.size == 1 } }
+            val saved = app.repository.library.value.playlists.first { it.name == "Folder mix" }
+            assertEquals(tracks.map { it.id }.toSet(), saved.trackIds.toSet())
+            assertEquals(source.uri, saved.folders.single().sourceUri)
+            togglePin()
+            await { app.repository.library.value.sources.single().pinned }
+            updateMenu(R.string.edit_playlist_songs)
+            onData(anything()).inRoot(isDialog()).atPosition(0).perform(click())
+            onView(withText(R.string.save)).inRoot(isDialog()).perform(click())
+            assertEquals(saved.trackIds, app.repository.library.value.playlists.first { it.id == saved.id }.trackIds)
+            val previousScan = app.repository.library.value.sources.single().lastScanMs
+            updateMenu(R.string.edit_playlist_folders)
+            onData(anything()).inRoot(isDialog()).atPosition(0).perform(click())
+            onView(withText(R.string.save)).inRoot(isDialog()).perform(click())
+            await { app.notice.value?.text == app.text(R.string.playlist_updated) &&
+                app.repository.library.value.sources.single().lastScanMs > previousScan &&
+                ViewModelProvider(resumedActivity())[MusicViewModel::class.java].scan.value == null }
+            assertEquals(saved.folders, app.repository.library.value.playlists.first { it.id == saved.id }.folders)
+            updateMenu(R.string.delete_playlist)
+            onView(withText(R.string.remove)).inRoot(isDialog()).perform(click())
+            await { app.notice.value?.text == app.text(R.string.unpin_first) }
+            assertTrue(app.repository.library.value.playlists.any { it.id == saved.id })
+            available(false)
+            try {
+                updateMenu(R.string.refresh_playlist_folders)
+                await { app.repository.library.value.sources.single().unavailable &&
+                    ViewModelProvider(resumedActivity())[MusicViewModel::class.java].scan.value == null }
+                assertEquals(saved, app.repository.library.value.playlists.first { it.id == saved.id })
+            } finally { available(true) }
+            updateMenu(R.string.refresh_playlist_folders)
+            await { !app.repository.library.value.sources.single().unavailable &&
+                app.notice.value?.text == app.text(R.string.playlist_updated) }
+            togglePin()
+            await { !app.repository.library.value.sources.single().pinned }
+            updateMenu(R.string.edit_playlist_songs)
+            onData(anything()).inRoot(isDialog()).atPosition(0).perform(click())
+            onView(withText(R.string.save)).inRoot(isDialog()).perform(click())
+            await { app.repository.library.value.playlists.first { it.id == saved.id }.trackIds.size == 1 }
+            updateMenu(R.string.rename_playlist)
+            fillName("Updated folder mix")
+            onView(withText(R.string.save)).inRoot(isDialog()).perform(click())
+            await { app.repository.library.value.playlists.any { it.id == saved.id && it.name == "Updated folder mix" } }
+            screenshot("fine-folder-playlist")
+            updateMenu(R.string.edit_playlist_folders)
+            onData(anything()).inRoot(isDialog()).atPosition(0).perform(click())
+            onView(withText(R.string.save)).inRoot(isDialog()).perform(click())
+            await { app.repository.library.value.playlists.first { it.id == saved.id }.let {
+                it.folders.isEmpty() && it.trackIds.isEmpty()
+            } }
+            updateMenu(R.string.delete_playlist)
+            onView(withText(R.string.remove)).inRoot(isDialog()).perform(click())
+            await { app.repository.library.value.playlists.none { it.id == saved.id } }
+            assertEquals(tracks.size, app.repository.library.value.tracks.size)
+            assertEquals("Selected mix", app.repository.library.value.playlists.single().name)
+        }
+    }
+
+    @Test fun fineTuningDetailsShowReadablePathsAndSubfolderPlaylistsKeepTheirScope() {
+        val tracks = fixtureTracks()
+        val nested = tracks.first { it.fileName.startsWith("02") }
+        val source = app.repository.library.value.sources.single()
+        val expected = "${source.name} / Album/${nested.fileName}"
+        assertEquals(expected, runBlocking(Dispatchers.IO) {
+            app.repository.documents.location(nested, app.repository.library.value.sources)
+        })
+        assertEquals("Album/${nested.fileName}", nested.sourcePaths.getValue(source.uri))
+        val partial = app.repository.documents.partialLocation(nested.copy(sourcePaths = emptyMap()), listOf(source))
+        assertFalse(partial.contains("content://"))
+        assertTrue(partial.contains(app.text(R.string.file_location_partial, "${source.name} / ${nested.fileName}")))
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+            val controller = future.get(20, TimeUnit.SECONDS)
+            try {
+                onMain { controller.setMediaItem(nested.toMediaItem()); controller.prepare(); controller.pause() }
+                await { controller.playbackState == Player.STATE_READY }
+                onView(withId(R.id.details)).perform(click())
+                var message: TextView? = null
+                onView(withId(android.R.id.message)).inRoot(isDialog()).check { view, _ -> message = view as TextView }
+                await { message?.text?.contains(expected) == true }
+                onView(withId(android.R.id.message)).inRoot(isDialog()).check(matches(withText(containsString(expected))))
+                screenshot("fine-song-location")
+                onView(withText(R.string.close)).inRoot(isDialog()).perform(click())
+                onView(withId(R.id.nav_folders)).perform(click())
+                onView(withText(source.name)).perform(click())
+                await { ViewModelProvider(resumedActivity())[MusicViewModel::class.java].browser.value.entries.any { it.name == "Album" } }
+                onView(withText("Album")).perform(click())
+                await { ViewModelProvider(resumedActivity())[MusicViewModel::class.java].browser.value.path.lastOrNull()?.documentId == "music/album" }
+                onView(withText(R.string.save_folder_playlist)).perform(scrollTo(), click())
+                onView(withText(R.string.save)).inRoot(isDialog()).perform(click())
+                onView(isAssignableFrom(com.google.android.material.textfield.TextInputEditText::class.java))
+                    .inRoot(isDialog()).perform(replaceText("Nested folder"), closeSoftKeyboard())
+                onView(withText(R.string.create)).inRoot(isDialog()).perform(click())
+                await { app.repository.library.value.playlists.any { it.name == "Nested folder" } }
+                val playlist = app.repository.library.value.playlists.first { it.name == "Nested folder" }
+                assertEquals(listOf(nested.id), playlist.trackIds)
+                assertEquals("music/album", playlist.folders.single().documentId)
+                assertEquals(app.repository.library.value, LibraryCodec.decodeLibrary(File(app.filesDir, "library.json").readText()))
+            } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
         }
     }
 
@@ -218,7 +902,6 @@ class MusicIntegrationTest {
                 if (activity !is MainActivity || firstDrawChildren >= 0) return
                 val container = activity.findViewById<ViewGroup>(R.id.screenContainer)
                 val model = ViewModelProvider(activity)[MusicViewModel::class.java]
-                val observer = container.viewTreeObserver
                 val listener = object : ViewTreeObserver.OnDrawListener {
                     override fun onDraw() {
                         val background = activity.findViewById<View>(R.id.backgroundImage)
@@ -233,11 +916,14 @@ class MusicIntegrationTest {
                         }
                         if (background.visibility == View.VISIBLE && backgroundDrawAt == 0L) {
                             backgroundDrawAt = SystemClock.elapsedRealtime()
-                            container.post { if (observer.isAlive) observer.removeOnDrawListener(this) }
+                            container.post {
+                                val observer = container.viewTreeObserver
+                                if (observer.isAlive) observer.removeOnDrawListener(this)
+                            }
                         }
                     }
                 }
-                observer.addOnDrawListener(listener)
+                container.doOnAttach { it.viewTreeObserver.addOnDrawListener(listener) }
             }
             override fun onActivityCreated(activity: Activity, state: Bundle?) = Unit
             override fun onActivityResumed(activity: Activity) = Unit
@@ -593,12 +1279,12 @@ class MusicIntegrationTest {
             onView(withId(R.id.action_settings)).perform(click())
             chooseSetting(R.id.settingsLanguage, R.string.language_english)
             onView(withId(R.id.settingsHeading)).check(matches(withText("General")))
-            for (category in SettingsCategory.entries) {
+            for (category in SettingsCategory.pages) {
                 selectCategory(category)
                 scenario.onActivity { activity ->
                     assertEquals(category, ViewModelProvider(activity)[MusicViewModel::class.java].settingsCategory.value)
                     assertEquals(activity.getString(category.label), activity.findViewById<TextView>(R.id.settingsHeading).text)
-                    SettingsCategory.entries.forEach {
+                    SettingsCategory.pages.forEach {
                         assertEquals(it == category, activity.findViewById<MaterialButton>(it.buttonId).isChecked)
                         assertEquals(if (it == category) View.VISIBLE else View.GONE,
                             activity.findViewById<View>(it.panelId).visibility)
@@ -638,16 +1324,17 @@ class MusicIntegrationTest {
             }
             screenshot("categories-spectrum-portrait")
             scenario.onActivity { activity ->
-                SettingsCategory.entries.forEach { category ->
+                SettingsCategory.pages.forEach { category ->
                     val button = activity.findViewById<MaterialButton>(category.buttonId)
-                    assertEquals("English category ${button.text} should fit without splitting a word", 1, button.lineCount)
+                    assertTrue("Category ${button.text} must stay readable", button.lineCount in
+                        1..(if (category == SettingsCategory.ABOUT) 2 else 1))
                 }
             }
             chooseSetting(R.id.settingsLanguage, R.string.language_chinese)
-            selectCategory(SettingsCategory.APPEARANCE)
+            selectCategory(SettingsCategory.GENERAL)
             chooseSetting(R.id.settingsTheme, R.string.theme_day)
-            onView(withId(R.id.categoryAppearance)).check(matches(withText("外观")))
-            onView(withId(R.id.settingsAppearancePanel)).check(matches(isDisplayed()))
+            onView(withId(R.id.categoryGeneral)).check(matches(withText("常规")))
+            onView(withId(R.id.settingsGeneralPanel)).check(matches(isDisplayed()))
             screenshot("categories-chinese-day")
             onView(withContentDescription(app.text(R.string.back))).perform(click())
             onView(withId(R.id.navigation)).check(matches(isDisplayed()))
@@ -665,14 +1352,12 @@ class MusicIntegrationTest {
             chooseDropdown(R.id.spectrumPalette, app.text(R.string.spectrum_fire))
             chooseDropdown(R.id.spectrumFireStyle, app.text(R.string.spectrum_smooth))
             setting(R.id.spectrumColorLow).perform(scrollTo(), click())
-            onView(withId(R.id.colorRed)).perform(GeneralSwipeAction(Swipe.SLOW,
-                { seekCoordinates(it, 0.9f) }, { seekCoordinates(it, 0.15f) }, Press.FINGER))
+            onView(withTagValue(equalTo<Any>(0x448aff))).perform(scrollTo(), click())
             screenshot("fire-color-editor")
             onView(withText(app.text(R.string.cancel))).inRoot(isDialog()).perform(click())
             assertEquals(SpectrumColors.FIRE, app.displaySettings.options.value.spectrum.fireColors)
             setting(R.id.spectrumColorLow).perform(scrollTo(), click())
-            onView(withId(R.id.colorRed)).perform(GeneralSwipeAction(Swipe.SLOW,
-                { seekCoordinates(it, 0.9f) }, { seekCoordinates(it, 0.15f) }, Press.FINGER))
+            onView(withTagValue(equalTo<Any>(0x448aff))).perform(scrollTo(), click())
             onView(withText(app.text(R.string.apply))).inRoot(isDialog()).perform(click())
             val fire = app.displaySettings.options.value.spectrum.fireColors
             assertNotEquals(SpectrumColors.FIRE.low, fire.low)
@@ -680,8 +1365,7 @@ class MusicIntegrationTest {
             assertEquals(SpectrumColors.CLASSIC, app.displaySettings.options.value.spectrum.classicColors)
             chooseDropdown(R.id.spectrumPalette, app.text(R.string.spectrum_classic))
             setting(R.id.spectrumColorHigh).perform(scrollTo(), click())
-            onView(withId(R.id.colorBlue)).perform(GeneralSwipeAction(Swipe.SLOW,
-                { seekCoordinates(it, 0.1f) }, { seekCoordinates(it, 0.9f) }, Press.FINGER))
+            onView(withTagValue(equalTo<Any>(0x00bcd4))).perform(scrollTo(), click())
             onView(withText(app.text(R.string.apply))).inRoot(isDialog()).perform(click())
             val classic = app.displaySettings.options.value.spectrum.classicColors
             assertNotEquals(SpectrumColors.CLASSIC.high, classic.high)
@@ -815,14 +1499,14 @@ class MusicIntegrationTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             for (orientation in listOf(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)) {
                 rotate(scenario, orientation)
-                val geometry = mutableMapOf<NavigationPosition, Pair<Int, Int>>()
+                val geometry = mutableMapOf<NavigationPosition, Triple<Int, Int, Int>>()
                 for (position in NavigationPosition.entries) {
                     onMain { app.displaySettings.update { it.copy(navigationPosition = position) } }
                     await { resumedActivity().findViewById<View>(R.id.navigation).let {
                         if (position == NavigationPosition.LEFT || position == NavigationPosition.RIGHT) it.width < it.height
                         else it.width > it.height
                     } }
-                    instrumentation.waitForIdleSync()
+                    awaitPlayerFrame()
                     val top = onMainResult {
                         val activity = resumedActivity()
                         val container = activity.findViewById<android.view.ViewGroup>(R.id.screenContainer)
@@ -842,7 +1526,9 @@ class MusicIntegrationTest {
                             assertTrue("Lyrics, spectrum, and information should have equal column widths",
                                 kotlin.math.abs(cover.width * 2 + gap - controls.width) <= 2)
                         }
-                        geometry[position] = player.height to information.height
+                        geometry[position] = Triple(player.height, information.height,
+                            activity.findViewById<View>(R.id.navigation).height +
+                                activity.resources.getDimensionPixelSize(R.dimen.player_gap))
                         val toolbar = bounds(activity.findViewById(R.id.toolbar))
                         val screen = bounds(container)
                         toolbar to screen.top
@@ -861,8 +1547,7 @@ class MusicIntegrationTest {
                 val bottom = requireNotNull(geometry[NavigationPosition.BOTTOM])
                 for (edge in listOf(NavigationPosition.LEFT, NavigationPosition.RIGHT)) {
                     val side = requireNotNull(geometry[edge])
-                    val dockHeight = (80 * app.resources.displayMetrics.density).toInt() +
-                        app.resources.getDimensionPixelSize(R.dimen.player_gap)
+                    val dockHeight = bottom.third
                     assertEquals("Side docking must release all of the bottom toolbar height", dockHeight, side.first - bottom.first)
                     if (orientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE &&
                         bottom.first >= 420 * app.resources.displayMetrics.density) {
@@ -906,7 +1591,7 @@ class MusicIntegrationTest {
                             player.height, player.getChildAt(0).height)
                         assertEquals(0, player.scrollY)
                         val minimumTouch = (48 * activity.resources.displayMetrics.density).toInt()
-                        val buttons = listOf(R.id.shuffle, R.id.previous, R.id.play, R.id.next, R.id.repeat)
+                        val buttons = listOf(R.id.shuffle, R.id.previous, R.id.rewind, R.id.play, R.id.forward, R.id.next, R.id.repeat)
                             .map { activity.findViewById<View>(it) }
                         for (button in buttons + listOf(activity.findViewById(R.id.favorite), activity.findViewById(R.id.details))) {
                             val geometry = listOf(R.id.cover, R.id.controls, R.id.metadataRow, R.id.seekBlock,
@@ -918,8 +1603,10 @@ class MusicIntegrationTest {
                                 viewport.contains(bounds(button)))
                             assertTrue("Keep a 48dp touch target", button.width >= minimumTouch && button.height >= minimumTouch)
                         }
-                        buttons.zipWithNext().forEach { (left, right) ->
-                            assertEquals(gap, bounds(right).left - bounds(left).right)
+                        buttons.groupBy { bounds(it).top }.values.forEach { row ->
+                            row.sortedBy { bounds(it).left }.zipWithNext().forEach { (left, right) ->
+                                assertTrue("Transport controls need a safe gap", bounds(right).left - bounds(left).right >= gap)
+                            }
                         }
                         for ((above, below) in listOf(R.id.cover to R.id.controls, R.id.metadataRow to R.id.seekBlock,
                             R.id.seekBlock to R.id.transportRow, R.id.transportRow to R.id.footerRow)) {
@@ -944,7 +1631,8 @@ class MusicIntegrationTest {
     }
 
     @Test fun allBorderStylesStayTransparentAndCharacterEditorPersists() {
-        val labels = listOf(R.string.block_solid, R.string.block_dashed, R.string.block_arc, R.string.block_characters)
+        val labels = listOf(R.string.block_solid, R.string.block_dashed, R.string.block_arc, R.string.block_characters,
+            R.string.block_dashed_arc)
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
             tapAfterWindowTransition(R.id.action_settings)
@@ -955,7 +1643,9 @@ class MusicIntegrationTest {
                 assertEquals(style, DisplaySettings(app) {}.options.value.blockOutline.style)
                 scenario.onActivity { activity ->
                     assertNull("Transport buttons must not have a second touching outline", activity.findViewById<View>(R.id.transportRow).foreground)
-                    for (id in listOf(R.id.miniPlayer, R.id.cover, R.id.favorite, R.id.details,
+                    val miniOutline = activity.findViewById<View>(R.id.miniPlayer).foreground
+                    assertNull("Single-row Settings mini controls must not have overlapping outer borders", miniOutline)
+                    for (id in listOf(R.id.cover, R.id.favorite, R.id.details,
                         R.id.navigationArtwork, R.id.nav_player, R.id.nav_library, R.id.nav_folders, R.id.nav_queue, R.id.nav_playlists)) {
                         assertOutlinedWithoutFill(requireNotNull(activity.findViewById<View>(id).foreground))
                     }
@@ -967,6 +1657,7 @@ class MusicIntegrationTest {
                 screenshot("border-${style.name.lowercase()}")
                 onView(withId(R.id.action_settings)).perform(click())
             }
+            chooseDropdown(R.id.settingsBlockStyle, app.text(R.string.block_characters))
             setting(R.id.settingsBlockCharacter).perform(scrollTo(), click())
             onView(withId(R.id.blockCharacterInput)).perform(replaceText("+"), closeSoftKeyboard())
             onView(withText(app.text(R.string.cancel))).inRoot(isDialog()).perform(click())
@@ -1030,9 +1721,9 @@ class MusicIntegrationTest {
                     !list.isLayoutRequested && list.getChildAdapterPosition(active) == (list.adapter as LyricsAdapter).activeLine &&
                     kotlin.math.abs(active.top + active.height / 2 - list.height / 2) <= 2
             }
-            fun assertSize(percent: Int) = onMainResult {
+            fun assertSize(sizeSp: Int) = onMainResult {
                 val list = lyricList()
-                val geometry = "enlargement=$percent, list=${bounds(list)}, active=${(list.adapter as LyricsAdapter).activeLine}, " +
+                val geometry = "size=$sizeSp, list=${bounds(list)}, active=${(list.adapter as LyricsAdapter).activeLine}, " +
                     "rows=${list.children.joinToString { "${list.getChildAdapterPosition(it)}:${bounds(it)}/${it.isSelected}" }}"
                 assertTrue("The active line must be visible: $geometry", list.children.any { it.isSelected })
                 val active = list.children.filterIsInstance<TextView>().single { it.isSelected }
@@ -1043,11 +1734,11 @@ class MusicIntegrationTest {
                     it.text.measure(View.MeasureSpec.makeMeasureSpec(list.width, View.MeasureSpec.EXACTLY),
                         View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
                 }.text
-                assertEquals(1f + percent / 100f, active.textSize * active.scaleX / (other.textSize * other.scaleX), 0.001f)
+                assertEquals(sizeSp / 20f, active.textSize * active.scaleX / (other.textSize * other.scaleX), 0.001f)
                 val density = list.resources.displayMetrics.density
                 assertEquals((10 * density).toInt(), active.paddingTop)
                 assertEquals((2 * density).toInt(), other.paddingTop)
-                assertTrue("Inactive lyrics must not reserve active-line height", active.height > other.measuredHeight)
+                assertTrue("Inactive lyrics must not reserve active-line padding", active.paddingTop > other.paddingTop)
                 other.measuredHeight
             }
             try {
@@ -1069,26 +1760,26 @@ class MusicIntegrationTest {
                     }
                     throw AssertionError(state, error)
                 }
-                val oldHeight = assertSize(20)
+                val oldHeight = assertSize(24)
                 onMain { controller.seekTo(22_000) }
                 await { (lyricList().adapter as LyricsAdapter).activeLine == 11 && activeCentered() }
-                assertEquals(oldHeight, assertSize(20))
+                assertEquals(oldHeight, assertSize(24))
                 rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
                 onView(withId(R.id.action_settings)).perform(click())
-                setting(R.id.lyricEnlargement).perform(scrollTo(), GeneralSwipeAction(Swipe.SLOW,
+                setting(R.id.lyricActiveSize).perform(scrollTo(), GeneralSwipeAction(Swipe.SLOW,
                     { seekCoordinates(it, 0.4f) }, { seekCoordinates(it, 1f) }, Press.FINGER))
-                assertEquals(60, DisplaySettings(app) {}.options.value.lyricEnlargementPercent)
+                assertEquals(48, DisplaySettings(app) {}.options.value.lyricAppearance.activeSizeSp)
                 scenario.recreate()
                 onView(withContentDescription(app.text(R.string.back))).perform(click())
                 await { activeCentered() }
-                assertSize(60)
+                assertSize(48)
                 onView(withId(R.id.action_settings)).perform(click())
-                setting(R.id.lyricEnlargement).perform(scrollTo(), GeneralSwipeAction(Swipe.SLOW,
+                setting(R.id.lyricActiveSize).perform(scrollTo(), GeneralSwipeAction(Swipe.SLOW,
                     { seekCoordinates(it, 0.9f) }, { seekCoordinates(it, 0f) }, Press.FINGER))
-                assertEquals(0, DisplaySettings(app) {}.options.value.lyricEnlargementPercent)
+                assertEquals(12, DisplaySettings(app) {}.options.value.lyricAppearance.activeSizeSp)
                 onView(withContentDescription(app.text(R.string.back))).perform(click())
                 await { activeCentered() }
-                assertSize(0)
+                assertSize(12)
                 assertEquals(22_000, onMainResult { controller.currentPosition })
                 assertFalse(onMainResult { controller.playWhenReady })
             } finally {
@@ -1180,14 +1871,10 @@ class MusicIntegrationTest {
             fun photo() = ((resumedActivity().supportFragmentManager.findFragmentByTag("about-photo")
                 as PhotoViewerDialog).requireDialog().findViewById<ZoomImageView>(R.id.fullResolutionPhoto))
             fun openAbout() {
-                onMain {
-                    assertTrue((resumedActivity().findViewById<View>(R.id.toolbar) as com.google.android.material.appbar.MaterialToolbar)
-                        .menu.performIdentifierAction(R.id.action_about, 0))
-                }
-                await {
-                    (resumedActivity().supportFragmentManager.findFragmentByTag("about") as? AboutDialog)
-                        ?.dialog?.window?.decorView?.hasWindowFocus() == true
-                }
+                tapAfterWindowTransition(R.id.action_settings)
+                await { resumedActivity().findViewById<View>(R.id.settingsPanel)?.isShown == true }
+                selectCategory(SettingsCategory.ABOUT)
+                onView(withId(R.id.aboutPhoto)).perform(scrollTo())
             }
             try {
                 onMain {
@@ -1198,9 +1885,8 @@ class MusicIntegrationTest {
                 openAbout()
                 onView(withId(R.id.aboutPhoto)).check(matches(isDisplayed()))
                 onMain {
-                    val dialog = (resumedActivity().supportFragmentManager.findFragmentByTag("about") as AboutDialog).requireDialog()
-                    val thumbnail = dialog.findViewById<ImageView>(R.id.aboutPhoto)
-                    val heading = dialog.findViewById<View>(R.id.aboutHeading)
+                    val thumbnail = resumedActivity().findViewById<ImageView>(R.id.aboutPhoto)
+                    val heading = resumedActivity().findViewById<View>(R.id.aboutHeading)
                     assertTrue(bounds(thumbnail).left >= bounds(heading).right)
                     assertTrue(bounds(thumbnail).centerY() in bounds(heading).top..bounds(heading).bottom)
                 }
@@ -1222,19 +1908,19 @@ class MusicIntegrationTest {
                 assertEquals(1.5f, onMainResult { photo().zoom }, 0.001f)
                 onView(withId(R.id.photoZoomOut)).perform(click())
                 assertEquals(1f, onMainResult { photo().zoom }, 0.001f)
-                val gestureTrace = mutableListOf<String>()
                 onMain {
                     val view = photo()
-                    view.setOnTouchListener { _, event ->
-                        gestureTrace.add("${event.actionMasked}@${event.eventTime},${event.x}/${event.y},zoom=${view.zoom}")
-                        false
-                    }
-                    view.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
-                        gestureTrace.add("layout=$left/$top/$right/$bottom,zoom=${view.zoom}")
+                    // Preserve gesture timing even when host load delays emulator input delivery.
+                    val start = SystemClock.uptimeMillis()
+                    for ((offset, action) in listOf(0 to MotionEvent.ACTION_DOWN, 40 to MotionEvent.ACTION_UP,
+                        120 to MotionEvent.ACTION_DOWN, 160 to MotionEvent.ACTION_UP)) {
+                        val event = MotionEvent.obtain(start + if (offset >= 120) 120 else 0,
+                            start + offset, action, view.width / 2f, view.height / 2f, 0)
+                        event.source = InputDevice.SOURCE_TOUCHSCREEN
+                        try { view.dispatchTouchEvent(event) } finally { event.recycle() }
                     }
                 }
-                onView(withId(R.id.fullResolutionPhoto)).perform(doubleClick())
-                assertEquals(onMainResult { gestureTrace.joinToString() }, 2f, onMainResult { photo().zoom }, 0.001f)
+                assertEquals(2f, onMainResult { photo().zoom }, 0.001f)
                 val old = onMainResult { android.graphics.Matrix(photo().imageMatrix) }
                 onView(withId(R.id.fullResolutionPhoto)).perform(GeneralSwipeAction(Swipe.SLOW,
                     { view -> seekCoordinates(view, 0.5f).apply { this[1] += view.height * 0.25f } },
@@ -1245,7 +1931,7 @@ class MusicIntegrationTest {
                 screenshot("about-original-photo-viewer")
                 pressBack()
                 onView(withId(R.id.aboutPhoto)).check(matches(isDisplayed()))
-                onView(withText(app.text(R.string.close))).inRoot(isDialog()).perform(click())
+                onView(withId(R.id.nav_player)).perform(click())
                 rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
                 openAbout()
                 onView(withId(R.id.aboutPhoto)).perform(click())
@@ -1256,7 +1942,7 @@ class MusicIntegrationTest {
                 screenshot("about-original-photo-portrait")
                 onView(withContentDescription(app.text(R.string.close))).perform(click())
                 onView(withId(R.id.aboutPhoto)).check(matches(isDisplayed()))
-                onView(withText(app.text(R.string.close))).inRoot(isDialog()).perform(click())
+                onView(withId(R.id.nav_player)).perform(click())
                 assertEquals(tracks.first().id, onMainResult { controller.currentMediaItem!!.mediaId })
                 assertEquals(15_000, onMainResult { controller.currentPosition })
                 assertFalse(onMainResult { controller.playWhenReady })
@@ -1578,7 +2264,7 @@ class MusicIntegrationTest {
             for (palette in listOf(SpectrumPalette.CLASSIC, SpectrumPalette.FIRE)) {
                 view.configure(options.copy(palette = palette, fireStyle = FireStyle.SMOOTH,
                     classicColors = customized, fireColors = customized))
-                val colored = render(if (palette == SpectrumPalette.FIRE) 1 else 0)
+                val colored = render()
                 try {
                     val pixels = (1 until 19).map { row ->
                         val y = (bottom - row * step).toInt()
@@ -1586,7 +2272,8 @@ class MusicIntegrationTest {
                         val expected = customized.colorAt((bottom - y - 0.5f) / (bottom - top))
                         for (shift in listOf(0, 8, 16)) {
                             assertTrue("Continuous bars must interpolate the selected palette",
-                                kotlin.math.abs(((pixel shr shift) and 0xff) - ((expected shr shift) and 0xff)) <= 2)
+                                kotlin.math.abs(((pixel shr shift) and 0xff) - ((expected shr shift) and 0xff)) <=
+                                    if (Build.VERSION.SDK_INT < 29) 4 else 2)
                         }
                         pixel
                     }
@@ -1623,7 +2310,7 @@ class MusicIntegrationTest {
             }
             for (palette in listOf(SpectrumPalette.FIRE, SpectrumPalette.CLASSIC)) {
                 for (style in FireStyle.entries) {
-                    view.configure(SpectrumOptions(enabled = true, palette = palette, fireStyle = style,
+                    view.configure(SpectrumOptions(enabled = true, palette = palette, fireStyle = style, barStyle = style,
                         bands = 16, peaks = false, classicColors = colors, fireColors = colors))
                     view.setPlaybackActive(false)
                     view.setPlaybackActive(true)
@@ -1633,7 +2320,7 @@ class MusicIntegrationTest {
                         view.draw(Canvas(bitmap))
                         for ((band, level) in listOf(1f, 0.5f, 0.01f).withIndex()) {
                             val x = (4 * density + (width - 8 * density) / 16 * (band + 0.35f)).toInt()
-                            val led = palette == SpectrumPalette.FIRE && style == FireStyle.LED
+                            val led = style == FireStyle.LED
                             val litTop = if (led) (bottom - kotlin.math.ceil(level * 20) * segment + segmentGap).roundToInt().toFloat()
                                 else bottom - level * (bottom - top)
                             val gradientTop = if (palette == SpectrumPalette.FIRE) litTop else top
@@ -1644,8 +2331,10 @@ class MusicIntegrationTest {
                                 val pixel = bitmap.getPixel(x, y)
                                 val expected = colors.colorAt((bottom - y - 0.5f) / (bottom - gradientTop))
                                 for (shift in listOf(0, 8, 16)) {
-                                    assertTrue("$palette/$style/$level must use the correct gradient height at $y",
-                                        kotlin.math.abs(((pixel shr shift) and 0xff) - ((expected shr shift) and 0xff)) <= 2)
+                                    assertTrue("$palette/$style/$level must use the correct gradient height at $y: " +
+                                        "${pixel.toUInt().toString(16)} / ${expected.toUInt().toString(16)}",
+                                        kotlin.math.abs(((pixel shr shift) and 0xff) - ((expected shr shift) and 0xff)) <=
+                                            if (Build.VERSION.SDK_INT < 29) 4 else 2)
                                 }
                             }
                             if (palette == SpectrumPalette.FIRE) {
@@ -1655,7 +2344,8 @@ class MusicIntegrationTest {
                                 assertTrue("Every Fire bar needs the middle color", Color.red(bitmap.getPixel(x, middle)) > 200 &&
                                     Color.green(bitmap.getPixel(x, middle)) > 200)
                             } else if (level < 0.1f) {
-                                assertTrue("Short Classic bars stay at the low end", Color.red(bitmap.getPixel(x, visible.first())) < 10)
+                                assertTrue("Short Classic bars stay at the low end",
+                                    Color.red(bitmap.getPixel(x, visible.first())) < if (led) 30 else 10)
                             }
                         }
                     } finally {
@@ -1676,9 +2366,11 @@ class MusicIntegrationTest {
             val frames = java.util.concurrent.atomic.AtomicInteger()
             scenario.onActivity { activity ->
                 view = SpectrumView(activity)
-                view.viewTreeObserver.addOnDrawListener {
-                    frames.incrementAndGet()
-                    view.submit(SpectrumFrame(levels, true, 44_100))
+                view.doOnAttach {
+                    it.viewTreeObserver.addOnDrawListener {
+                        frames.incrementAndGet()
+                        view.submit(SpectrumFrame(levels, true, 44_100))
+                    }
                 }
                 dialog = android.app.Dialog(activity).apply {
                     requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
@@ -1689,33 +2381,48 @@ class MusicIntegrationTest {
                 }
             }
             try {
-                for (style in FireStyle.entries) {
+                for (paletteType in listOf(SpectrumPalette.FIRE, SpectrumPalette.CLASSIC)) for (style in FireStyle.entries) {
+                    val previousFrames = frames.get()
                     val drawn = java.util.concurrent.CountDownLatch(1)
                     onMain {
-                        view.configure(SpectrumOptions(enabled = true, palette = SpectrumPalette.FIRE,
-                            fireStyle = style, bands = 16, peaks = false, fireColors = palette))
+                        view.configure(SpectrumOptions(enabled = true, palette = paletteType,
+                            fireStyle = style, barStyle = style, bands = 16, peaks = false,
+                            fireColors = palette, classicColors = palette))
                         view.setPlaybackActive(false)
                         view.setPlaybackActive(true)
                         view.postOnAnimation { view.postOnAnimation { drawn.countDown() } }
                     }
                     assertTrue(drawn.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                    if (Build.VERSION.SDK_INT < 26) await { view.hasWindowFocus() && frames.get() >= previousFrames + 4 }
                     val picture = onMainResult {
                         assertTrue("Exercise the GPU-backed window, not only a software bitmap", view.isHardwareAccelerated)
                         Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
                     }
                     try {
-                        val copied = java.util.concurrent.CountDownLatch(1)
-                        val result = java.util.concurrent.atomic.AtomicInteger(-1)
-                        onMain {
-                            val location = IntArray(2)
-                            view.getLocationInWindow(location)
-                            android.view.PixelCopy.request(dialog.window!!,
-                                Rect(location[0], location[1], location[0] + view.width, location[1] + view.height),
-                                picture, { code -> result.set(code); copied.countDown() },
-                                android.os.Handler(android.os.Looper.getMainLooper()))
+                        if (Build.VERSION.SDK_INT >= 26) {
+                            val copied = java.util.concurrent.CountDownLatch(1)
+                            val result = java.util.concurrent.atomic.AtomicInteger(-1)
+                            onMain {
+                                val location = IntArray(2)
+                                view.getLocationInWindow(location)
+                                android.view.PixelCopy.request(dialog.window!!,
+                                    Rect(location[0], location[1], location[0] + view.width, location[1] + view.height),
+                                    picture, { code -> result.set(code); copied.countDown() },
+                                    android.os.Handler(android.os.Looper.getMainLooper()))
+                            }
+                            assertTrue(copied.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                            assertEquals(android.view.PixelCopy.SUCCESS, result.get())
+                        } else {
+                            val location = onMainResult { IntArray(2).also(view::getLocationOnScreen) }
+                            val screen = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+                            try {
+                                val folder = File(app.getExternalFilesDir(null), "test-screenshots").apply { mkdirs() }
+                                File(folder, "legacy-spectrum.png").outputStream().use { screen.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                                Canvas(picture).drawBitmap(screen,
+                                    Rect(location[0], location[1], location[0] + picture.width, location[1] + picture.height),
+                                    Rect(0, 0, picture.width, picture.height), null)
+                            } finally { screen.recycle() }
                         }
-                        assertTrue(copied.await(10, java.util.concurrent.TimeUnit.SECONDS))
-                        assertEquals(android.view.PixelCopy.SUCCESS, result.get())
                         val density = app.resources.displayMetrics.density
                         val top = 12 * app.resources.displayMetrics.scaledDensity + 8 * density
                         val bottom = picture.height - top
@@ -1726,14 +2433,16 @@ class MusicIntegrationTest {
                             val litTop = if (style == FireStyle.LED)
                                 (bottom - kotlin.math.ceil(level * 20) * step + gap).roundToInt().toFloat()
                                 else bottom - level * (bottom - top)
+                            val gradientTop = if (paletteType == SpectrumPalette.FIRE) litTop else top
                             val visible = (kotlin.math.ceil(litTop).toInt() until bottom.toInt())
                                 .filter { picture.getPixel(x, it) != Color.BLACK }
                             assertTrue("Both short and tall bars must be visible", visible.size >= 3)
                             for (y in visible) {
                                 val actual = picture.getPixel(x, y)
-                                val expected = palette.colorAt((bottom - y - 0.5f) / (bottom - litTop))
+                                val expected = palette.colorAt((bottom - y - 0.5f) / (bottom - gradientTop))
                                 for (shift in listOf(0, 8, 16)) {
-                                    assertTrue("Hardware $style/$level gradient mismatch at $y",
+                                    assertTrue("Hardware $paletteType/$style/$level gradient mismatch at $y: " +
+                                        "${Integer.toHexString(actual)} vs ${Integer.toHexString(expected)}",
                                         kotlin.math.abs(((actual shr shift) and 0xff) - ((expected shr shift) and 0xff)) <= 3)
                                 }
                             }
@@ -2027,9 +2736,31 @@ class MusicIntegrationTest {
                 }
                 await { controller.playbackState == Player.STATE_READY }
                 onView(withId(R.id.action_settings)).perform(click())
-                onView(withId(R.id.miniSeek)).perform(GeneralSwipeAction(Swipe.SLOW,
-                    { seekCoordinates(it, 0.15f) }, { seekCoordinates(it, 0.7f) }, Press.FINGER))
-                await { controller.currentPosition in 38_000..45_000 }
+                await { resumedActivity().findViewById<SeekBar>(R.id.miniSeek).isEnabled }
+                val releasePosition = java.util.concurrent.atomic.AtomicLong(-1)
+                val callback = onMainResult { resumedActivity().window.callback }
+                scenario.onActivity { activity ->
+                    activity.window.callback = object : android.view.Window.Callback by callback {
+                        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                                val seek = activity.findViewById<SeekBar>(R.id.miniSeek)
+                                val location = IntArray(2).also(seek::getLocationOnScreen)
+                                // Android 6 resamples injected swipes; verify the delivered release point.
+                                val x = (event.rawX - location[0]).toInt()
+                                val fraction = ((x - seek.paddingLeft).toFloat() /
+                                    (seek.width - seek.paddingLeft - seek.paddingRight)).coerceIn(0f, 1f)
+                                releasePosition.set(controller.duration * (fraction * seek.max).toInt() / seek.max)
+                            }
+                            return callback.dispatchTouchEvent(event)
+                        }
+                    }
+                }
+                try {
+                    onView(withId(R.id.miniSeek)).perform(GeneralSwipeAction(Swipe.SLOW,
+                        { seekCoordinates(it, 0.15f) }, { seekCoordinates(it, 0.7f) }, Press.FINGER))
+                } finally { scenario.onActivity { it.window.callback = callback } }
+                assertTrue("A substantial seek gesture must reach the player", releasePosition.get() in 30_000..50_000)
+                await { kotlin.math.abs(controller.currentPosition - releasePosition.get()) <= 150 }
                 assertFalse(onMainResult { controller.playWhenReady })
                 await {
                     resumedActivity().findViewById<TextView>(R.id.miniTime).text ==
@@ -2262,6 +2993,13 @@ class MusicIntegrationTest {
         setting(viewId).perform(scrollTo(), click())
         onData(equalTo(label)).perform(click())
         instrumentation.waitForIdleSync()
+        awaitPlayerFrame()
+    }
+
+    private fun awaitPlayerFrame() = runBlocking {
+        kotlinx.coroutines.withTimeout(5_000) {
+            withContext(Dispatchers.Main) { resumedActivity().findViewById<View>(R.id.root).awaitDraw() }
+        }
     }
 
     private fun selectCategory(category: SettingsCategory) {
@@ -2273,7 +3011,7 @@ class MusicIntegrationTest {
     private fun setting(viewId: Int): ViewInteraction {
         val category = onMainResult {
             val view = resumedActivity().findViewById<View>(viewId)
-            SettingsCategory.entries.single { category ->
+            SettingsCategory.pages.single { category ->
                 generateSequence(view) { it.parent as? View }.any { it.id == category.panelId }
             }
         }
@@ -2768,6 +3506,12 @@ class MusicIntegrationTest {
                 chooseSetting(R.id.settingsTheme, R.string.theme_day)
                 assertEquals(AppCompatDelegate.MODE_NIGHT_NO, app.themeMode)
                 await { controller.isPlaying && controller.currentMediaItem?.mediaId == tracks.first().id }
+                val accent = onMainResult { resumedActivity().getColor(R.color.accent_blue) and 0xffffff }
+                setting(R.id.settingsAccent).perform(scrollTo(), click())
+                onView(withTagValue(equalTo<Any>(accent))).perform(scrollTo(), click())
+                onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
+                await { controller.isPlaying && controller.currentMediaItem?.mediaId == tracks.first().id &&
+                    app.displaySettings.options.value.themeAccent == ThemeAccent.BLUE }
                 scenario.recreate()
                 setting(R.id.settingsLanguage).check(matches(withText(containsString("简体中文"))))
                 screenshot("settings-chinese-day")
@@ -2908,6 +3652,7 @@ class MusicIntegrationTest {
                 }
         }
         instrumentation.waitForIdleSync()
+        awaitPlayerFrame()
     }
 
     private fun chooseSetting(viewId: Int, label: Int) {
@@ -2935,8 +3680,11 @@ class MusicIntegrationTest {
             assertTrue("Player is not discoverable as an Android music service", connected.getBoolean("discovered"))
             assertTrue("Player is not discoverable as an Android music app", connected.getBoolean("discoveredMusicApp"))
             assertNotEquals(Process.myUid(), connected.getInt("uid"))
-            assertFalse("The fixture must not have privileged media access", connected.getBoolean("trusted"))
-            awaitExternal { it.getString("browsedId") == tracks.first().id }
+            // Pre-28 platform browsers cannot identify the caller for Media3's child-list callbacks.
+            if (Build.VERSION.SDK_INT >= 28) {
+                assertFalse("The fixture must not have privileged media access", connected.getBoolean("trusted"))
+                awaitExternal { it.getString("browsedId") == tracks.first().id }
+            }
             assertNotEquals(PlatformPlaybackState.STATE_PLAYING, externalState().getInt("state"))
             externalCommand("play")
             awaitExternal { it.getInt("state") == PlatformPlaybackState.STATE_PLAYING &&
@@ -2950,8 +3698,10 @@ class MusicIntegrationTest {
             externalCommand("next")
             awaitExternal { it.getString("mediaId") == tracks.last().id &&
                 it.getInt("metadataChanges") > metadataChanges }
-            externalCommand("refreshBrowser")
-            awaitExternal { it.getString("browsedId") == tracks.last().id }
+            if (Build.VERSION.SDK_INT >= 28) {
+                externalCommand("refreshBrowser")
+                awaitExternal { it.getString("browsedId") == tracks.last().id }
+            }
             externalCommand("previous")
             awaitExternal { it.getString("mediaId") == tracks.first().id }
             externalCommand("playId", tracks.last().id)

@@ -5,6 +5,7 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
+import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
@@ -59,7 +60,8 @@ object ViewTransitions {
     }
 
     suspend fun playBackground(view: View, style: TransitionStyle, durationMs: Long, outgoing: View) {
-        if (style == TransitionStyle.NONE || durationMs <= 0 || !ValueAnimator.areAnimatorsEnabled()) return
+        if (style == TransitionStyle.NONE || durationMs <= 0 ||
+            (Build.VERSION.SDK_INT >= 26 && !ValueAnimator.areAnimatorsEnabled())) return
         val duration = (durationMs * Settings.Global.getFloat(view.context.contentResolver,
             Settings.Global.ANIMATOR_DURATION_SCALE, 1f)).toLong()
         if (duration <= 0) return

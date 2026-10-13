@@ -1,4 +1,6 @@
 <resources>
+    <!-- A resource reference avoids Android 6's string-pool bug when a Material theme is wrapped. -->
+    <string name="player_font_family" translatable="false">sans</string>
     <style name="Theme.ManaPlayer.Launch.Base" parent="Theme.ManaPlayer">
         <item name="android:windowBackground">@drawable/launch_background</item>
         <item name="android:statusBarColor">@color/launch_background</item>
@@ -21,7 +23,7 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:statusBarColor">@color/surface</item>
         <item name="android:navigationBarColor">@color/surface</item>
-        <item name="android:fontFamily">sans</item>
+        <item name="android:fontFamily">@string/player_font_family</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
     <style name="PlayerIconButton" parent="Widget.AppCompat.ImageButton">
@@ -33,13 +35,13 @@
         <item name="android:scaleType">fitCenter</item>
     </style>
     <style name="SettingButton" parent="Widget.Material3.Button.OutlinedButton">
-        <item name="android:minHeight">72dp</item>
+        <item name="android:minHeight">@dimen/settings_action_min_height</item>
         <item name="android:gravity">start|center_vertical</item>
         <item name="android:textAlignment">viewStart</item>
         <item name="android:textSize">18sp</item>
         <item name="android:textAllCaps">false</item>
-        <item name="android:paddingTop">12dp</item>
-        <item name="android:paddingBottom">12dp</item>
+        <item name="android:paddingTop">@dimen/settings_action_vertical_padding</item>
+        <item name="android:paddingBottom">@dimen/settings_action_vertical_padding</item>
     </style>
     <style name="SettingLabel">
         <item name="android:textColor">?attr/colorOnSurface</item>
@@ -58,8 +60,8 @@
         <item name="android:paddingEnd">8dp</item>
         <item name="android:paddingTop">8dp</item>
         <item name="android:paddingBottom">8dp</item>
-        <item name="android:gravity">start|center_vertical</item>
-        <item name="android:textAlignment">viewStart</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textAlignment">center</item>
         <item name="android:textSize">16sp</item>
         <item name="android:textAllCaps">false</item>
         <item name="android:textColor">@color/settings_category_text</item>

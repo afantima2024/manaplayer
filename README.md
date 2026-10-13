@@ -1,6 +1,6 @@
 # ManaMusicPlayer / 小悦音乐播放器
 
-A native Kotlin music player for **standalone / aftermarket Android head units running Android 10 (API 29) or newer**. Install the APK directly on Android. This is **not Android Auto** and **not an Android Automotive OS app**.
+A native Kotlin music player for **standalone / aftermarket Android head units running Android 6.0 (API 23) or newer**. Install the APK directly on Android. This is **not Android Auto** and **not an Android Automotive OS app**.
 
 **Set up storage, browse, search, and manage playlists only while parked.** Standard Android/Bluetooth media keys are supported; proprietary CAN-bus and steering-wheel protocols are outside the app's scope.
 
@@ -9,25 +9,25 @@ A native Kotlin music player for **standalone / aftermarket Android head units r
 - Multiple saved internal-storage or USB music folders, normally using Android's Storage Access Framework (SAF), with a persistent multi-folder playback selection. **Device music / 设备音乐** provides a picker-independent alternative for folders indexed by Android's audio library.
 - Folder/file navigation, recursive scanning and folder playback, rescan, and single-file selection. Selecting a file in the folder browser plays that file only. Library playback uses the selected loop scope.
 - Local title, artist, album, duration, track number, year, genre, and embedded-art extraction, where available. Filenames supply missing titles. Metadata and document operations run off the UI thread. Artwork is decoded on demand at a bounded resolution and cached separately, not embedded in the library database.
-- Play/pause, previous (restart after the usual threshold), next, seek, queue reordering/removal, sequential or random order, single-file/folder/selected-folders looping, and Android media-stream volume.
-- Library search and sorting, favorites, and named local playlists: create, add songs, remove songs, play, remove playlist, and save the current queue as a playlist.
+- Play/pause, previous (restart after the usual threshold), next, **10-second rewind/forward**, seek, queue reordering/removal, sequential or random order, single-file/folder/selected-folders looping, and Android media-stream volume. Opening Queue scrolls to the current playing occurrence, including repeated songs.
+- Library search, sorting, multi-song selection, favorites, and named local playlists: create, add/edit songs and folders, rename, refresh, play, delete, and save the current queue or selected folders. Pin saved folders to protect their library and playlist references until unpinned.
 - A single service-owned Media3 ExoPlayer, a MediaLibrarySession, and MediaController-driven native UI. Playback can continue in the background and with the screen off, with a media notification, Android music-widget controls, and standard headset/Bluetooth media controls.
 - Android audio focus handling (pause/duck according to the other app's request), becoming-noisy handling, and explicit playback errors. An inaccessible file **stops playback; the app never enters an automatic skip/retry loop**. Reconnect storage and press Play to retry, or choose another track.
 - Atomic, app-private persistence for library references, folder selection, favorites, playlists, and the last queue/position. Language, theme, playback mode, and sort preferences also persist. Launch restores the queue **paused, without preparing media or requesting audio focus**. There is no boot autoplay.
 - Staged startup: a small branded launch window replaces the blank white screen, the player draws before service connection, and optional work waits for usable playback controls. Background loading additionally waits for library restoration and a one-second grace period. Hidden Settings, library, folder, queue, and playlist pages are built only when opened.
 - High-contrast night/day/car-system themes and a **Customize** picture/slideshow theme with selectable transitions, timing, independent blur, black/white tint, and tint-strength controls. Large controls, a seekable mini-player outside Now Playing, and portrait/landscape layouts.
-- Transparent block outlines with solid, dashed, rounded-arc, or customizable repeated-character borders across the player, lyrics, mini-player, and navigation. An Appearance switch returns to unframed controls. Borders add no background fill, shadow, or picture tint.
+- Transparent block outlines with solid, dashed, rounded-arc, **dashed arc**, or customizable repeated-character borders across the player, lyrics, mini-player, and navigation. Rounded styles have an adjustable radius; an optional raised-brick effect adds solid lower/right edges without filling the interior. A General switch returns to unframed controls.
 - An artwork-first navigation toolbar that can dock at the bottom, top, left, or right. Responsive song information and spectrum use the remaining player space, including the height released by side docking. The header and screen top stay fixed when switching destinations. Elapsed/remaining time sits left of the main seek bar; total duration sits right.
-- Configurable Settings page transitions. An optional, real audio spectrum shares the song-information area on either side, with peaks and falloff controls. Classic uses one chart-height color scale. Fire stretches all three colors over each individual bar, including short bars, in LED or smooth rendering.
-- Optional local-first lyrics replace the main artwork area (the left panel in landscape). Timed lyrics follow smoothly; only the playing line keeps extra spacing and configurable enlargement (20% by default). Other lines are compact. Dragging shows a time immediately left of the center guide. Opt-in drag-to-play seeks to the line released there; plain lyrics remain scroll-only. Online matching and bounded caching are available when local lyrics are missing.
-- The supplied photo appears in About/help's upper-right corner. Tap it for an original-resolution viewer with pinch/double-tap zoom, panning, and zoom/Fit buttons.
-- A native two-pane Settings page: categories on the left and the selected configuration on the right, in portrait and landscape. **English**, **Simplified Chinese**, or the system language; appearance and lyrics; loop mode; playback order; and music-folder selection.
+- Configurable Settings page transitions. An optional, real audio spectrum shares the song-information area on either side, with peaks and falloff controls. Classic, Fire, and Theme support smooth bars and LED segments. Classic uses one chart-height color scale; Fire stretches all three colors over each individual bar. Tap the spectrum to cycle through Line, Classic smooth, Classic LED, Fire smooth, and Fire LED.
+- Optional local-first lyrics replace the artwork in a configurable **left/right landscape** or **top/bottom portrait** panel. Current/other lines have independent font sizes and color-block selectors, initially 24sp/20sp with the existing theme colors. Only the playing line keeps extra spacing. Dragging shows a time beside the center guide; opt-in drag-to-play seeks to the released line. Online matching and bounded caching remain available.
+- **Settings > About and help** contains usage instructions, device information, and the supplied upper-right photo. Tap the photo for an original-resolution viewer with pinch/double-tap zoom, panning, and zoom/Fit buttons.
+- A native two-pane Settings page with **English**, **Simplified Chinese**, or system language. General includes appearance controls; centered category labels have border-style-matched dividers. Color selectors keep their palette blocks and also accept custom `#RRGGBB` values with preview and validation, including theme accents. Settings uses a single-row mini-player and leaves the main navigation dock unchanged and accessible. Operation notices dismiss automatically after ten seconds or immediately using their close button.
 
 ## Build
 
 The complete project is in `C:\Users\afma\CopilotProjects\MaCarMusic`.
 
-The app and Gradle project are named **ManaMusicPlayer**, with the Chinese app name **小悦音乐播放器**. Version **1.8.0** (version code **13**) retains the application ID `com.macarmusic.app`, existing source folder, and signing identity so an in-place update preserves settings, saved folders, playlists, and the playback queue. Android 10 is the minimum; Android 6-9 are no longer supported. No player features have been removed. The `manaplayer1010` archive, Git tag, and first release preserve the earlier 1.2.0 baseline.
+The app and Gradle project are named **ManaMusicPlayer**, with the Chinese app name **小悦音乐播放器**. Version **1.9.3** (version code **17**) retains the application ID `com.macarmusic.app`, existing source folder, and signing identity so an in-place update preserves settings, saved folders, playlists, and the playback queue. Android 6.0/API 23 compatibility is restored to match the user-confirmed installable 1.3.1 APK, without reverting current features or release optimization. The `manaplayer1010` archive, Git tag, and first release preserve the earlier 1.2.0 baseline.
 
 Pinned versions:
 
@@ -38,7 +38,7 @@ Pinned versions:
 | Kotlin | 2.1.21 |
 | AndroidX Media3 | 1.6.1 |
 | Compile / target SDK | 35 |
-| Minimum SDK | 29 |
+| Minimum SDK | 23 |
 | Android SDK Build Tools | 35.0.0 |
 | Java compilation target | 17 |
 
@@ -63,9 +63,11 @@ On the development machine the existing compatible JDK is `C:\Users\afma\.jdks\j
 C:\Users\afma\CopilotProjects\MaCarMusic\dist\manaplayer.apk
 ```
 
-The export helper builds R8-optimized, resource-shrunk, non-debuggable release code, verifies Android 10+ packaging and the signing certificate, and enforces a **6 MiB APK size budget**. It writes identical APKs to `dist\manaplayer.apk` and `dist\optimized\manaplayer.apk`, plus `dist\manaplayer.apk.sha256`. The top-level APK is no longer the approximately 22 MiB debug build.
+The export helper builds R8-optimized, resource-shrunk, non-debuggable release code, verifies Android 6.0+ packaging and the signing certificate, and enforces a **6 MiB APK size budget**. It writes identical APKs to `dist\manaplayer.apk` and `dist\optimized\manaplayer.apk`, plus `dist\manaplayer.apk.sha256`. The top-level APK is no longer the approximately 22 MiB debug build.
 
-The 1.8.0 APK is **5,503,089 bytes (5.25 MiB / 5.50 MB)**, only 8,249 bytes larger than the preceding optimized 1.7.3 APK. SHA-256: `9d00a648cdda6225cda22742eb713eadbf5db5984b2a00ca4d5c0665dab242cf`.
+The current **1.9.3** APK is **5,766,496 bytes (5.50 MiB / 5.77 MB)**, **173 KiB (3.17%)** larger than 1.9.2. Its SHA-256 is `5003E9ED66BB2F5D28836DE7922F27FE181CACC46AAB46206459E9F0D40F7655`. Both export locations contain that identical APK. Each later export updates `dist\manaplayer.apk.sha256` and must still meet the size budget.
+
+Restoring Android 6 support retains R8/resource shrinking and explicitly keeps DEX uncompressed, as in the preceding optimized release. Lowering minSdk would otherwise change Gradle's default to compressed DEX; the smaller ZIP is not used as a substitute for preserving direct DEX mapping on modern Android. The APK uses Android 6-compatible DEX 035, not DEX 039. No dependency or optional feature was added for this compatibility update.
 
 The first build downloads the pinned Gradle distribution and dependencies.
 
@@ -94,21 +96,33 @@ Copy `manaplayer.apk` to the head unit and open it with its local package instal
 Always choose the intended device explicitly. Development validation does not authorize actions on connected physical devices.
 
 1. Open **ManaMusicPlayer / 小悦音乐播放器** while parked.
-2. Go to **Folders > Add folder**. Choose a music subfolder in internal storage or an exposed USB volume, and grant read access. If the head unit has no Android folder picker, choose **Device music**, allow music/audio access (called storage access on Android 10-12), and check one or more indexed folders in the built-in chooser. This option is also under **Settings > Folders**.
+2. Go to **Folders > Add folder**. Choose a music subfolder in internal storage or an exposed USB volume, and grant read access. If the head unit has no Android folder picker, choose **Device music**, allow music/audio access (called storage access on Android 6-12), and check one or more indexed folders in the built-in chooser. This option is also under **Settings > Folders**.
 3. Add further folders as needed. Tap a folder to browse it, **Play folder** to scan/play it recursively, or a file to play just that file. **Open file** tries Android's document picker, then compatible ordinary file managers, and validates the returned content URI and audio type afterward.
 4. Use a song's three-dot menu for favorite, Play next, Add to queue, Add to playlist, details, or removal of its library reference.
-5. Use **Playlists > New playlist**, then **Add songs**, or **Queue > Save as playlist**.
-6. Open **Settings** using the top-right gear to change language, appearance, playback modes, and selected folders.
+5. Use **Playlists > New playlist**, then **Add songs**, or **Queue > Save as playlist**. **Save folders as playlist** includes selected saved roots or the currently browsed subfolder. Inside a playlist, **Update playlist** edits its songs/folders, renames it, refreshes saved folders, or deletes it.
+6. In Library, long-press a song or tap **Select songs**, select multiple rows, then **Add to playlist**. **Select all shown** respects the current search/filter. Selection persists while filtering or rotating; choosing songs in this mode does not start playback. Unfinished selections are held in the retained ViewModel, not Android's size-limited saved-state Bundle, and clear when that browsing session ends.
+7. Open **Settings** using the only top-right button, the gear. **About and help** is a Settings category. The navigation dock remains usable; tap any page to leave Settings directly.
+8. **Settings > Folders > Pin folders** protects saved sources and their songs from removal/deselection, including deleting a playlist containing them. Unpin first when you want to remove those references.
 
 Removing a source, song reference, or playlist **never deletes, edits, moves, or renames a music file**. Library reference removal prunes associated favorites and playlist entries. Source rescans can rediscover deliberately removed song references.
+
+Folder playlists retain their folder associations separately from manually added songs. Refresh scans only when requested, adds discoveries, preserves manually added songs and existing saved references, and does not replace playlist membership after a failed scan. Explicitly editing/removing songs is separate from refreshing; a future refresh can rediscover an excluded song still in a linked folder. Overlapping folders deduplicate songs. Pins protect library/playlists, not the temporary playback queue.
+
+**Song details > File location** shows a storage-volume path or the saved-folder-relative path, rather than a cryptic `content://` identifier. Android uses content URIs to grant access through storage providers; they are not ordinary filesystem paths. If a provider cannot reveal a complete path, Details shows the known folder/filename and explains the limitation instead of inventing a path. Location lookup is asynchronous and runs only when Details is opened.
+
+Operation notices, including scan results and errors, close after **10 seconds**. Each replacement notice gets a fresh ten-second lifetime, and its close button dismisses it immediately. Confirmation dialogs remain open until you choose an action.
+
+On short windows, the horizontal dock uses labeled-for-accessibility icons, and the mini-player keeps Play, Next, seeking, and time in one row. List headings move into the main header; search and actions share a row, preserving at least 48dp control targets. Settings stays scrollable above the mini-player and dock. Long compact notices can be read by long-pressing their text. Exceptionally short landscape player panels can scroll rather than shrinking controls below their usable size.
 
 ### Head units without a system file picker
 
 The old "no compatible Android file picker" message was emitted after Android rejected `ACTION_OPEN_DOCUMENT_TREE`/`ACTION_OPEN_DOCUMENT` with `ActivityNotFoundException`; there was no package-visibility precheck incorrectly hiding a handler. The same error was reproduced with the preceding APK on an emulator whose DocumentsUI package was disabled. A car's exact cause can be a missing, disabled, or unsupported picker implementation, not necessarily a refused storage permission.
 
-Normal SAF selection grants access to the chosen file/folder through the picker, so **no storage-permission prompt at app startup is needed**. The optional Device music path instead requests `READ_MEDIA_AUDIO` on Android 13+, or `READ_EXTERNAL_STORAGE` on Android 10-12 (declared with `maxSdkVersion="32"`). The prompt appears only after choosing Device music. Denial keeps existing references; a blocked prompt links to the app's permission settings. No all-files access, write permission, photo/video permission, package-inventory permission, or boot-time media scan is added.
+Normal SAF selection grants access to the chosen file/folder through the picker, so **no storage-permission prompt at app startup is needed**. The optional Device music path instead requests `READ_MEDIA_AUDIO` on Android 13+, or `READ_EXTERNAL_STORAGE` on Android 6-12 (declared with `maxSdkVersion="32"`). The prompt appears only after choosing Device music. Denial keeps existing references; a blocked prompt links to the app's permission settings. No all-files access, write permission, photo/video permission, package-inventory permission, or boot-time media scan is added.
 
-Device music queries MediaStore on a cancellable worker, presents multiple selectable folders, and uses the same saved-source, browsing, recursive scan, rescan, loop-selection, favorites, playlist, and playback paths. Permission checks include app-ops so denied access is not mistaken for an empty library. Music remains addressed by `content://` URIs. All supported versions use MediaStore's relative directory and volume columns; the pre-Android-10 raw-path grouping branch has been removed. Missing volumes and failed rescans preserve saved references.
+On Android 6-9, the legacy audio index supplies folder/file locations through its `_data` metadata column; those strings are used only for grouping and display, never to open raw files or walk a disk. Audio still opens through `content://` URIs. Because these providers cannot reliably identify individual USB mount states, an empty rescan of a saved indexed folder reports unavailable media and retains its references rather than silently erasing them. An initially empty Device music catalog still displays its explicit limitation.
+
+Device music queries MediaStore on a cancellable worker, presents multiple selectable folders, and uses the same saved-source, browsing, recursive scan, rescan, loop-selection, favorites, playlist, and playback paths. Permission checks include app-ops so denied access is not mistaken for an empty library. Music remains addressed by `content://` URIs. Android 10+ uses MediaStore's relative directory and volume columns; Android 6-9 uses the guarded metadata-only grouping described above. Missing volumes and failed rescans preserve saved references.
 
 **Limitations:** this view contains only audio indexed by Android. Granting permission cannot make an unindexed USB volume appear. Such files need a compatible file manager returning a readable content URI, or restored system SAF support from the head-unit vendor. MediaStore permission does not grant adjacent LRC/TXT files; a SAF folder grant is still needed for sidecars. Embedded lyrics, cached/online lyrics, metadata, and covers continue to work. Index or volume-identity changes can require reselection. Different providers may expose separate references to the same recording.
 
@@ -126,7 +140,35 @@ The activity starts lyrics, embedded artwork, and visualizer capture after the c
 
 Secondary pages are created on first use and retained for that activity. Hidden list rows are not rebuilt, and library sorting is subscribed only while the library is open (with a short retention window). Rotation and theme/language recreation restore the selected page and its settings category rather than constructing every page.
 
-### Measured cold starts
+### 1.9.0 performance baseline
+
+The optimized 1.9.0 APK (SHA-256 `A151AD5F7E9BEF34E6BF1AD189C2B14D0C820E6408DCB5F357AEBEA4B4EE6D90`) was compared with the published 1.8.0 APK on one disposable Android 13/API 33 x86_64 emulator: two virtual CPUs, 2 GiB RAM, 1024 x 600 at density 160, software graphics, and normal animation scales. The Android 10 emulator and builds were stopped during measurement. The sequence was **1.8.0, 1.9.0, then 1.8.0 again** to expose batch/runtime variation rather than attribute it to the new code. These performance measurements were not repeated for 1.9.1 or 1.9.2.
+
+Each library size used one excluded warm-up and three force-stopped launches, with identical synthetic library/queue JSON and settings: night theme, lyrics/spectrum off, no slideshow. Values are median **first display / usable controls, in milliseconds**:
+
+| Saved library and queue | 1.8.0 initial batch | 1.9.0 | 1.8.0 repeat |
+| --- | --- | --- | --- |
+| Empty | 1,427 / 1,739 | 684 / 791 | 815 / 1,016 |
+| 2,000 tracks | 1,589 / 2,167 | 767 / 1,029 | 705 / 990 |
+| 10,000 tracks | 1,527 / 2,777 | 752 / 1,224 | 786 / 1,286 |
+
+**This does not establish a general startup speedup.** The baseline repeat was substantially faster than its first batch, and its 2,000-track usable-controls median was 39 ms lower than 1.9.0. Host scheduling and Android runtime/profile/cache state were not frozen. First display is `am start -W`; usable controls follows restored paused playback and a rendered frame. These are emulator measurements, not car-startup guarantees.
+
+With actual synthetic PCM playback, each feature used two 20-second samples and a different mode order in the second pass. Spectrum was Fire/LED at 30 fps. Slideshow used three generated 1280 x 720 pictures, a five-second interval and two-second fade. CPU is the app process's percentage of **one** virtual CPU; PSS is a sampled proportional memory figure, not peak use:
+
+| Optional feature | 1.8.0 initial CPU | 1.9.0 CPU | 1.8.0 repeat CPU | 1.9.0 PSS |
+| --- | --- | --- | --- | --- |
+| None | 3.5% | 2.4% | 3.4% | 38.2 MiB |
+| 30-fps spectrum | 9.1% | 7.0% | 11.4% | 40.0 MiB |
+| Sharp-picture slideshow | 10.6% | 7.9% | 14.0% | 49.0 MiB |
+
+The varying baseline samples prevent a reliable percentage-improvement claim. A static/ordinary background and disabled spectrum remain the lightest choices; neither feature is required for playback. Optional image/lyric/visualizer work remains deferred, Settings remains lazy, and no dependency was added for these refinements.
+
+Large-library memory still matters: median startup PSS with 10,000 references was 79.8 MiB in 1.9.0, versus 86.9 MiB in the initial baseline and 73.7 MiB in its repeat. The new build retains per-source readable-path data that the old model ignored, but these variable point samples do not isolate its exact allocation cost. Whole-library/queue restoration and periodic full-queue checkpoints remain the existing scaling limits; this update does not claim to redesign them.
+
+Raw startup/feature CSVs, installed APK hashes, launch logs, frame/memory reports, and playback screenshots are retained under `app\build\reports\performance\api33\fine-baseline-180\`, `fine-updated-190\`, and `fine-baseline-repeat-180\`. Reproduce with `scripts\Measure-Performance.ps1`, using `-Runs 3 -FeatureRuns 2 -SampleSeconds 20 -TrackCounts @(0,2000,10000) -Features @('minimal','spectrum30','slideshow')` and a distinct label for each installed APK.
+
+### Historical 1.7.0 / 1.7.1 cold starts
 
 The previously delivered 1.7.0 debug APK and the 1.7.1 debug APK were compared on the same isolated Android 15/API 35 x86_64 emulator, at 1024 x 600 and density 160 with software graphics. Each APK was reinstalled before its batch. Each scenario used one excluded warm-up followed by five force-stopped, process-cold launches, with no method profiler attached. Settings were identical: night theme, lyrics enabled, online lookup disabled, and spectrum enabled. The larger case used 2,000 synthetic saved library/queue references, not a physical music drive.
 
@@ -228,30 +270,32 @@ External requests are limited to standard playback commands and already-saved mu
 
 Compatibility is with standard Android media APIs, not an OEM's private broadcasts, package-name allowlists, or CAN-bus protocol. A vendor plugin that only accepts its factory player may still require configuration or vendor support.
 
-For plugin authors: use `MediaController.Callback` metadata/state updates for a live widget. The browser root is an entry point, not a full music catalogue; framework `MediaBrowser` clients may need to reload its children rather than relying on Media3's compatibility-layer subscription notifications.
+For plugin authors: use `MediaController.Callback` metadata/state updates for a live widget. The browser root is an entry point, not a full music catalogue; framework `MediaBrowser` clients may need to reload its children rather than relying on Media3's compatibility-layer subscription notifications. On Android 6-8, framework child-list callbacks lack caller identity required by Media3, so use the session's metadata/queue and transport controls rather than relying on that browser list. Modern framework browsing is covered on Android 10 and 13.
 
 ## Settings and playback modes
 
-Choose a category in the **left-hand column**, then configure it in the **right-hand pane**. Both columns scroll independently when necessary; the selected category and each category's scroll position survive rotation and language/theme recreation. Opening Settings again within the same activity returns to its last category. The detail pane has a fixed category heading; the toolbar Back arrow and bottom mini-player stay outside the scrolling content.
+Choose a centered category in the **left-hand column**, then configure it in the **right-hand pane**. Dividers follow the selected solid, dashed, rounded, dashed-rounded, or character border style. Both columns scroll independently when necessary; the selected category and each category's scroll position survive rotation and language/theme recreation. Older saved Appearance selections reopen in General. The detail pane has a fixed category heading; the toolbar Back arrow, one-row mini-player, and unchanged navigation dock stay outside the scrolling content.
 
 | Category | Controls |
 | --- | --- |
-| General | Language, Settings opening/closing animation |
-| Appearance | Theme, block controls, border style/character, navigation toolbar position |
+| General | Language, Settings animation, theme/accent colors, block controls, border style/character, arc radius, brick shadow, navigation toolbar position |
 | Backgrounds | Customize-theme shortcut, pictures, slideshow timing/transition, blur and tint |
 | Playback | Loop mode, playback order, independent main/mini-player elapsed/remaining displays |
-| Spectrum | Enable, position, bars/line, width, editable three-color palettes, LED/smooth Fire, peaks, falloff and redraw rate |
-| Lyrics | Display, online search, actual provider order, smooth following, playing-line enlargement and opt-in drag-to-play |
-| Folders | Multiple-folder selection, add, play, and browse/manage |
+| Spectrum | Enable, position, bars/line, width, color-block palettes, LED/smooth bars, peaks, falloff and redraw rate |
+| Lyrics | Display, orientation-specific position, current/other font sizes and colors, online search/order, cache path, smooth following and opt-in drag-to-play |
+| Folders | Multiple-folder selection, pin/unpin, add, play, and browse/manage |
+| About and help | Version/device information, usage instructions, and photo viewer |
 
 - **Language:** English, Simplified Chinese, or Follow system. Changes apply immediately and persist across relaunches. Changing language or theme does not stop the service-owned player. Song titles, filenames, playlist names, and storage-provider messages are not translated.
 - **Theme:** Night/dark, Day/light, Follow car/system, or Customize. Follow car uses Android's system night-mode signal; it does not read a proprietary vehicle bus.
-- **Block-style player controls:** Enabled by default. Under Appearance, select Solid line (default), Dashed line, Arc / rounded corners, or Repeated character. The character editor accepts one visible Unicode code point, such as `*`, `+`, or `#`; Apply saves, Cancel discards, and invalid input shows an error. Font/device support determines which decorative glyphs can be drawn. Controls and major panels use consistent **8dp gaps**, and character borders reserve **12dp interior insets** around text/artwork. Transport buttons have individual outlines, not an overlapping second row outline. Interiors remain transparent. Transport buttons are 64dp high normally and 48dp in the compact layout; secondary actions retain 48dp targets.
-- **Navigation toolbar position:** Bottom (default), Left, Right, or Top. Change it under Appearance or directly from the main toolbar's three-dot menu. Current artwork is the first item, before Now playing; tapping it opens Now playing without changing the queue, position, or paused/playing state. Side toolbars scroll on short displays so all five destinations remain reachable. Settings hides this toolbar and retains its mini-player. Custom backgrounds remain continuous behind the toolbar.
+- **Theme accent:** Keep the preset day/night color blocks, or enter a custom six-digit HEX color in General. Custom colors remain exact in both themes; native controls, Theme spectrum, and default current-line lyrics follow them. Filled controls use a contrasting black/white foreground. Apply saves, Cancel discards, and Use default removes customization. Invalid/incomplete input shows an inline error without saving or closing. The selected custom color becomes the first block when reopening. Changing accent recreates only the activity, not the service-owned player.
+- **Block-style player controls:** Enabled by default. Under General, select Solid line (default), Dashed line, Arc / rounded corners, Repeated character, or Dashed arc. Arc styles reveal a **0–48dp radius** slider (default 18dp). Optional raised-brick shadow is off by default: solid lower/right faces are cached as vector paths, while the interior remains transparent. It uses no bitmap blur or extra animation. The character editor accepts one visible Unicode code point, such as `*`, `+`, or `#`; Apply saves, Cancel discards, and invalid input shows an error. Font/device support determines decorative glyphs. Controls and panels use consistent **8dp gaps**, with **12dp interior insets** for character borders. Transport buttons have individual outlines, not an overlapping second row outline. They are 64dp high normally and at least 48dp in compact layouts.
+- **Navigation toolbar position:** Bottom (default), Left, Right, or Top, configured under General. Artwork is the first item, before Now playing; tapping it opens Now playing without changing playback. Side toolbars scroll on short displays so all destinations remain reachable. Settings keeps the dock and mini-player visible, and a dock tap exits Settings directly. Custom backgrounds remain continuous behind the toolbar.
 - **Responsive player layout:** Landscape gives lyrics/artwork, spectrum, and song information equal column widths, separated by the same 8dp gutters as the side dock. Portrait measures controls first and gives artwork/lyrics up to 40% of the available height rather than reserving space the controls need. Compact layouts combine accessible Favorite/Details icon buttons and volume in one row, use single-line metadata with full details available on demand, and retain 48dp touch targets. Surplus height goes to information/spectrum. Side docking releases the bottom toolbar and its gap. Exceptionally small windows or large accessibility fonts may still need scrolling rather than clipped content or undersized targets. All destinations share the 48dp header and content top.
 - **Main player time display:** Playing time is immediately left of the main seek bar, with total duration immediately right. Tap the left time to switch between elapsed and negative remaining time; total duration is unchanged. This preference also appears under Playback and is independent of the mini-player's time mode.
+- **Rewind / forward:** The main row orders Previous, Rewind 10 seconds, Play/Pause, Forward 10 seconds, and Next. Relative seeks clamp within the current track and preserve paused/playing state; they never cross into another song. Unknown or unseekable media disables these actions. Shuffle/Repeat move to the secondary row when needed to preserve 48dp targets.
 - **Settings opening / closing animation:** Fade (default), Slide, Zoom and fade, or None. Page transitions last 300 ms and respect Android's animator scaling. Rapid navigation cancels the previous animation and restores normal view transforms. The toolbar back arrow is wired on every activity creation, so language/theme changes and rotation do not lose its click handler; it returns to the previously opened player screen.
-- **Mini-player time display:** Elapsed time (default) or Time remaining. The bottom player, including in Settings, has a draggable seek bar and `elapsed / total` or `-remaining / total` readout. The total always stays the track duration. Unknown duration shows a placeholder and disables seeking; seeking also respects the player's seekability and current-track changes. Keyboard/accessibility progress actions use the same player seek command.
+- **Mini-player time display:** Elapsed time (default) or Time remaining. Settings puts artwork/song information, Play/Pause, Next, seek, and `elapsed / total` or `-remaining / total` in one 48dp-high row. Narrow widths hide artwork/metadata before reducing the seek area; exceptionally large fonts or tiny windows allow horizontal scrolling rather than clipped controls. Other pages retain their existing mini-player layout. The total always stays the track duration. Unknown duration disables seeking; keyboard/accessibility actions use the same player seek command.
 - **Loop mode:** Off finishes the queue; Single file repeats the current song; Folder repeats the current song's saved source folder, including subfolders; All selected folders repeats music from the checked sources. With no current song, Folder uses the first selected source.
 - **Playback order:** Sequential/continuous follows queue order. Random/shuffle chooses a random starting song for a new queue and shuffles subsequent tracks. Tapping a specific song always starts that song. Turning shuffle off restores the queue's displayed order.
 - **Select music folders:** Add any number of folders with **Add folder**, one picker visit per folder, then check several sources together and press **Apply**. New sources are selected by default. Unchecking a source keeps its music, favorites, and playlists. Overlapping sources do not duplicate tracks.
@@ -264,7 +308,7 @@ Changing loop scope preserves the current song and position when it remains elig
 
 ## Lyrics
 
-**Settings > Lyrics > Show lyrics in the artwork area** enables/disables lyric display and lookup. Both lyric display and online fallback are enabled initially; each can be switched off separately. Mini-player and navigation artwork are unchanged. Loading, missing lyrics, and lookup/storage failures have explicit status text; unavailable lyrics leave the cover visible, with **Retry lyrics** for a deliberate refresh. Automatic lyric lookup/display never pauses or skips playback; the optional drag-to-play gesture is an explicit seek/play action.
+**Settings > Lyrics > Show lyrics in the artwork area** enables/disables lyric display and lookup. Both lyric display and online fallback are enabled initially; each can be switched off separately. Choose **Left/Right for landscape** and **Top/Bottom for portrait**, independently; Left/Top remain the defaults. These choices move the existing artwork/lyrics panel, not a duplicated renderer. Disabling lyrics cancels lookup and returns to artwork. Mini-player and navigation artwork are unchanged. Loading, missing lyrics, and lookup/storage failures have explicit status text; unavailable lyrics leave the cover visible, with **Retry lyrics** for a deliberate refresh. Automatic lyric lookup/display never pauses or skips playback; the optional drag-to-play gesture is an explicit seek/play action.
 
 The lookup order is:
 
@@ -284,11 +328,13 @@ SAF grants matter: select the **music folder**, not only an individual file, to 
 
 LRC supports multiple timestamps, hundredths/milliseconds, global offset (positive values advance display), duplicate-time translations, and line-level highlighting. UTF-8, BOM-marked UTF-16, and legacy GB18030 text are accepted. **Smooth lyric scrolling** is on by default: following uses an eased, approximately 400 ms movement instead of jumping. Turn it off for immediate following.
 
-**Playing lyric enlargement** defaults to **20%**: ordinary text is 20sp and the active line 24sp. The Lyrics slider selects 0–60% in 5% steps; 0% keeps every line the same font size. Only the active row keeps 10dp top/bottom padding and its enlarged layout; inactive rows use 2dp padding without reserving active-line height. Following waits for changed rows to lay out before smoothly centering the playing line. Returning from Settings recenters it, including after changing its size or recreating the screen.
+**Current-line and other-line appearance** have independent **12–48sp** sliders and color-block selectors. Defaults are **24sp / 20sp**, using the existing theme colors and inactive-line opacity. A custom inactive color is drawn at full opacity; Reset restores the original colors and sizes. The former percentage-enlargement option has been replaced, and existing percentage preferences migrate to the equivalent current-line font size. Only the active row keeps 10dp top/bottom padding; inactive rows use 2dp padding without reserving active-line height. Following waits for changed rows to lay out before smoothly centering the playing line. Returning from Settings recenters it, including after changing its size or recreating the screen.
 
 **Drag lyrics to seek and play** is off by default. Dragging timed lyrics shows a horizontal guide at the actual center of the lyric area, with the selected timestamp immediately to its left, even with drag-to-play off. When enabled, releasing seeks to that line and starts playback, including from a paused state. The guide and timestamp clear on release/cancellation. Track changes, cancellation, extra pointers, hidden/stopped screens, non-seekable media, and plain text do not trigger stale seeks. With drag-to-play off, manual browsing pauses following for five seconds without changing playback. Plain text has no fabricated timing.
 
 Reads are bounded to 256 KiB of lyric text and 4,000 lines; embedded ID3 inspection is capped at 2 MiB. Lookup uses at most six distinct title/artist variants, bounded provider candidates and response sizes, connection/read timeouts, and a 25-second overall deadline. A track/settings change cancels pending results. Successful results are cached privately for up to 30 days, at most 100 entries / 4 MiB; unsuccessful queries are held for ten minutes in memory to avoid repeated requests. Local files are always checked before that cache. **Retry lyrics** bypasses remembered misses; clearing application data is not necessary.
+
+Lyrics Settings shows the **actual cache directory on the device**, usually `/data/user/0/com.macarmusic.app/cache/lyrics`. Cached online results are app-private JSON records, not new LRC files beside the music. Android can evict this cache; original lyric/music files are unchanged.
 
 ## Custom backgrounds and slideshows
 
@@ -322,14 +368,15 @@ Controls are inspired by Winamp's classic visualization preferences, not by a bu
 - **Position:** Left or right of song information (default right).
 - **Display and width:** Bars or Line; thick 16-band or thin 32-band layout (default 32).
 - **Colors:** Classic green/yellow/red, Fire gold/orange/red (bottom to top), or the current theme accent. Classic and Fire each retain an independent set of three RGB colors.
-- **Color editors:** Select Classic or Fire, then edit Bottom, Middle, or Top color using RGB sliders with a live swatch/hex value. Apply saves the palette; Cancel discards the edit. Reset affects only the selected palette.
-- **Fire rendering:** LED segments (default) or Smooth bars. This setting applies to Fire + Bars; Line mode stays continuous.
+- **Color editors:** Select Classic or Fire, then edit Bottom, Middle, or Top using color blocks or a six-digit HEX value such as `#3DCF74`. The preview updates for valid input; Apply saves and Cancel discards. Invalid input stays in the dialog with a clear error. Reset affects only the selected palette. Saved custom colors remain selectable as blocks. The same editor serves lyrics and theme accents, without RGB sliders.
+- **Bar rendering:** Smooth bars or LED segments for **Classic, Theme, and Fire**. Classic/Theme share a saved rendering preference, initially Smooth; Fire retains its independent preference, initially LED. Line mode stays continuous.
+- **Tap cycle:** Tapping the visible spectrum repeats **Line → Classic smooth → Classic LED → Fire smooth → Fire LED → Line**. Starting from Theme returns to Classic Line. Colors, bands, peaks, falloff, and FPS settings are retained.
 - **Peaks:** Optional peak markers, with separate Slow/Medium/Fast falloff for bars and peaks.
 - **Maximum redraw rate:** 15, 30 (default), or 60 frames/second. This caps scheduled interpolation/peak updates; actual cadence also depends on display refresh and load. One cancellable callback prevents unrelated UI redraws from multiplying animation loops. Audio analysis is capped at 30 updates/second.
 
 Classic and Fire use **three smoothly blended color anchors**, with the middle anchor halfway between bottom and top. **Classic maps them to the full chart height**, so equal absolute heights have equal colors across all bars. **Fire + Bars maps them to each bar's own lit height**: a 1% bar and a 100% bar both use the entire selected bottom/middle/top gradient. Each RGB channel interpolates continuously; there are no abrupt zone boundaries. Fire defaults to gold `#FFDF69`, orange `#FF9828`, and red `#ED4529`; Classic defaults to green `#3DCF74`, yellow `#FCD34D`, and red `#F04C44`. Existing custom colors are retained.
 
-**Fire + Bars + LED segments** uses 20 discrete height steps, transparent gaps, a subtle dashed zero line, and optional contrasting peak caps. A continuous gradient spans all lit pixels, including within a single low-height segment, rather than assigning one solid color to a segment. **Smooth bars** removes the gaps. Both Fire modes render all bars and peaks in **one colored-vertex batch**, reusing approximately 43 KiB of bounded arrays allocated only when Fire is used. This avoids per-cell GPU state changes, per-bar shader reconstruction, and texture caches. Hardware support starts at the app's Android 10 minimum; regression tests check both software pixels and the GPU-backed window. Classic bars and both palettes' Line modes use a cached shared chart-height gradient. The zero line is only a reference, not fabricated audio. Theme rendering remains a single accent color. Very small raster heights are naturally limited by the number of physical pixels.
+**LED segments** uses 20 height steps, transparent gaps, a subtle dashed zero line, and optional contrasting peak caps. Classic keeps its shared chart-height gradient; Fire spans the complete gradient across each bar's lit pixels, including within a single short segment. **Smooth bars** removes the gaps. On Android 10+ canvases, all bar palettes render bars and peaks in **one colored-vertex batch**, reusing approximately 43 KiB of bounded arrays allocated only when bars are used. Android 6-9 hardware canvases do not support that batch operation, and their software vertex rendering loses precision. Those versions instead reuse a path, gradient and transform, without allocating a software bitmap layer or rebuilding shaders per bar. Line modes use a cached shared chart-height gradient. The zero line is only a reference, not fabricated audio. Theme rendering remains a single accent color. Very small raster heights are naturally limited by the number of physical pixels.
 
 Media3's PCM tap forwards the original audio bytes unchanged. A bounded, conflated worker performs a 2,048-sample Hann-windowed FFT on decoded audio, combining channel powers without cancelling opposite-phase stereo. Bands cover approximately 20 Hz to 20 kHz, limited by the recording's sample rate. This is a visualization, not an equalizer or calibrated measurement. The tap is before system volume, so muted playback can still show a spectrum.
 
@@ -337,7 +384,7 @@ No microphone, audio-recording permission, global audio capture, or synthetic/ra
 
 ## About photo
 
-Open the main toolbar's three-dot menu, then **About and help**. The supplied `Screenshot 2026-10-12 174201.png` appears at the upper right. Tap it to open the original **878 × 932** image in a full-window viewer. Pinch or double-tap to zoom, drag an enlarged image to pan, or use Zoom in, Zoom out, and Fit. Zoom is limited to 1–8 times the fit-to-window scale, and panning stops at the image edges. Back/Close returns to About without changing playback.
+Open **Settings > About and help**. The supplied `Screenshot 2026-10-12 174201.png` appears at the upper right. Tap it to open the original **878 × 932** image in a full-window viewer. Pinch or double-tap to zoom, drag an enlarged image to pan, or use Zoom in, Zoom out, and Fit. Zoom is limited to 1–8 times the fit-to-window scale, and panning stops at the image edges. Back/Close returns to About without changing playback. About content and its photo are loaded only when that category opens.
 
 The original PNG is bundled locally as `app\src\main\res\drawable-nodpi\about_photo.png`, without downsampling or density scaling. Zoom cannot add detail beyond the supplied resolution. No photo-library permission is needed. The image is part of the APK and source, so distributing either also distributes this photo.
 
@@ -381,7 +428,78 @@ Library and playback JSON, the imported background gallery, and settings are sto
 
 ## Validation
 
-Verified for the **1.8.0** Android 10+ release:
+### 1.9.3 restored Android 6 compatibility
+
+The exact optimized APK installed and ran on **Android 6/API 23 and Android 13/API 33**. Both passed all nine color-dialog regressions, including custom HEX entry, resizing, Cancel/Apply, saved colors and activity recreation. Real synthetic-file playback, paused launch, pause/seek, rewind/forward, navigation and all seven Settings categories also passed. This checks the released, non-debuggable R8 output, not just a developer build.
+
+On API 23, **23 distinct focused core cases** passed across the legacy regression batches. On API 33, **11 focused core cases** passed. Both versions separately passed **nine pickerless-storage cases**, including permission denial/revocation, indexed-folder browsing and scanning, real playback, temporary single-file/background grants, Chinese labels and preservation of saved references. Legacy graphics checks cover hardware rendering and software rasterization; Android 6's older shader lookup allows a maximum difference of four levels per RGB channel, while modern software checks retain their tighter tolerance.
+
+Lowering the manifest minimum alone was insufficient: actual Android 6 runs exposed a Material font string-pool inflation failure and a lost pre-attachment draw observer that prevented deferred startup from completing. The theme now references the system-font name through a resource, and first-draw observation is attachment-aware. Legacy MediaStore columns, cursor tinting, system-bar options, tooltips/autosizing and animator queries are version-guarded. Android 6-9 spectrum bars use reusable paths/gradients rather than unsupported hardware vertices or a full software layer.
+
+All **158 JVM tests** passed; Android lint reported **zero errors / 25 advisory warnings**. Package checks confirmed minSdk 23, targetSdk 35, DEX 035, uncompressed/aligned DEX, valid v1/v2/v3 signatures in their applicable API ranges, identical export/checksum files and the existing signing certificate. The app has no native-library ABI restriction and remains below its 6 MiB limit.
+
+An Android 13 upgrade from the user-confirmed installable **1.3.1** to this exact **1.9.3** retained the same UID and byte-identical library, playback and settings files at installation. Saved folders, favorites, playlists, repeated queue entries and the paused 18-second position survived. A separate unprivileged controller then played, paused, sought and changed tracks successfully. Synthetic temporary grants were explicitly reissued after installation; this fixture does not claim that temporary document grants become persistent.
+
+Startup was compared in **1.9.2 / 1.9.3 / 1.9.2** order on the same API 33 emulator: two virtual CPUs, 2 GiB RAM, 1024 x 600, software GPU, optional visual effects off. Each cell is the median **first display / usable controls in milliseconds**, from three force-stopped launches after one warm-up for that library size. No other test emulator or build was running.
+
+| Saved tracks | 1.9.2 before | 1.9.3 | 1.9.2 repeated |
+|---|---:|---:|---:|
+| 0 | 1128 / 1377 | 704 / 834 | 746 / 850 |
+| 2,000 | 1051 / 1482 | 750 / 1039 | 734 / 1024 |
+
+The repeated baseline exposes substantial host/emulator warm-up variation; the faster first comparison must not be presented as an app speedup. Against the warmed baseline, usable controls differed by -16 ms and +15 ms, and median PSS differed by +74 KiB and +223 KiB. **No material startup regression was observed in this bounded comparison.** These are process-cold, cache-warm emulator measurements, not fresh-boot car timings or a complete performance sweep of every optional effect.
+
+Evidence: `app\build\reports\compat-api23-integration.txt` plus `compat-api23-final-corrections.txt`, `compat-api33-integration.txt`, the `compat-api23-picker-*` / `compat-api33-picker-*` and `compat-api23-optimized-*` / `compat-api33-optimized-*` reports, `compat-package-verification.txt`, `compat-upgrade\result.json`, and `compat-startup-summary.json` with raw samples in `performance\api33\compat-*`. Exact-release reports record the APK SHA-256. No physical-car installation is claimed; the original generic package-parsing error still lacks a confirmed framework API level or installer error code.
+
+### Historical 1.9.2 custom colors and Settings polish
+
+The final optimized APK passed the framework-only color regression on both **Android 10/API 29 and Android 13/API 33**, at **1024 x 600** and compact **360 x 640**. All nine selectors retain their blocks through repeated width changes and support custom HEX preview, invalid-input rejection, Cancel, Apply, reopening saved colors, and custom-accent activity recreation. The same APK passed actual synthetic-file playback, pause/seek, transport controls, seven Settings categories, About, and navigation on both versions.
+
+The developer APK passed **14 focused integration cases on each Android version**, plus **six compact-window cases on each** at 640 x 360 / 360 x 640. Coverage includes native custom accents in both themes, typed colors that match a preset, legacy Appearance-state restoration into General, centered labels and every divider style, solid shadow edges with transparent interiors, alpha handling, narrow/large-font mini-player measurements, all four dock positions, seeking, and playback continuity. The framework runner uses the activity's localized strings, including AppCompat languages on Android 10.
+
+All **157 JVM tests** passed. Android lint reported **zero errors / 25 existing advisory warnings**. Export checks confirmed non-debuggable R8/resource-shrunk packaging, minSdk 29, the established signing certificate, identical APK copies, and the 6 MiB budget. No dependency was added. Settings and color dialogs remain lazy; brick edges use cached vector paths rather than blur bitmaps, and custom control tinting is not part of per-frame rendering. No physical car/USB or new startup benchmark is claimed.
+
+Evidence: `app\build\reports\polish-api29-final.txt`, `polish-api33-final.txt`, `polish-api29-compact.txt`, `polish-api33-compact.txt`, and the `polish-api29-optimized-*` / `polish-api33-optimized-*` reports. Each optimized report records the exact APK SHA-256.
+
+### 1.9.1 color-dialog hotfix
+
+The 1.9.0 optimized APK reproduced `IllegalArgumentException: columnCount must be greater than or equal to the maximum of all grid indices` when the color grid was measured wide and then narrow. Android's GridLayout had retained resolved cell spans from its earlier measurement. The shared picker now clears those spans before changing its column count, preserving the palette and current selection. This covers spectrum, lyric, and theme-accent selectors without adding dependencies or startup work.
+
+The exact 1.9.1 optimized APK passed the new regression on Android 13 at 1024 x 600 and compact 360 x 640: all three Classic colors, all three Fire colors, both lyric colors, and theme accent, with repeated 8/3/6/1/5/8-column measurements, cell-bound checks, selection, Cancel, and Apply. Its regular optimized playback/navigation smoke also passed. All 154 JVM tests passed and lint reported zero errors / 25 advisory warnings. The signer and APK size remain unchanged; the hotfix installed directly over 1.9.0. No physical car test or new full Android 10/13 suite is claimed for this narrowly scoped patch.
+
+Evidence: `app\build\reports\color-crash-before.txt`, `color-crash-before-log.txt`, `color-crash-after-api33.txt`, `color-hotfix-api33-portrait.txt`, and `color-hotfix-api33-smoke.txt`. With the framework-only runner built and installed as described below, run the color regression using:
+
+```powershell
+& "$env:ANDROID_HOME\platform-tools\adb.exe" -s emulator-5554 shell am instrument -w -r `
+    -e colorPickerOnly true com.macarmusic.app.test/com.macarmusic.app.OptimizedSmokeInstrumentation
+```
+
+The regression uses an owned disposable emulator, with system-window/task animations temporarily disabled and restored afterward, just like the regular UI helper; in-app animator effects remain enabled.
+
+### 1.9.0 baseline
+
+| Check | Result |
+| --- | --- |
+| Optimized export and packaging | Successful; non-debuggable, R8/resource-shrunk, minSdk 29, targetSdk 35; 5,576,930 bytes with the existing signing identity |
+| JVM tests | 154 passed, no failures/errors |
+| Full developer-APK integration | All 59 tests passed on Android 10/API 29 and all 59 on Android 13/API 33 |
+| Compact native layouts | Seven targeted cases passed on each version at 640 x 360 / 360 x 640, including dock placement, portrait controls, selection, Settings, and color blocks |
+| Final mini-player spacing | Two additional Android 13 cases passed after the final normal-layout gap/character-padding adjustment |
+| Pickerless compatibility | All nine checks passed separately on Android 10 and Android 13 |
+| Android lint | Zero errors; 25 advisory warnings |
+| Exact optimized APK | Framework-only smoke passed on both versions against the final `A151AD5F...` artifact: paused launch, actual PCM playback, seek, rewind/forward, five pages, eight Settings categories, About, and exiting Settings through navigation |
+| 1.8.0 to 1.9.0 in-place update | Preserved app UID and byte-identical library, queue, and settings files on installation; restored the legacy source, favorite, playlist, and three-entry queue paused at index 1 / 18 seconds |
+| Independent system controls | Exact final APK accepted discovery and Play/Pause/seek/next/previous/Stop from a separate-UID framework client with `trusted=false`; real audio position advanced and duplicate queue occurrences stayed intact |
+
+The full suites preceded the last small mini-player spacing adjustment; that adjustment received the additional targeted coverage and both exact-final-artifact smoke runs. Performance measurements above also used the exact final APK, not the larger debug build.
+
+Current evidence is in `app\build\reports\fine-api29-integration-final.txt`, `fine-api33-integration-final.txt`, `fine-api29-compact-final.txt`, `fine-api33-compact-final.txt`, `fine-mini-spacing-final.txt`, `fine-compatibility-api29\`, `fine-compatibility-api33\`, `fine-api29-optimized-smoke-final.txt`, `fine-api33-optimized-smoke-final.txt`, and `fine-upgrade\result.json`. Packaging evidence is in `fine-release-apk-manifest.txt` and `fine-release-apk-signature.txt`; current JVM/lint reports use the standard paths listed below.
+
+New regression coverage includes legacy lyric-size and playlist migration, independent lyric colors/sizes and orientation placement, palette/shape cycling, theme accent, dashed arcs/shadow, readable locations, playlist folder refresh and failed-scan retention, pin guards, library multi-selection, timed notice replacement/dismissal, current-occurrence queue scrolling, and transport seek limits. A 2,000-ID selection/recreation test keeps activity saved state below 16,384 bytes by retaining selection outside the saved-state Bundle.
+
+### Historical 1.8.0 baseline
+
+The following results belong to the published **1.8.0** release, not to later source changes:
 
 | Check | Result |
 | --- | --- |
@@ -436,17 +554,17 @@ Startup regressions observe the actual first draw: only the player exists, lyric
 
 Pickerless tests disable the standard DocumentsUI package only on the disposable emulator, then exercise real Android permission-controller Allow/Don't allow buttons. Synthetic audio is inserted into MediaStore by the separate test-APK UID, so the player needs an actual audio grant rather than implicitly owning the files. Checks cover multiple/nested folders, similarly named siblings, escaped query prefixes, metadata, playback, selected-folder queues, disk persistence, recreation, and an unmounted-volume error. Real runtime-permission revocation restarts the app without erasing its saved sources, favorites, or playlists. An empty index has an explicit explanation. Ordinary file-manager results are intercepted in tests but use real readable content URIs; audio and private-image imports run through the real activity-result callbacks. Failed primary launches reproduced the late-cancelled-result race before separate fallback channels fixed it.
 
-Compatibility fixtures write and later delete only their own generated MediaStore audio. The production app has no such fixture code and never modifies music. JVM tests cover the Android 10 minimum, permission selection across API 29-36, the legacy manifest cap, relative-folder grouping and directory boundaries, and literal SQL-prefix escaping. Chinese UI checks also verify that stored indexed-folder labels follow the selected language without rewriting the saved library.
+Compatibility fixtures write and later delete only their own generated MediaStore audio. On Android 6-9 the separate test APK has a bounded legacy write permission for these synthetic fixtures; the production app has no write permission or fixture code and never modifies music. JVM tests cover the Android 6 minimum, permission selection across API 23-36, the legacy manifest cap, modern and legacy folder grouping, directory boundaries, and literal SQL-prefix escaping. Chinese UI checks also verify that stored indexed-folder labels follow the selected language without rewriting the saved library.
 
-The earlier API 35 results and 1.7.1/1.7.3 timings remain historical results, not runtime testing of every Android version for 1.8.0.
+The earlier API 35 results and 1.7.1/1.7.3/1.8.0 timings remain historical results, not runtime testing of every Android version for 1.9.0.
 
 Lyric regressions cover legacy-library parent discovery, opaque SAF folder IDs, local-before-online precedence, synthetic online responses and cache restoration, unreadable sidecars, bounded failed lookups, seeking, track changes, and the display switch. Query regressions reproduce both reported filenames, including reversed/separator-varied duet credits, preserve numeric titles and recording versions, test filename fallback without sending paths, and reject malformed provider responses. Pacing tests use a controlled monotonic clock; cancellation does not reserve another request slot. Provider-budget tests verify timeout fallback and propagation of overall cancellation. Background tests import through a temporary grant, exercise blur and tint controls during playback, recreate the activity, reopen saved settings, remove provider access, and reject invalid replacements without losing the previous picture. They also assert transparent panels across every navigation screen, full-window image bounds after a light-tint change, and restored ordinary-theme surfaces. JVM tests cover LRC timing/encoding/size limits, ID3 lyrics, conservative provider matching and duration units, Base64 decoding, background effects, and backward-compatible persistence.
 
 New UI regressions reproduce the missing Settings back handler before its fix, then verify navigation after recreation, language, and theme changes. They exercise every Settings/slideshow animation with Android animations enabled, measure the default 5-second interval and 2-second fade, verify gallery persistence and legacy-picture replacement, and check pause/resume behavior. An intercepted document-picker result exercises the real activity-result callback for multiple selections, duplicate/non-URI entries, single-image results, and cancellation; it does not qualify every vendor's picker UI. Partial import failures retain the previous gallery.
 
-Canvas-pixel checks verify interpolated custom colors, continuous gradients inside Fire LED segments, segment gaps versus smooth rendering, continuous Classic bars, and transparent unlit space. Mixed-height checks compare 1%, 50%, and 100% bars: Fire remaps the complete palette to each lit extent, whereas Classic retains one chart-height scale. RGB editor tests exercise Apply, Cancel, palette-specific Reset, and independent Classic/Fire persistence. Each border style is rasterized to verify distinct geometry, the requested color, and zero-alpha interiors; backgrounds and foreground outlines are checked across the player, lyrics, mini-player, and navigation. The character editor covers Apply, Cancel, invalid input and recreation. Settings regressions tap every category, verify left/right geometry, independent scroll restoration, selected-category persistence, bilingual theme changes, and the original return screen.
+Canvas-pixel checks verify interpolated custom colors, continuous gradients inside Fire LED segments, segment gaps versus smooth rendering, and transparent unlit space. Mixed-height checks compare 1%, 50%, and 100% bars: Fire remaps the complete palette to each lit extent, whereas Classic retains one chart-height scale. Color-block editor tests exercise Apply, Cancel, palette-specific Reset, and independent Classic/Fire persistence. Theme smooth/LED checks verify the selected accent and one drawing batch. Each border style is rasterized to verify distinct geometry, the requested color, and zero-alpha interiors; dashed-arc checks also compare radii and the offset shadow. Settings regressions tap every category, verify left/right geometry, independent scroll restoration, selected-category persistence, bilingual theme changes, and the original return screen.
 
-Navigation tests exercise every edge with the spectrum visible, first-item artwork, scrolling to the last sidebar destination on short displays, recreation, and unchanged queue/position/play state. Geometry checks measure the full height released by side docking, equal landscape columns, consistent 8dp gaps, portrait control visibility and 48dp touch targets, and identical toolbar/content-top coordinates across every destination. Main-time tests check left/seek/right ordering and preserve duration and independent mini-player preferences. Timed lyric tests measure multi-frame following, disabled-animation behavior, opt-in release-to-seek/play, plain-text browsing, and track-change/cancelled gestures. They check 20%, 60%, and 0% active-line enlargement with roomy active rows and compact inactive rows, Settings recreation/recentering, and a centered drag guide with its timestamp immediately to the left. The guide clears on release, cancellation, extra pointers, and track changes. Photo tests check upper-right placement, original bitmap dimensions, zoom/fit/pan/back actions, and unchanged queue/position/play state. Long provider-order text remains reachable by scrolling its first and last lines into view; normal 1024 x 600 checks retain the complete volume-block outline.
+Navigation tests exercise every edge with the spectrum visible, first-item artwork, scrolling to the last sidebar destination on short displays, recreation, and unchanged queue/position/play state. Geometry checks measure the full height released by side docking, equal landscape columns, consistent 8dp gaps, all seven transport controls and 48dp touch targets, and identical toolbar/content-top coordinates across destinations. Settings remains separate from the dock and mini-player. Relative-seek tests check ten-second steps, endpoint clamping, and paused/playing preservation; Queue checks the current occurrence in a long repeated-song list. Timed lyric tests cover smooth following, independent sizes/colors, legacy preference migration, both placement axes, disablement, cache-location text, opt-in release-to-seek/play, and stale-gesture protection. The centered drag guide keeps its timestamp immediately to the left and clears on release/cancellation. Photo tests verify upper-right placement, original bitmap dimensions, zoom/fit/pan/back actions, and unchanged playback.
 
 Mini-player tests drag the seek bar, perform accessibility seeking, switch elapsed/remaining time without changing the total, and confirm paused playback stays paused. A track-change-during-drag regression first reproduced an unintended seek into the new song; the fixed behavior ignores that stale drag and allows the next valid seek. Spectrum tests verify a real 440 Hz PCM signal, unchanged audio bytes, both panel positions, configurable display controls, and capture clearing on pause/hide/background. Pure JVM tests cover FFT frequency/amplitude behavior, DC/silence, opposite-phase stereo, non-finite samples, peak decay, time formatting, and option limits.
 
@@ -494,7 +612,7 @@ Those 1.6.0 results establish successful lookup for those recordings in that env
 
 Device tests modify ManaMusicPlayer's **test-device** library. Do not run them against a personal library you want to retain. They never access a physically attached USB drive; the provider fixtures are synthetic and isolated.
 
-API 29 / Android 10 is the declared floor, checked by lint, packaged-manifest/signature inspection, and runtime tests. Android 13 / API 33 is explicitly covered; Android 11, 12, and every later/vendor variant have not each been tested separately. No physical car, USB disk, Bluetooth accessory, speaker output, specific head-unit control plugin, OEM navigation/audio-focus behavior, CAN-bus, or every-codec qualification was performed. USB/provider availability and actual codec support must still be checked on the intended head unit.
+API 23 / Android 6.0 is the restored compatibility floor. Version-specific runtime results are recorded above; not every Android release or vendor firmware has been tested separately. The car's generic package-parsing message did not supply a framework API level or native installer error, so its exact cause remains unconfirmed. The system-information screen alone does not establish that framework API. No physical car, USB disk, Bluetooth accessory, speaker output, specific head-unit control plugin, OEM navigation/audio-focus behavior, CAN-bus, or every-codec qualification was performed. Installation, USB/provider availability and codec support must still be checked on the intended head unit.
 
 ## Persistence and recovery
 

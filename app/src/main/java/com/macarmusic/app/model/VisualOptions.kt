@@ -9,11 +9,36 @@ enum class SpectrumPosition { LEFT, RIGHT }
 enum class SpectrumStyle { BARS, LINE }
 enum class SpectrumPalette { CLASSIC, FIRE, THEME }
 enum class FireStyle { LED, SMOOTH }
-enum class BlockStyle { SOLID, DASHED, ARC, CHARACTERS }
+enum class BlockStyle { SOLID, DASHED, ARC, CHARACTERS, DASHED_ARC }
+enum class LyricSide { START, END }
+enum class ThemeAccent { DEFAULT, BLUE, INDIGO, PURPLE, PINK, RED, ORANGE, GREEN, TEAL }
 enum class SpectrumDecay(val perSecond: Float) { SLOW(0.35f), MEDIUM(0.8f), FAST(1.8f) }
 
-data class BlockOutline(val style: BlockStyle = BlockStyle.SOLID, val character: String = "*") {
-    init { require(isValidCharacter(character)) }
+object ColorHex {
+    fun parse(value: String): Int? {
+        val digits = value.trim().removePrefix("#")
+        return if (digits.length == 6 && digits.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' })
+            digits.toInt(16) else null
+    }
+
+    fun format(value: Int): String {
+        require(value in 0..0xffffff)
+        return String.format(java.util.Locale.ROOT, "#%06X", value)
+    }
+}
+
+data class BlockOutline(
+    val style: BlockStyle = BlockStyle.SOLID,
+    val character: String = "*",
+    val arcDp: Int = 18,
+    val shadow: Boolean = false,
+) {
+    init {
+        require(isValidCharacter(character))
+        require(arcDp in 0..48)
+    }
+
+    val hasArc: Boolean get() = style == BlockStyle.ARC || style == BlockStyle.DASHED_ARC
 
     companion object {
         fun isValidCharacter(value: String): Boolean {
@@ -23,6 +48,19 @@ data class BlockOutline(val style: BlockStyle = BlockStyle.SOLID, val character:
                 !Character.isSpaceChar(code) && Character.getType(code) != Character.FORMAT.toInt() &&
                 code !in 0xd800..0xdfff
         }
+    }
+}
+
+data class LyricAppearance(
+    val activeSizeSp: Int = 24,
+    val otherSizeSp: Int = 20,
+    val activeColor: Int? = null,
+    val otherColor: Int? = null,
+) {
+    init {
+        require(activeSizeSp in 12..48 && otherSizeSp in 12..48)
+        require(activeColor == null || activeColor in 0..0xffffff)
+        require(otherColor == null || otherColor in 0..0xffffff)
     }
 }
 
@@ -81,10 +119,25 @@ data class SpectrumOptions(
     val fireStyle: FireStyle = FireStyle.LED,
     val classicColors: SpectrumColors = SpectrumColors.CLASSIC,
     val fireColors: SpectrumColors = SpectrumColors.FIRE,
+    val barStyle: FireStyle = FireStyle.SMOOTH,
 ) {
     init {
         require(bands in setOf(16, 32))
         require(refreshRate in setOf(15, 30, 60))
+    }
+
+    val rendering: FireStyle get() = if (palette == SpectrumPalette.FIRE) fireStyle else barStyle
+
+    fun withRendering(value: FireStyle) =
+        if (palette == SpectrumPalette.FIRE) copy(fireStyle = value) else copy(barStyle = value)
+
+    fun nextMode(): SpectrumOptions = when {
+        style == SpectrumStyle.LINE -> copy(style = SpectrumStyle.BARS,
+            palette = SpectrumPalette.CLASSIC, barStyle = FireStyle.SMOOTH)
+        palette == SpectrumPalette.CLASSIC && barStyle == FireStyle.SMOOTH -> copy(barStyle = FireStyle.LED)
+        palette == SpectrumPalette.CLASSIC -> copy(palette = SpectrumPalette.FIRE, fireStyle = FireStyle.SMOOTH)
+        palette == SpectrumPalette.FIRE && fireStyle == FireStyle.SMOOTH -> copy(fireStyle = FireStyle.LED)
+        else -> copy(style = SpectrumStyle.LINE, palette = SpectrumPalette.CLASSIC)
     }
 }
 

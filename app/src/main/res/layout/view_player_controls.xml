@@ -120,10 +120,10 @@
                 android:textColor="?attr/colorOnSurfaceVariant"
                 android:textSize="14sp" />
     </LinearLayout>
-    <LinearLayout
+    <com.macarmusic.app.ui.TransportRow
         android:id="@+id/transportRow"
         android:layout_width="match_parent"
-        android:layout_height="64dp"
+        android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/player_gap"
         android:gravity="center">
         <androidx.appcompat.widget.AppCompatImageButton
@@ -145,6 +145,14 @@
             android:contentDescription="@string/previous"
             app:srcCompat="@drawable/ic_previous" />
         <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/rewind"
+            style="@style/PlayerIconButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="@string/rewind"
+            app:srcCompat="@drawable/ic_rewind" />
+        <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/play"
             style="@style/PlayerIconButton"
             android:layout_width="0dp"
@@ -154,6 +162,14 @@
             android:contentDescription="@string/play"
             app:tint="?attr/colorPrimary"
             app:srcCompat="@drawable/ic_play" />
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/forward"
+            style="@style/PlayerIconButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:contentDescription="@string/forward"
+            app:srcCompat="@drawable/ic_forward" />
         <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/next"
             style="@style/PlayerIconButton"
@@ -171,7 +187,7 @@
             android:layout_weight="1"
             android:contentDescription="@string/repeat_off"
             app:srcCompat="@drawable/ic_repeat" />
-    </LinearLayout>
+    </com.macarmusic.app.ui.TransportRow>
     <LinearLayout
         android:id="@+id/footerRow"
         android:layout_width="match_parent"

@@ -132,4 +132,78 @@ class LibraryEditsTest {
     @Test(expected = IllegalArgumentException::class) fun unknownFavoriteIsRejected() {
         LibraryEdits.toggleFavorite(Library(), "missing")
     }
+
+    @Test fun pinningSelectsTheFolderAndProtectsEveryRemovalPathUntilUnpinned() {
+        val original = Library(sources = listOf(source.copy(selectedForPlayback = false)), tracks = listOf(track),
+            playlists = listOf(LocalPlaylist("p", "Road", listOf(track.id))))
+        val pinned = LibraryEdits.pinSources(original, setOf(source.uri))
+        assertTrue(pinned.sources.single().pinned)
+        assertTrue(pinned.sources.single().selectedForPlayback)
+        val removals: List<(Library) -> Library> = listOf(
+            { LibraryEdits.selectSources(it, emptySet()) },
+            { LibraryEdits.removeSource(it, source.uri) },
+            { LibraryEdits.removeTrack(it, track.id) },
+            { LibraryEdits.removeFromPlaylist(it, "p", track.id) },
+            { LibraryEdits.replacePlaylistTracks(it, "p", emptyList()) },
+            { LibraryEdits.deletePlaylist(it, "p") },
+        )
+        for (remove in removals) assertThrows(PinnedFolderException::class.java) { remove(pinned) }
+        val unpinned = LibraryEdits.pinSources(pinned, emptySet())
+        for (remove in removals) remove(unpinned)
+        assertEquals(original.tracks, pinned.tracks)
+        assertEquals(original.playlists, pinned.playlists)
+    }
+
+    @Test fun pinnedFoldersAlsoProtectEmptyLinkedPlaylists() {
+        val folder = PlaylistFolder(source.uri, "music", "Music")
+        val original = Library(sources = listOf(source.copy(pinned = true)),
+            playlists = listOf(LocalPlaylist("p", "Road", folders = listOf(folder), manualTrackIds = emptyList())))
+        assertThrows(PinnedFolderException::class.java) { LibraryEdits.setPlaylistFolders(original, "p", emptyList()) }
+        assertThrows(PinnedFolderException::class.java) { LibraryEdits.deletePlaylist(original, "p") }
+    }
+
+    @Test fun folderPlaylistsRetainManualSongsAndDeduplicateOverlappingFolders() {
+        val manual = track.copy(id = "manual", sourceUris = emptyMap())
+        val library = Library(sources = listOf(source, other), tracks = listOf(track, manual))
+        val created = LibraryEdits.addToPlaylist(LibraryEdits.createPlaylist(library, "p", "Road"), "p", listOf(manual.id))
+        val first = PlaylistFolder(source.uri, "music", "Music", listOf(track.id))
+        val second = PlaylistFolder(other.uri, "album", "Album", listOf(track.id))
+        val saved = LibraryEdits.setPlaylistFolders(created, "p", listOf(first, second))
+        assertEquals(listOf(manual.id, track.id), saved.playlists.single().trackIds)
+        val trimmed = LibraryEdits.setPlaylistFolders(saved, "p", listOf(second))
+        assertEquals(saved.playlists.single().trackIds, trimmed.playlists.single().trackIds)
+        assertEquals(listOf(manual.id), LibraryEdits.setPlaylistFolders(trimmed, "p", emptyList()).playlists.single().trackIds)
+    }
+
+    @Test fun editingSongsUpdatesFolderMembershipWithoutChangingUnrelatedPlaylists() {
+        val second = track.copy(id = "second")
+        val playlist = LocalPlaylist("p", "Road", listOf(track.id),
+            folders = listOf(PlaylistFolder(source.uri, "music", "Music", listOf(track.id))), manualTrackIds = emptyList())
+        val untouched = LocalPlaylist("other", "Other", listOf(track.id))
+        val library = Library(sources = listOf(source), tracks = listOf(track, second), playlists = listOf(playlist, untouched))
+        val updated = LibraryEdits.replacePlaylistTracks(library, "p", listOf(second.id))
+        assertEquals(listOf(second.id), updated.playlists.first().trackIds)
+        assertEquals(listOf(second.id), updated.playlists.first().manualTrackIds)
+        assertTrue(updated.playlists.first().folders.single().trackIds.isEmpty())
+        assertEquals(untouched, updated.playlists.last())
+    }
+
+    @Test fun playlistRenameValidatesNamesAndPreservesMembership() {
+        val playlist = LocalPlaylist("p", "Road", listOf(track.id))
+        val library = Library(playlists = listOf(playlist, LocalPlaylist("other", "Jazz")))
+        assertEquals(playlist.copy(name = "Drive"), LibraryEdits.renamePlaylist(library, "p", " Drive ").playlists.first())
+        assertThrows(IllegalArgumentException::class.java) { LibraryEdits.renamePlaylist(library, "p", " jazz ") }
+        assertThrows(IllegalArgumentException::class.java) { LibraryEdits.renamePlaylist(library, "p", " ") }
+        assertThrows(IllegalArgumentException::class.java) { LibraryEdits.deletePlaylist(library, "gone") }
+    }
+
+    @Test fun readablePathsMergeAndArePrunedWithTheirGrant() {
+        val original = track.copy(sourcePaths = mapOf(source.uri to "Artist/song.mp3"))
+        val incoming = track.copy(sourceUris = mapOf(other.uri to "content://disk/other"),
+            sourcePaths = mapOf(other.uri to "song.mp3"))
+        val merged = LibraryEdits.upsertTracks(Library(tracks = listOf(original)), listOf(incoming))
+        assertEquals(2, merged.tracks.single().sourcePaths.size)
+        val removed = LibraryEdits.removeSource(merged, source.uri)
+        assertEquals(mapOf(other.uri to "song.mp3"), removed.tracks.single().sourcePaths)
+    }
 }

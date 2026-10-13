@@ -15,12 +15,44 @@ class VisualOptionsTest {
         assertFalse(options.spectrum.enabled)
         assertTrue(options.controlBlocks)
         assertEquals(BlockOutline(), options.blockOutline)
-        assertEquals(20, options.lyricEnlargementPercent)
+        assertEquals(LyricAppearance(), options.lyricAppearance)
+        assertEquals(LyricSide.START, options.landscapeLyrics)
+        assertEquals(LyricSide.START, options.portraitLyrics)
+        assertEquals(ThemeAccent.DEFAULT, options.themeAccent)
+        assertNull(options.customAccentColor)
+        assertEquals(FireStyle.SMOOTH, options.spectrum.barStyle)
         assertEquals(NavigationPosition.BOTTOM, options.navigationPosition)
         assertEquals(FireStyle.LED, options.spectrum.fireStyle)
         assertEquals(PlaybackTimeMode.ELAPSED, options.mainTimeMode)
         assertFalse(options.lyricsDragSeek)
         assertTrue(options.lyricsSmoothScroll)
+    }
+
+    @Test fun customColorsAcceptExactlySixHexDigitsAndRoundTrip() {
+        for (value in listOf(0, 1, 0x123abc, 0xffffff)) {
+            val formatted = ColorHex.format(value)
+            assertEquals(7, formatted.length)
+            assertEquals(value, ColorHex.parse(formatted))
+            assertEquals(value, ColorHex.parse(formatted.drop(1).lowercase()))
+            assertEquals(value, ColorHex.parse(" \t$formatted\n"))
+        }
+        assertEquals("#00ABCD", ColorHex.format(0xabcd))
+    }
+
+    @Test fun incompleteAndMalformedCustomColorsAreRejected() {
+        for (value in listOf("", "#", "#abc", "12345", "1234567", "#12345678", "0x123456",
+            "#12GG00", "##123456", "-000001", "+000001", "12 456", "\uFF11\uFF12\uFF13\uFF14\uFF15\uFF16")) {
+            assertNull(value, ColorHex.parse(value))
+        }
+    }
+
+    @Test fun customAccentCannotContainAlphaOrInvalidRgbValues() {
+        assertEquals(0, DisplayOptions(customAccentColor = 0).customAccentColor)
+        assertEquals(0xffffff, DisplayOptions(customAccentColor = 0xffffff).customAccentColor)
+        for (value in listOf(-1, 0x1000000)) {
+            assertThrows(IllegalArgumentException::class.java) { DisplayOptions(customAccentColor = value) }
+            assertThrows(IllegalArgumentException::class.java) { ColorHex.format(value) }
+        }
     }
 
     @Test fun fireBlendsContinuouslyBetweenThreeEditableAnchors() {
@@ -56,12 +88,62 @@ class VisualOptionsTest {
         BlockOutline(character = "\n")
     }
 
-    @Test fun lyricEnlargementIsBounded() {
-        assertEquals(0, DisplayOptions(lyricEnlargementPercent = 0).lyricEnlargementPercent)
-        assertEquals(60, DisplayOptions(lyricEnlargementPercent = 60).lyricEnlargementPercent)
-        for (value in listOf(-1, 61)) {
-            assertThrows(IllegalArgumentException::class.java) { DisplayOptions(lyricEnlargementPercent = value) }
+    @Test fun lyricSizesAndColorsAreIndependentAndBounded() {
+        assertEquals(24, LyricAppearance().activeSizeSp)
+        assertEquals(20, LyricAppearance().otherSizeSp)
+        assertNull(LyricAppearance().activeColor)
+        assertNull(LyricAppearance().otherColor)
+        assertEquals(12, LyricAppearance(activeSizeSp = 12, otherSizeSp = 48).activeSizeSp)
+        for (value in listOf(11, 49)) {
+            assertThrows(IllegalArgumentException::class.java) { LyricAppearance(activeSizeSp = value) }
+            assertThrows(IllegalArgumentException::class.java) { LyricAppearance(otherSizeSp = value) }
         }
+        assertThrows(IllegalArgumentException::class.java) { LyricAppearance(activeColor = -1) }
+        assertThrows(IllegalArgumentException::class.java) { LyricAppearance(otherColor = 0x1000000) }
+    }
+
+    @Test fun arcAndShadowAreOptInAndBounded() {
+        assertFalse(BlockOutline().shadow)
+        assertFalse(BlockOutline().hasArc)
+        assertTrue(BlockOutline(BlockStyle.DASHED_ARC).hasArc)
+        assertEquals(18, BlockOutline(BlockStyle.ARC).arcDp)
+        assertThrows(IllegalArgumentException::class.java) { BlockOutline(arcDp = -1) }
+        assertThrows(IllegalArgumentException::class.java) { BlockOutline(arcDp = 49) }
+    }
+
+    @Test fun tappingCyclesExactlyFiveModesWithoutChangingOtherSpectrumPreferences() {
+        val start = SpectrumOptions(enabled = true, style = SpectrumStyle.LINE, bands = 16, refreshRate = 15,
+            classicColors = SpectrumColors(0, 0x808080, 0xffffff))
+        val expected = listOf(
+            Triple(SpectrumStyle.BARS, SpectrumPalette.CLASSIC, FireStyle.SMOOTH),
+            Triple(SpectrumStyle.BARS, SpectrumPalette.CLASSIC, FireStyle.LED),
+            Triple(SpectrumStyle.BARS, SpectrumPalette.FIRE, FireStyle.SMOOTH),
+            Triple(SpectrumStyle.BARS, SpectrumPalette.FIRE, FireStyle.LED),
+            Triple(SpectrumStyle.LINE, SpectrumPalette.CLASSIC, FireStyle.LED),
+        )
+        var options = start
+        repeat(2) {
+            for ((style, palette, rendering) in expected) {
+                options = options.nextMode()
+                assertEquals(style, options.style)
+                assertEquals(palette, options.palette)
+                assertEquals(rendering, options.rendering)
+                assertEquals(start.classicColors, options.classicColors)
+                assertEquals(16, options.bands)
+                assertEquals(15, options.refreshRate)
+                assertTrue(options.enabled)
+            }
+        }
+    }
+
+    @Test fun themeAndClassicBothHaveSmoothAndLedRendering() {
+        for (palette in listOf(SpectrumPalette.CLASSIC, SpectrumPalette.THEME)) {
+            val options = SpectrumOptions(palette = palette)
+            assertEquals(FireStyle.SMOOTH, options.rendering)
+            assertEquals(FireStyle.LED, options.withRendering(FireStyle.LED).rendering)
+            assertEquals(FireStyle.LED, options.fireStyle)
+        }
+        assertEquals(SpectrumStyle.LINE, SpectrumOptions(palette = SpectrumPalette.THEME).nextMode().style)
     }
 
     @Test fun palettesAndRenderingRemainIndependent() {

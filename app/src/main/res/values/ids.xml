@@ -1,9 +1,18 @@
 <resources>
     <item type="id" name="navigationArtwork" />
     <item type="id" name="colorPreview" />
-    <item type="id" name="colorRed" />
-    <item type="id" name="colorGreen" />
-    <item type="id" name="colorBlue" />
+    <item type="id" name="colorGrid" />
+    <item type="id" name="customColorInput" />
+    <item type="id" name="customColorLayout" />
+    <item type="id" name="settingsCategoryDivider" />
+    <item type="id" name="aboutBody" />
+    <item type="id" name="librarySelection" />
+    <item type="id" name="libraryAddSelected" />
+    <item type="id" name="librarySelectAll" />
+    <item type="id" name="libraryList" />
+    <item type="id" name="queueList" />
+    <item type="id" name="playlistSaveFolders" />
+    <item type="id" name="playlistUpdate" />
     <item type="id" name="blockCharacterInput" />
     <item type="id" name="aboutPhoto" />
     <item type="id" name="aboutHeading" />

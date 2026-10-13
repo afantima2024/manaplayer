@@ -49,6 +49,11 @@
         android:layout_height="wrap_content"
         android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="14sp" />
+    <com.google.android.material.checkbox.MaterialCheckBox
+        android:id="@+id/selection"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:visibility="gone" />
     <androidx.appcompat.widget.AppCompatImageButton
         android:id="@+id/more"
         style="@style/PlayerIconButton"

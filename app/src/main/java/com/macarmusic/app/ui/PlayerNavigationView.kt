@@ -17,7 +17,10 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.widget.AppCompatImageButton
 import androidx.appcompat.widget.AppCompatImageView
+import androidx.appcompat.widget.AppCompatTextView
 import androidx.appcompat.widget.PopupMenu
+import androidx.appcompat.widget.TooltipCompat
+import androidx.core.widget.TextViewCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.AccessibilityDelegateCompat
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
@@ -43,6 +46,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
     private val items = mutableListOf<Item>()
     private val row = LinearLayout(context)
     private var vertical: Boolean? = null
+    private var compact = false
     private var listener: ((Int) -> Unit)? = null
     private var blockOutline: BlockOutline? = null
     private val gap get() = resources.getDimensionPixelSize(R.dimen.player_gap)
@@ -66,13 +70,13 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
                 setImageDrawable(entry.icon)
                 importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
             }
-            val label = TextView(context).apply {
+            val label = AppCompatTextView(context).apply {
                 text = entry.title
                 gravity = Gravity.CENTER
                 textSize = 12f
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
-                setAutoSizeTextTypeUniformWithConfiguration(10, 12, 1, TypedValue.COMPLEX_UNIT_SP)
+                TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(this, 10, 12, 1, TypedValue.COMPLEX_UNIT_SP)
                 includeFontPadding = false
                 importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
             }
@@ -131,9 +135,15 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
-    fun configure(vertical: Boolean) {
-        if (this.vertical == vertical) return
+    fun configure(vertical: Boolean, compact: Boolean = false) {
+        if (this.vertical == vertical && this.compact == compact) return
         this.vertical = vertical
+        this.compact = compact
+        items.forEach {
+            it.view.minimumHeight = dp(if (compact && !vertical) 48 else 64)
+            it.label.visibility = if (compact && !vertical) View.GONE else View.VISIBLE
+            TooltipCompat.setTooltipText(it.view, it.label.text)
+        }
         (row.parent as? android.view.ViewGroup)?.removeView(row)
         removeAllViews()
         row.orientation = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
@@ -159,9 +169,9 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
     }
 
     private fun renderSelection() {
-        val primary = MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary)
+        val primary = AccentTheme.color(this, com.google.android.material.R.attr.colorPrimary)
         val foreground = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface)
-        val container = MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimaryContainer)
+        val container = AccentTheme.color(this, com.google.android.material.R.attr.colorPrimaryContainer)
         val ripple = ColorStateList.valueOf((primary and 0xffffff) or 0x33000000)
         val outlineColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOutline)
         fun border() = blockOutline?.let { PlayerBlockDrawable(it, outlineColor, resources.displayMetrics.density) }

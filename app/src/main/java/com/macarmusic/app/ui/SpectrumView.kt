@@ -3,9 +3,11 @@ package com.macarmusic.app.ui
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Shader
+import android.os.Build
 import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.View
@@ -47,11 +49,13 @@ class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private var gradient: LinearGradient? = null
     private var gradientTop = Float.NaN
     private var gradientBottom = Float.NaN
-    private val fireMesh by lazy { FireMesh() }
+    private val barMesh by lazy { BarMesh() }
+    private val legacyGradientMatrix by lazy { Matrix() }
     private val density = resources.displayMetrics.density
     private val textSize = 12 * resources.displayMetrics.scaledDensity
     private val foreground get() = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface)
-    private val accent get() = MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary)
+    private val accent get() = AccentTheme.color(this, com.google.android.material.R.attr.colorPrimary)
+    private val themeColors by lazy { (accent and 0xffffff).let { SpectrumColors(it, it, it) } }
 
     fun configure(value: SpectrumOptions) {
         if (options == value) return
@@ -153,10 +157,17 @@ class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeS
             val step = (right - left) / options.bands
             val group = SpectrumAnalyzer.BAND_COUNT / options.bands
             val fire = options.style == SpectrumStyle.BARS && options.palette == SpectrumPalette.FIRE
+            val bars = options.style == SpectrumStyle.BARS
+            val legacyBars = bars && Build.VERSION.SDK_INT < 29
+            val barColors = when (options.palette) {
+                SpectrumPalette.FIRE -> options.fireColors
+                SpectrumPalette.CLASSIC -> options.classicColors
+                SpectrumPalette.THEME -> themeColors
+            }
             val peakColor = foreground
             val referenceColor = (MaterialColors.getColor(this,
                 com.google.android.material.R.attr.colorOnSurfaceVariant) and 0xffffff) or 0x64000000
-            if (fire) fireMesh.clear()
+            if (bars && !legacyBars) barMesh.clear()
             path.reset()
             for (band in 0 until options.bands) {
                 var value = 0f
@@ -168,20 +179,20 @@ class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 val x = left + band * step
                 val y = bottom - value * (bottom - top)
                 val barRight = (x + step - max(density, step * 0.2f)).coerceAtLeast(x + 1f)
-                if (fire && options.fireStyle == FireStyle.LED) {
-                    addFireBar(x, barRight, top, bottom, value, peak, referenceColor, peakColor)
-                } else if (fire) {
-                    fireMesh.gradient(x, y, barRight, bottom, y, bottom, options.fireColors)
+                if (legacyBars) {
+                    drawLegacyBar(canvas, x, barRight, top, bottom, value, peak, referenceColor, peakColor, fire)
+                } else if (bars && options.rendering == FireStyle.LED) {
+                    addSegmentedBar(x, barRight, top, bottom, value, peak, referenceColor, peakColor, barColors, fire)
+                } else if (bars) {
+                    barMesh.gradient(x, y, barRight, bottom, if (fire) y else top, bottom, barColors)
                     if (options.peaks && peak > 0) {
                         val peakY = bottom - peak * (bottom - top)
-                        fireMesh.rect(x, peakY - density, barRight, peakY + density, peakColor, peakColor)
+                        barMesh.rect(x, peakY - density, barRight, peakY + density, peakColor, peakColor)
                     }
-                } else if (options.style == SpectrumStyle.BARS) {
-                    canvas.drawRect(x, y, barRight, bottom, paint)
                 } else {
                     if (band == 0) path.moveTo(x + step / 2, y) else path.lineTo(x + step / 2, y)
                 }
-                if (!fire && options.peaks && peak > 0) {
+                if (!bars && options.peaks && peak > 0) {
                     val peakY = bottom - peak * (bottom - top)
                     val shader = paint.shader
                     paint.shader = null
@@ -191,7 +202,8 @@ class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeS
                     paint.color = accent
                 }
             }
-            if (fire) fireMesh.draw(canvas)
+            if (legacyBars) gradient?.setLocalMatrix(null)
+            else if (bars) barMesh.draw(canvas)
             if (options.style == SpectrumStyle.LINE) {
                 paint.style = Paint.Style.STROKE
                 canvas.drawPath(path, paint)
@@ -213,29 +225,77 @@ class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeS
         scheduleRedraw()
     }
 
-    private fun addFireBar(left: Float, right: Float, top: Float, bottom: Float, level: Float, peak: Float,
-        referenceColor: Int, peakColor: Int,
+    private fun drawLegacyBar(canvas: Canvas, left: Float, right: Float, top: Float, bottom: Float,
+        level: Float, peak: Float, referenceColor: Int, peakColor: Int, perBar: Boolean,
+    ) {
+        // Legacy vertex rendering is absent on hardware and loses precision on software canvases.
+        val led = options.rendering == FireStyle.LED
+        val step = (bottom - top) / FIRE_SEGMENTS
+        val gap = max(1f, step * 0.25f).coerceAtMost(step * 0.5f)
+        val count = ceil(level * FIRE_SEGMENTS).toInt().coerceIn(0, FIRE_SEGMENTS)
+        val x = if (led) left.roundToInt().toFloat() else left
+        val end = if (led) right.roundToInt().toFloat() else right
+        val litTop = if (led) (bottom - count * step + gap).roundToInt().toFloat()
+            else bottom - level * (bottom - top)
+        path.reset()
+        if (led) {
+            for (row in 0 until count) {
+                val base = bottom - row * step
+                path.addRect(x, (base - step + gap).roundToInt().toFloat(), end,
+                    base.roundToInt().toFloat(), Path.Direction.CW)
+            }
+        } else if (level > 0) path.addRect(x, litTop, end, bottom, Path.Direction.CW)
+        paint.shader = null
+        if (led) {
+            paint.color = referenceColor
+            canvas.drawRect(x, bottom - max(1f, density), end, bottom, paint)
+        }
+        if (!path.isEmpty) {
+            legacyGradientMatrix.setScale(1f, if (perBar) (bottom - litTop) / (bottom - top) else 1f, 0f, bottom)
+            gradient?.setLocalMatrix(legacyGradientMatrix)
+            paint.color = android.graphics.Color.WHITE
+            paint.shader = gradient
+            canvas.drawPath(path, paint)
+        }
+        paint.shader = null
+        if (options.peaks && peak > 0) {
+            paint.color = peakColor
+            if (led) {
+                val row = (ceil(peak * FIRE_SEGMENTS).toInt() - 1).coerceIn(0, FIRE_SEGMENTS - 1)
+                val y = (bottom - (row + 1) * step + gap).roundToInt().toFloat()
+                canvas.drawRect(x, y, end, y + max(1f, density).coerceAtMost(step - gap), paint)
+            } else {
+                val y = bottom - peak * (bottom - top)
+                canvas.drawRect(x, y - density, end, y + density, paint)
+            }
+        }
+        paint.color = android.graphics.Color.WHITE
+        paint.shader = gradient
+    }
+
+    private fun addSegmentedBar(left: Float, right: Float, top: Float, bottom: Float, level: Float, peak: Float,
+        referenceColor: Int, peakColor: Int, colors: SpectrumColors, perBar: Boolean,
     ) {
         val step = (bottom - top) / FIRE_SEGMENTS
         val gap = max(1f, step * 0.25f).coerceAtMost(step * 0.5f)
         val count = ceil(level * FIRE_SEGMENTS).toInt().coerceIn(0, FIRE_SEGMENTS)
         val x = left.roundToInt().toFloat()
         val end = right.roundToInt().toFloat()
-        fireMesh.rect(x, bottom - max(1f, density), end, bottom, referenceColor, referenceColor)
+        barMesh.rect(x, bottom - max(1f, density), end, bottom, referenceColor, referenceColor)
         val litTop = (bottom - count * step + gap).roundToInt().toFloat()
         for (row in 0 until count) {
             val base = bottom - row * step
-            fireMesh.gradient(x, (base - step + gap).roundToInt().toFloat(), end,
-                base.roundToInt().toFloat(), litTop, bottom, options.fireColors)
+            barMesh.gradient(x, (base - step + gap).roundToInt().toFloat(), end,
+                base.roundToInt().toFloat(), if (perBar) litTop else top, bottom, colors)
         }
         if (options.peaks && peak > 0) {
             val row = (ceil(peak * FIRE_SEGMENTS).toInt() - 1).coerceIn(0, FIRE_SEGMENTS - 1)
             val y = (bottom - (row + 1) * step + gap).roundToInt().toFloat()
-            fireMesh.rect(x, y, end, y + max(1f, density).coerceAtMost(step - gap), peakColor, peakColor)
+            barMesh.rect(x, y, end, y + max(1f, density).coerceAtMost(step - gap), peakColor, peakColor)
         }
     }
 
-    private class FireMesh {
+    private class BarMesh {
         private val capacity = SpectrumAnalyzer.BAND_COUNT * (FIRE_SEGMENTS + 3)
         private val vertices = FloatArray(capacity * 8)
         private val colors = IntArray(capacity * 4)
@@ -282,7 +342,7 @@ class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
         fun draw(canvas: Canvas) {
             if (count > 0) {
-                // Hardware-supported from our API 29 floor; one batch avoids per-cell GPU state changes.
+                // One batch on API 29+ canvases.
                 canvas.drawVertices(Canvas.VertexMode.TRIANGLES, count * 8, vertices, 0,
                     null, 0, colors, 0, indices, 0, count * 6, paint)
             }

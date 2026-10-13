@@ -23,8 +23,8 @@ if (((Adb shell getprop ro.kernel.qemu) -join '').Trim() -ne '1') {
     throw 'This helper refuses physical devices.'
 }
 $api = [int](((Adb shell getprop ro.build.version.sdk) -join '').Trim())
-if ($api -lt 29) {
-    throw 'ManaMusicPlayer requires an Android 10/API 29 or newer emulator.'
+if ($api -lt 23) {
+    throw 'ManaMusicPlayer requires an Android 6.0/API 23 or newer emulator.'
 }
 $audioPermission = if ($api -ge 33) { 'android.permission.READ_MEDIA_AUDIO' } else { 'android.permission.READ_EXTERNAL_STORAGE' }
 $installed = @(Adb shell pm list packages)
@@ -38,8 +38,10 @@ try {
     & .\gradlew.bat --no-daemon --console=plain --quiet :app:assembleDebug :app:assembleDebugAndroidTest
     if ($LASTEXITCODE -ne 0) { throw 'APK build failed.' }
     Adb install -r 'app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk'
+    if ($api -lt 29) { Adb shell pm grant com.macarmusic.app.test android.permission.WRITE_EXTERNAL_STORAGE }
     foreach ($picker in $pickers) { Adb shell pm disable-user --user 0 $picker }
-    if (((Adb shell cmd package resolve-activity --brief -a android.intent.action.OPEN_DOCUMENT_TREE) -join "`n") -notmatch 'No activity found') {
+    if ($api -ge 24 -and
+        ((Adb shell cmd package resolve-activity --brief -a android.intent.action.OPEN_DOCUMENT_TREE) -join "`n") -notmatch 'No activity found') {
         throw 'Another folder-picker handler is installed; this is not a pickerless test environment.'
     }
     function Run-Check([string] $Report, [string] $Class, [int] $Count, [string] $Flag) {

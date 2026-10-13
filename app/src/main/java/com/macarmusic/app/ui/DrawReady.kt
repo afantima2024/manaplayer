@@ -6,14 +6,22 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
 internal suspend fun View.awaitDraw() = suspendCancellableCoroutine { continuation ->
-    val observer = viewTreeObserver
+    var observer: ViewTreeObserver? = null
     var posted = false
     lateinit var listener: ViewTreeObserver.OnDrawListener
+    lateinit var attachment: View.OnAttachStateChangeListener
     fun removeListener() {
-        if (observer.isAlive) observer.removeOnDrawListener(listener)
+        observer?.takeIf { it.isAlive }?.removeOnDrawListener(listener)
         if (viewTreeObserver !== observer && viewTreeObserver.isAlive) {
             viewTreeObserver.removeOnDrawListener(listener)
         }
+        removeOnAttachStateChangeListener(attachment)
+    }
+    fun observeAttached() {
+        if (!continuation.isActive) return
+        observer = viewTreeObserver
+        observer?.addOnDrawListener(listener)
+        invalidate()
     }
     listener = ViewTreeObserver.OnDrawListener {
         if (!posted) {
@@ -25,7 +33,15 @@ internal suspend fun View.awaitDraw() = suspendCancellableCoroutine { continuati
             }
         }
     }
-    observer.addOnDrawListener(listener)
+    attachment = object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(view: View) = observeAttached()
+        override fun onViewDetachedFromWindow(view: View) {
+            observer?.takeIf { it.isAlive }?.removeOnDrawListener(listener)
+            observer = null
+        }
+    }
+    // Android 6 drops floating OnDrawListeners when its observer merges at attachment.
+    addOnAttachStateChangeListener(attachment)
+    if (isAttachedToWindow) observeAttached()
     continuation.invokeOnCancellation { post { removeListener() } }
-    invalidate()
 }

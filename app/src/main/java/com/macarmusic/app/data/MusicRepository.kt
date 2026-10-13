@@ -86,6 +86,7 @@ class MusicRepository(
                     lastScanMs = existing?.lastScanMs ?: 0,
                     lastScanCount = existing?.lastScanCount ?: 0,
                     selectedForPlayback = existing?.selectedForPlayback ?: true,
+                    pinned = existing?.pinned ?: false,
                 )
             }
             val keys = sources.mapTo(hashSetOf()) { it.uri }
@@ -101,9 +102,12 @@ class MusicRepository(
         result
     }
 
-    suspend fun browserTrack(uri: String, sourceUri: String, parentId: String): MetadataResult = withContext(Dispatchers.IO) {
+    suspend fun browserTrack(uri: String, sourceUri: String, parentId: String,
+        relativePath: String? = null,
+    ): MetadataResult = withContext(Dispatchers.IO) {
         val metadata = metadata.read(documents.describe(Uri.parse(uri)), sourceUri)
-        val result = metadata.copy(track = metadata.track.copy(sourceParents = mapOf(sourceUri to parentId)))
+        val result = metadata.copy(track = metadata.track.copy(sourceParents = mapOf(sourceUri to parentId),
+            sourcePaths = relativePath?.let { mapOf(sourceUri to it) }.orEmpty()))
         update { LibraryEdits.upsertTracks(it, listOf(result.track)) }
         result
     }
@@ -116,25 +120,29 @@ class MusicRepository(
         val rootId = documents.rootId(source.uri)
         val startingId = location?.documentId ?: rootId
         val fullSource = startingId == rootId
-        val folders = ArrayDeque<Pair<String, Int>>().apply { add(startingId to 0) }
+        val startPath = if (fullSource) "" else location?.relativePath?.ifBlank { location.name }.orEmpty()
+        val folders = ArrayDeque<ScanFolder>().apply { add(ScanFolder(startingId, 0, startPath)) }
         val visited = hashSetOf<String>()
         val entries = linkedMapOf<String, com.macarmusic.app.model.DocumentEntry>()
         val parents = hashMapOf<String, String>()
+        val paths = hashMapOf<String, String>()
         val label = if (location == null || fullSource) documents.displayName(source) else location.name
         onProgress(ScanProgress(label))
         while (folders.isNotEmpty()) {
             currentCoroutineContext().ensureActive()
-            val (id, depth) = folders.removeFirst()
+            val (id, depth, relativePath) = folders.removeFirst()
             if (!visited.add(id)) continue
             if (depth > 64 || visited.size + entries.size > 100_000) {
                 throw IOException(context.getString(R.string.folder_safety_limit))
             }
             for (entry in documents.children(source.uri, id)) {
                 currentCoroutineContext().ensureActive()
-                if (entry.isDirectory) folders.add(entry.id to depth + 1)
+                val entryPath = listOf(relativePath, entry.name).filter(String::isNotEmpty).joinToString("/")
+                if (entry.isDirectory) folders.add(ScanFolder(entry.id, depth + 1, entryPath))
                 else {
                     entries[entry.id] = entry
                     parents[entry.id] = id
+                    paths[entry.id] = entryPath
                 }
                 if (folders.size + visited.size + entries.size > 100_000) {
                     throw IOException(context.getString(R.string.folder_safety_limit))
@@ -147,7 +155,8 @@ class MusicRepository(
         for ((index, entry) in entries.values.withIndex()) {
             currentCoroutineContext().ensureActive()
             val result = metadata.read(entry, source.uri)
-            tracks.add(result.track.copy(sourceParents = mapOf(source.uri to parents.getValue(entry.id))))
+            tracks.add(result.track.copy(sourceParents = mapOf(source.uri to parents.getValue(entry.id)),
+                sourcePaths = mapOf(source.uri to paths.getValue(entry.id))))
             if (result.warning) warnings++
             if (index % 10 == 0) onProgress(ScanProgress(label, index + 1))
         }
@@ -182,4 +191,6 @@ class MusicRepository(
     private companion object {
         const val TAG = "MusicRepository"
     }
+
+    private data class ScanFolder(val id: String, val depth: Int, val relativePath: String)
 }

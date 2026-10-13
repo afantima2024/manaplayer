@@ -20,6 +20,8 @@ import com.macarmusic.app.model.PlaybackScope
 import com.macarmusic.app.model.ScanProgress
 import com.macarmusic.app.model.SortOrder
 import com.macarmusic.app.model.Track
+import com.macarmusic.app.model.PlaylistFolder
+import com.macarmusic.app.model.PinnedFolderException
 import com.macarmusic.app.lyrics.LyricState
 import com.macarmusic.app.lyrics.LyricResult
 import com.macarmusic.app.lyrics.LyricIssue
@@ -54,10 +56,18 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     val repository = app.repository
     val library = repository.library
     val selectedScreen = saved.getStateFlow("screen", R.id.nav_player)
-    val settingsCategory = saved.getStateFlow("settingsCategory", SettingsCategory.GENERAL)
+    val settingsCategory = saved.run {
+        get<SettingsCategory>("settingsCategory")?.let { set("settingsCategory", it.current) }
+        getStateFlow("settingsCategory", SettingsCategory.GENERAL)
+    }
     val query = saved.getStateFlow("query", "")
     val favoritesOnly = saved.getStateFlow("favorites", false)
     val selectedPlaylist = saved.getStateFlow<String?>("playlist", null)
+    // Large selections must not travel in Android's size-limited activity saved-state Bundle.
+    private val mutableLibrarySelecting = MutableStateFlow(false)
+    val librarySelecting = mutableLibrarySelecting.asStateFlow()
+    private val mutableLibrarySelection = MutableStateFlow<Set<String>>(emptySet())
+    val librarySelection = mutableLibrarySelection.asStateFlow()
     private val mutableSort = MutableStateFlow(app.sortOrder)
     val sort = mutableSort.asStateFlow()
     val visibleTracks = combine(library, query, favoritesOnly, sort) { library, query, favorites, sort ->
@@ -163,12 +173,34 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         screen(R.id.action_settings)
     }
     fun closeSettings() { screen(saved["settingsReturn"] ?: R.id.nav_player) }
-    fun settingsCategory(category: SettingsCategory) { saved["settingsCategory"] = category }
+    fun settingsCategory(category: SettingsCategory) { saved["settingsCategory"] = category.current }
     fun settingsScroll(category: SettingsCategory): Int = saved["settingsScroll.${category.name}"] ?: 0
     fun settingsScroll(category: SettingsCategory, y: Int) { saved["settingsScroll.${category.name}"] = y }
     fun query(value: String) { saved["query"] = value }
     fun toggleFavorites() { saved["favorites"] = !favoritesOnly.value }
     fun playlist(id: String?) { saved["playlist"] = id }
+    fun selectLibrary(enabled: Boolean) {
+        mutableLibrarySelecting.value = enabled
+        if (!enabled) mutableLibrarySelection.value = emptySet()
+    }
+    fun selectTrack(id: String) {
+        selectLibrary(true)
+        val selected = librarySelection.value.toMutableSet()
+        if (!selected.add(id)) selected.remove(id)
+        mutableLibrarySelection.value = selected
+    }
+    fun selectVisibleTracks() {
+        val visible = visibleTracks.value.mapTo(hashSetOf()) { it.id }
+        val selected = librarySelection.value.toMutableSet()
+        if (selected.containsAll(visible)) selected.removeAll(visible) else selected.addAll(visible)
+        mutableLibrarySelection.value = selected
+    }
+    fun pruneLibrarySelection() {
+        if (librarySelection.value.isEmpty()) return
+        val known = library.value.tracks.mapTo(hashSetOf()) { it.id }
+        val remaining = librarySelection.value.filterTo(linkedSetOf(), known::contains)
+        if (remaining.size != librarySelection.value.size) mutableLibrarySelection.value = remaining
+    }
     fun sort(value: SortOrder) {
         app.sortOrder = value
         mutableSort.value = value
@@ -217,6 +249,18 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             return@operation
         }
         repository.update { LibraryEdits.selectSources(it, selected) }
+    }
+
+    fun pinFolders(pinned: Set<String>) = operation {
+        repository.update { LibraryEdits.pinSources(it, pinned) }
+    }
+
+    fun togglePin(source: FolderSource) = operation {
+        repository.update { library ->
+            val pinned = library.sources.filter { it.pinned }.mapTo(hashSetOf()) { it.uri }
+            if (!pinned.add(source.uri)) pinned.remove(source.uri)
+            LibraryEdits.pinSources(library, pinned)
+        }
     }
 
     fun playSelectedFolders() {
@@ -311,7 +355,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
 
     fun playBrowserFile(entry: DocumentEntry) = operation {
         val location = browser.value.path.lastOrNull() ?: return@operation
-        val result = repository.browserTrack(entry.uri, location.sourceUri, location.documentId)
+        val result = repository.browserTrack(entry.uri, location.sourceUri, location.documentId,
+            listOf(location.relativePath, entry.name).filter(String::isNotEmpty).joinToString("/"))
         if (result.warning) app.inform(app.text(R.string.metadata_warning))
         requestPlay(listOf(result.track))
     }
@@ -330,7 +375,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             app.report(app.text(R.string.provider_cycle))
             return
         }
-        showPath(path + BrowserLocation(current.sourceUri, entry.id, entry.name))
+        showPath(path + BrowserLocation(current.sourceUri, entry.id, entry.name,
+            listOf(current.relativePath, entry.name).filter(String::isNotEmpty).joinToString("/")))
     }
 
     fun browserUp(): Boolean {
@@ -382,20 +428,33 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         play: Boolean = false,
         loop: LoopMode? = null,
     ) {
+        scanRequests(sources.map { it to location }, play, loop)
+    }
+
+    private fun scanRequests(
+        requests: List<Pair<FolderSource, BrowserLocation?>>,
+        play: Boolean = false,
+        loop: LoopMode? = null,
+        completed: (suspend (List<PlaylistFolder>) -> Unit)? = null,
+    ) {
         if (scanJob?.isCompleted == false) {
             app.inform(app.text(R.string.scan_busy))
             return
         }
         scanJob = viewModelScope.launch {
             val resultTracks = mutableListOf<Track>()
+            val scannedFolders = mutableListOf<PlaylistFolder>()
             val failures = mutableListOf<String>()
             var warnings = 0
             var missing = 0
             try {
-                for (source in sources) {
+                for ((source, location) in requests) {
                     try {
                         val result = repository.scan(source, location) { mutableScan.value = it }
                         resultTracks.addAll(result.tracks)
+                        scannedFolders.add(PlaylistFolder(source.uri,
+                            location?.documentId ?: repository.documents.rootId(source.uri),
+                            location?.name ?: source.name, result.tracks.map { it.id }, location?.relativePath.orEmpty()))
                         warnings += result.metadataWarnings
                         missing += result.missingCount
                     } catch (error: CancellationException) {
@@ -421,6 +480,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
                     if (loop != null) app.playbackSettings.setLoop(loop)
                     requestPlay(AudioFiles.sortAndFilter(resultTracks.distinctBy { it.id }, "", sort.value))
                 }
+                if (failures.isEmpty() && completed != null) guard { completed(scannedFolders) }
             } catch (error: CancellationException) {
                 app.inform(app.text(R.string.scan_cancelled))
                 throw error
@@ -472,16 +532,20 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         repository.update { LibraryEdits.toggleFavorite(it, track.id) }
     }
 
-    fun createPlaylist(name: String, tracks: List<Track> = emptyList()) = operation {
-        val id = UUID.randomUUID().toString()
-        repository.update {
-            val withTracks = LibraryEdits.upsertTracks(it, tracks)
-            val created = LibraryEdits.createPlaylist(withTracks, id, name)
-            LibraryEdits.addToPlaylist(created, id, tracks.map(Track::id))
+    fun createPlaylist(name: String, tracks: List<Track> = emptyList(), folders: List<BrowserLocation> = emptyList()) {
+        scanPlaylistFolders(folders) { links ->
+            val id = UUID.randomUUID().toString()
+            repository.update {
+                val withTracks = LibraryEdits.upsertTracks(it, tracks)
+                val created = LibraryEdits.createPlaylist(withTracks, id, name)
+                val withManual = LibraryEdits.addToPlaylist(created, id, tracks.map(Track::id))
+                LibraryEdits.setPlaylistFolders(withManual, id, links)
+            }
+            selectLibrary(false)
+            playlist(id)
+            screen(R.id.nav_playlists)
+            app.inform(app.text(R.string.playlist_created, name.trim()))
         }
-        playlist(id)
-        screen(R.id.nav_playlists)
-        app.inform(app.text(R.string.playlist_created, name.trim()))
     }
 
     fun addToPlaylist(id: String, tracks: List<Track>) = operation {
@@ -489,16 +553,56 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             LibraryEdits.addToPlaylist(LibraryEdits.upsertTracks(it, tracks), id, tracks.map(Track::id))
         }
         val name = updated.playlists.first { it.id == id }.name
+        selectLibrary(false)
         app.inform(app.text(R.string.playlist_added, name))
     }
 
     fun removePlaylist(id: String) = operation {
-        repository.update { it.copy(playlists = it.playlists.filterNot { playlist -> playlist.id == id }) }
+        repository.update { LibraryEdits.deletePlaylist(it, id) }
         if (selectedPlaylist.value == id) playlist(null)
+        app.inform(app.text(R.string.playlist_deleted))
     }
 
     fun removePlaylistTrack(playlistId: String, trackId: String) = operation {
         repository.update { LibraryEdits.removeFromPlaylist(it, playlistId, trackId) }
+    }
+
+    fun updatePlaylistTracks(id: String, tracks: List<String>) = operation {
+        repository.update { LibraryEdits.replacePlaylistTracks(it, id, tracks) }
+        app.inform(app.text(R.string.playlist_updated))
+    }
+
+    fun renamePlaylist(id: String, name: String) = operation {
+        repository.update { LibraryEdits.renamePlaylist(it, id, name) }
+        app.inform(app.text(R.string.playlist_updated))
+    }
+
+    fun updatePlaylistFolders(id: String, folders: List<BrowserLocation>) {
+        scanPlaylistFolders(folders) { scanned ->
+            repository.update { library ->
+                val previous = requireNotNull(library.playlists.firstOrNull { it.id == id }).folders.associateBy { it.key }
+                val known = library.tracks.mapTo(hashSetOf()) { it.id }
+                val refreshed = scanned.map { folder ->
+                    folder.copy(trackIds = (previous[folder.key]?.trackIds.orEmpty() + folder.trackIds)
+                        .filter(known::contains).distinct())
+                }
+                LibraryEdits.setPlaylistFolders(library, id, refreshed)
+            }
+            app.inform(app.text(R.string.playlist_updated))
+        }
+    }
+
+    private fun scanPlaylistFolders(folders: List<BrowserLocation>, completed: suspend (List<PlaylistFolder>) -> Unit) {
+        operation {
+            if (folders.isEmpty()) completed(emptyList())
+            else {
+                val sources = library.value.sources.associateBy { it.uri }
+                val requests = folders.distinctBy { it.sourceUri to it.documentId }.map {
+                    (sources[it.sourceUri] ?: throw IOException(app.text(R.string.source_removed))) to it
+                }
+                scanRequests(requests, completed = completed)
+            }
+        }
     }
 
     fun operation(block: suspend () -> Unit): Job = viewModelScope.launch { guard(block) }
@@ -513,6 +617,9 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             app.report(app.text(R.string.permission_lost))
         } catch (error: IOException) {
             operationFailure(error)
+        } catch (error: PinnedFolderException) {
+            Log.i(TAG, "Blocked removal from a pinned folder")
+            app.report(app.text(R.string.unpin_first))
         } catch (error: IllegalArgumentException) {
             operationFailure(error)
         } catch (error: IllegalStateException) {

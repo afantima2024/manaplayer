@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -63,8 +64,14 @@ class StorageCompatibilityTest {
     private val app = ApplicationProvider.getApplicationContext<MaCarMusicApp>()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val fixture = DocumentsContract.buildTreeDocumentUri("com.macarmusic.app.test.documents", "music")
-    private val rootFolder = MediaStoreAccess.Folder("external_primary", "Music/ManaPlayer_Compatibility/")
-    private val siblingFolder = MediaStoreAccess.Folder("external_primary", "Music/ManaPlayer_Compatibility 2/")
+    private val legacyFixtureDirectory by lazy {
+        requireNotNull(app.contentResolver.call(fixture, "fixtureExternalDirectory", null, null)?.getString("path"))
+    }
+    private fun indexedFolder(path: String) = if (Build.VERSION.SDK_INT >= 29)
+        MediaStoreAccess.Folder("external_primary", path) else
+        MediaStoreAccess.Folder("external", "$legacyFixtureDirectory/$path")
+    private val rootFolder by lazy { indexedFolder("Music/ManaPlayer_Compatibility/") }
+    private val siblingFolder by lazy { indexedFolder("Music/ManaPlayer_Compatibility 2/") }
 
     @Before fun setup() {
         app.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putBoolean("parkedNoticeSeen", true).commit()
@@ -187,6 +194,11 @@ class StorageCompatibilityTest {
             assertTrue(tracks.all { it.durationMs in 59_000..61_000 && it.uri.startsWith("content://media/") })
             assertFalse(tracks.any { it.fileName == "Indexed fixture 3.wav" })
             runBlocking {
+                for (track in tracks) {
+                    val location = app.repository.documents.location(track, emptyList())
+                    assertTrue(location, location.contains("ManaPlayer_Compatibility"))
+                    assertTrue(location, location.endsWith(track.fileName))
+                }
                 val children = app.repository.documents.children(root.uri, rootFolder.path)
                 assertEquals(2, children.size)
                 assertTrue(children.first().isDirectory)
@@ -205,6 +217,15 @@ class StorageCompatibilityTest {
                     fail("An unmounted indexed volume must not look like a successful empty rescan")
                 } catch (_: IOException) {
                     assertEquals(before, app.repository.library.value)
+                }
+                if (Build.VERSION.SDK_INT < 29) {
+                    try {
+                        val empty = root.copy(uri = rootFolder.copy(path = rootFolder.path + "Unavailable/").uri.toString())
+                        app.repository.scan(empty, null) {}
+                        fail("Legacy indexes must not silently empty a saved folder whose media disappeared")
+                    } catch (_: IOException) {
+                        assertEquals(before, app.repository.library.value)
+                    }
                 }
             }
             assertEquals(app.repository.library.value,
@@ -236,16 +257,11 @@ class StorageCompatibilityTest {
         assumeTrue(InstrumentationRegistry.getArguments().getString("pickerless") == "true")
         val uri = DocumentsContract.buildDocumentUriUsingTree(fixture, "music/album/two")
         val before = app.repository.library.value
-        var contentRequests = 0
-        val monitor = object : Instrumentation.ActivityMonitor() {
-            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
-                if (intent.action != Intent.ACTION_GET_CONTENT) return null
-                contentRequests++
-                assertEquals("*/*", intent.type)
-                return Instrumentation.ActivityResult(android.app.Activity.RESULT_OK,
-                    Intent().setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-            }
-        }
+        val monitor = Instrumentation.ActivityMonitor(IntentFilter(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            addDataType("*/*")
+        }, Instrumentation.ActivityResult(android.app.Activity.RESULT_OK,
+            Intent().setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)), true)
         instrumentation.addMonitor(monitor)
         try {
             ActivityScenario.launch(MainActivity::class.java).use {
@@ -256,7 +272,7 @@ class StorageCompatibilityTest {
                 try {
                     await { controller.isPlaying && app.repository.library.value.tracks.any { track -> track.uri == uri.toString() } }
                     val track = app.repository.library.value.tracks.single { track -> track.uri == uri.toString() }
-                    assertEquals(1, contentRequests)
+                    assertEquals(1, monitor.hits)
                     assertFalse(track.standalonePersisted)
                     assertEquals(track.id, onMainResult { controller.currentMediaItem!!.mediaId })
                     screenshot("pickerless-file-manager-audio")
@@ -273,17 +289,11 @@ class StorageCompatibilityTest {
     @Test fun ordinaryFileManagerFallbackAlsoImportsPrivateBackgroundPictures() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("pickerless") == "true")
         val image = DocumentsContract.buildDocumentUri("com.macarmusic.app.test.documents", "pictures/background")
-        var contentRequests = 0
-        val monitor = object : Instrumentation.ActivityMonitor() {
-            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
-                if (intent.action != Intent.ACTION_GET_CONTENT) return null
-                contentRequests++
-                assertEquals("image/*", intent.type)
-                assertTrue(intent.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false))
-                return Instrumentation.ActivityResult(android.app.Activity.RESULT_OK,
-                    Intent().setData(image).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-            }
-        }
+        val monitor = Instrumentation.ActivityMonitor(IntentFilter(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            addDataType("image/*")
+        }, Instrumentation.ActivityResult(android.app.Activity.RESULT_OK,
+            Intent().setData(image).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)), true)
         instrumentation.addMonitor(monitor)
         try {
             ActivityScenario.launch(MainActivity::class.java).use {
@@ -293,7 +303,7 @@ class StorageCompatibilityTest {
                 val previous = app.displaySettings.options.value.imageVersion
                 onView(withId(R.id.settingsBackgroundImage)).perform(scrollTo(), click())
                 await { app.displaySettings.options.value.imageVersion > previous }
-                assertEquals(1, contentRequests)
+                assertEquals(1, monitor.hits)
                 assertEquals(1, app.displaySettings.options.value.backgroundImages.size)
                 assertFalse(app.contentResolver.persistedUriPermissions.any { it.uri == image })
             }
@@ -364,7 +374,11 @@ class StorageCompatibilityTest {
             app.playback.read()
         }
         app.playback.save(PlaybackSnapshot())
-        instrumentation.uiAutomation.grantRuntimePermission(app.packageName, MediaStoreAccess.requiredPermission())
+        val permission = MediaStoreAccess.requiredPermission()
+        if (Build.VERSION.SDK_INT >= 28) instrumentation.uiAutomation.grantRuntimePermission(app.packageName, permission)
+        else android.os.ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand("pm grant ${app.packageName} $permission"),
+        ).use { assertEquals("", it.bufferedReader().readText().trim()) }
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             onView(withId(R.id.nav_folders)).perform(click())
             onView(withText(R.string.device_music)).perform(scrollTo(), click())
@@ -376,13 +390,9 @@ class StorageCompatibilityTest {
             onView(withId(R.id.categoryFolders)).perform(scrollTo(), click())
             onView(withId(R.id.settingsDeviceMusic)).perform(scrollTo())
             onView(withId(R.id.settingsDeviceMusic)).check(matches(isDisplayed()))
-            scenario.onActivity {
-                (it.findViewById<android.view.View>(R.id.toolbar) as com.google.android.material.appbar.MaterialToolbar)
-                    .menu.performIdentifierAction(R.id.action_about, 0)
-                it.supportFragmentManager.executePendingTransactions()
-            }
-            onView(withText(containsString("Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")))
-                .inRoot(isDialog()).check(matches(isDisplayed()))
+            onView(withId(R.id.categoryAbout)).perform(scrollTo(), click())
+            onView(withId(R.id.aboutBody)).check(matches(
+                withText(containsString("Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"))))
         }
     }
 
@@ -420,7 +430,8 @@ class StorageCompatibilityTest {
         while (System.nanoTime() < deadline) {
             val root = instrumentation.uiAutomation.rootInActiveWindow
             val packageName = root?.packageName?.toString()
-            if (root != null && packageName?.endsWith("permissioncontroller") == true) {
+            if (root != null && (packageName?.endsWith("permissioncontroller") == true ||
+                    packageName?.endsWith("packageinstaller") == true)) {
                 val nodes = mutableListOf<AccessibilityNodeInfo>()
                 fun visit(node: AccessibilityNodeInfo) {
                     nodes.add(node)

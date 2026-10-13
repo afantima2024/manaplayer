@@ -10,7 +10,7 @@ Push-Location $project
 $staged = 'dist\optimized\manaplayer.next.apk'
 try {
     function Certificate([string] $Apk) {
-        $result = & $signer verify --min-sdk-version 29 --print-certs $Apk
+        $result = & $signer verify --min-sdk-version 23 --print-certs $Apk
         if ($LASTEXITCODE -ne 0) { throw "Signature verification failed: $Apk" }
         $digest = $result | Select-String '^Signer #1 certificate SHA-256 digest: (.+)$'
         if (-not $digest) { throw "No signing certificate found: $Apk" }
@@ -33,8 +33,8 @@ try {
     if ((Get-Item -LiteralPath $staged).Length -gt 6MB) { throw 'Release exceeds the 6 MiB APK size budget.' }
     $manifest = & (Join-Path $SdkPath 'build-tools\35.0.0\aapt.exe') dump badging $staged
     if ($LASTEXITCODE -ne 0 -or ($manifest -join "`n") -match 'application-debuggable' -or
-        ($manifest -join "`n") -notmatch "sdkVersion:'29'") {
-        throw 'Expected a non-debuggable Android 10+ release APK.'
+        ($manifest -join "`n") -notmatch "sdkVersion:'23'") {
+        throw 'Expected a non-debuggable Android 6.0+ release APK.'
     }
     Copy-Item -LiteralPath $staged -Destination 'dist\optimized\manaplayer.apk' -Force
     Copy-Item -LiteralPath $staged -Destination 'dist\manaplayer.apk' -Force

@@ -11,6 +11,7 @@
         android:layout_height="match_parent"
         android:scrollbars="none">
         <LinearLayout
+            android:id="@+id/settingsCategories"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
@@ -23,12 +24,6 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/category_general" />
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/categoryAppearance"
-                style="@style/SettingCategory"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/category_appearance" />
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/categoryBackgrounds"
                 style="@style/SettingCategory"
@@ -59,6 +54,12 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/folders" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/categoryAbout"
+                style="@style/SettingCategory"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/about" />
         </LinearLayout>
     </ScrollView>
     <View
@@ -117,19 +118,18 @@
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content" />
-                </LinearLayout>
-                <LinearLayout
-                    android:id="@+id/settingsAppearancePanel"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:visibility="gone">
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/settingsTheme"
                         style="@style/SettingButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/theme" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsAccent"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/theme_accent" />
                     <TextView
                         style="@style/SettingLabel"
                         android:layout_width="match_parent"
@@ -171,6 +171,33 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="@string/block_character" />
+                        <LinearLayout
+                            android:id="@+id/blockArcControls"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical">
+                            <TextView
+                                android:id="@+id/blockArcValue"
+                                style="@style/SettingLabel"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/block_arc_value"
+                                android:labelFor="@id/blockArc" />
+                            <SeekBar
+                                android:id="@+id/blockArc"
+                                android:layout_width="match_parent"
+                                android:layout_height="48dp"
+                                android:max="48"
+                                android:contentDescription="@string/block_arc_radius" />
+                        </LinearLayout>
+                        <com.google.android.material.materialswitch.MaterialSwitch
+                            android:id="@+id/settingsBlockShadow"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:minHeight="64dp"
+                            android:text="@string/block_shadow"
+                            android:textColor="?attr/colorOnSurface"
+                            android:textSize="18sp" />
                     </LinearLayout>
                     <TextView
                         android:layout_width="match_parent"
@@ -388,6 +415,28 @@
                         android:text="@string/show_lyrics"
                         android:textColor="?attr/colorOnSurface"
                         android:textSize="18sp" />
+                    <TextView
+                        style="@style/SettingLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyrics_landscape_position"
+                        android:labelFor="@id/lyricsLandscapePosition" />
+                    <Spinner
+                        android:id="@+id/lyricsLandscapePosition"
+                        style="@style/SettingChoice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content" />
+                    <TextView
+                        style="@style/SettingLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyrics_portrait_position"
+                        android:labelFor="@id/lyricsPortraitPosition" />
+                    <Spinner
+                        android:id="@+id/lyricsPortraitPosition"
+                        style="@style/SettingChoice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content" />
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/settingsOnlineLyrics"
                         android:layout_width="match_parent"
@@ -429,18 +478,58 @@
                         android:textSize="18sp" />
                     <TextView
                         style="@style/SettingLabel"
-                        android:id="@+id/lyricEnlargementValue"
+                        android:id="@+id/lyricActiveSizeValue"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/lyric_enlargement"
-                        android:labelFor="@id/lyricEnlargement" />
+                        android:text="@string/lyric_active_size"
+                        android:labelFor="@id/lyricActiveSize" />
                     <SeekBar
-                        android:id="@+id/lyricEnlargement"
+                        android:id="@+id/lyricActiveSize"
                         android:layout_width="match_parent"
                         android:layout_height="48dp"
-                        android:contentDescription="@string/lyric_enlargement"
-                        android:max="12"
-                        android:progress="4" />
+                        android:contentDescription="@string/lyric_active_size"
+                        android:max="36"
+                        android:progress="12" />
+                    <TextView
+                        android:id="@+id/lyricOtherSizeValue"
+                        style="@style/SettingLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyric_other_size"
+                        android:labelFor="@id/lyricOtherSize" />
+                    <SeekBar
+                        android:id="@+id/lyricOtherSize"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:contentDescription="@string/lyric_other_size"
+                        android:max="36"
+                        android:progress="8" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/lyricActiveColor"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyric_active_color" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/lyricOtherColor"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyric_other_color" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/lyricResetAppearance"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyric_reset_appearance" />
+                    <TextView
+                        android:id="@+id/lyricsCacheLocation"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingTop="12dp"
+                        android:textIsSelectable="true"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        android:textSize="14sp" />
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -462,6 +551,12 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/select_folders" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsPinFolders"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/pin_folders" />
                     <TextView
                         android:id="@+id/settingsFolderSummary"
                         android:layout_width="match_parent"
@@ -502,6 +597,12 @@
                         android:layout_height="wrap_content"
                         android:text="@string/manage_folders" />
                 </LinearLayout>
+                <LinearLayout
+                    android:id="@+id/settingsAboutPanel"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone" />
             </LinearLayout>
         </ScrollView>
     </LinearLayout>

@@ -1,0 +1,18 @@
+<resources>
+    <color name="accent_blue">#90CAF9</color>
+    <color name="accent_blue_container">#183A5A</color>
+    <color name="accent_indigo">#B4B9FF</color>
+    <color name="accent_indigo_container">#303465</color>
+    <color name="accent_purple">#D5AFF4</color>
+    <color name="accent_purple_container">#49305B</color>
+    <color name="accent_pink">#F4ADC8</color>
+    <color name="accent_pink_container">#602A43</color>
+    <color name="accent_red">#FFB4AB</color>
+    <color name="accent_red_container">#622A29</color>
+    <color name="accent_orange">#FFB74D</color>
+    <color name="accent_orange_container">#543B1D</color>
+    <color name="accent_green">#AEDC9F</color>
+    <color name="accent_green_container">#294727</color>
+    <color name="accent_teal">#4DD0C0</color>
+    <color name="accent_teal_container">#174C43</color>
+</resources>

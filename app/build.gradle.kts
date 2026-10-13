@@ -11,10 +11,10 @@ android {
 
     defaultConfig {
         applicationId = "com.macarmusic.app"
-        minSdk = 29
+        minSdk = 23
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.8.0"
+        versionCode = 17
+        versionName = "1.9.3"
         testInstrumentationRunner = if (providers.gradleProperty("optimizedSmoke").orNull == "true") {
             "com.macarmusic.app.OptimizedSmokeInstrumentation"
         } else {
@@ -38,6 +38,12 @@ android {
     }
     buildFeatures {
         viewBinding = true
+    }
+    packaging {
+        dex {
+            // Preserve direct DEX mapping; lowering minSdk otherwise enables ZIP compression.
+            useLegacyPackaging = false
+        }
     }
     lint {
         abortOnError = true

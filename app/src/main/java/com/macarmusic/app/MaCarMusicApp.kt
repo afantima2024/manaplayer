@@ -18,6 +18,9 @@ import com.macarmusic.app.playback.SpectrumSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.atomic.AtomicLong
@@ -26,6 +29,7 @@ class MaCarMusicApp : Application() {
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val noticeSequence = AtomicLong()
     private val mutableNotice = MutableStateFlow<Notice?>(null)
+    private var noticeExpiry: Job? = null
     val notice = mutableNotice.asStateFlow()
     val repository by lazy { MusicRepository(localizedContext, applicationScope, ::report) }
     val artwork by lazy { ArtworkRepository(localizedContext) }
@@ -49,16 +53,29 @@ class MaCarMusicApp : Application() {
         localizedContext.getString(id, *arguments)
 
     fun report(message: String) {
-        mutableNotice.value = Notice(noticeSequence.incrementAndGet(), message)
+        publishNotice(message, isError = true)
     }
 
     fun inform(message: String) {
-        mutableNotice.value = Notice(noticeSequence.incrementAndGet(), message, isError = false)
+        publishNotice(message, isError = false)
     }
 
-    fun dismissNotice(id: Long) {
+    @Synchronized private fun publishNotice(message: String, isError: Boolean) {
+        noticeExpiry?.cancel()
+        val notice = Notice(noticeSequence.incrementAndGet(), message, isError)
+        mutableNotice.value = notice
+        noticeExpiry = applicationScope.launch {
+            delay(NOTICE_DURATION_MS)
+            dismissNotice(notice.id)
+        }
+    }
+
+    @Synchronized fun dismissNotice(id: Long) {
         val current = mutableNotice.value
-        if (current?.id == id) mutableNotice.compareAndSet(current, null)
+        if (current?.id == id && mutableNotice.compareAndSet(current, null)) {
+            noticeExpiry?.cancel()
+            noticeExpiry = null
+        }
     }
 
     var themeMode: Int
@@ -91,4 +108,6 @@ class MaCarMusicApp : Application() {
         set(value) {
             getSharedPreferences("settings", MODE_PRIVATE).edit().putString("sort", value.name).apply()
         }
+
+    companion object { const val NOTICE_DURATION_MS = 10_000L }
 }

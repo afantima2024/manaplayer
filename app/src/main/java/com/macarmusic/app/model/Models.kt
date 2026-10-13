@@ -20,6 +20,7 @@ data class Track(
     val standalonePersisted: Boolean = false,
     val missing: Boolean = false,
     val sourceParents: Map<String, String> = emptyMap(),
+    val sourcePaths: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -32,6 +33,7 @@ data class FolderSource(
     val unavailable: Boolean = false,
     val lastIssue: String? = null,
     val selectedForPlayback: Boolean = true,
+    val pinned: Boolean = false,
 )
 
 @Serializable
@@ -39,7 +41,21 @@ data class LocalPlaylist(
     val id: String,
     val name: String,
     val trackIds: List<String> = emptyList(),
+    val folders: List<PlaylistFolder> = emptyList(),
+    val manualTrackIds: List<String>? = null,
 )
+
+@Serializable
+data class PlaylistFolder(
+    val sourceUri: String,
+    val documentId: String,
+    val name: String,
+    val trackIds: List<String> = emptyList(),
+    val relativePath: String = "",
+) {
+    val key: Pair<String, String> get() = sourceUri to documentId
+    fun location() = BrowserLocation(sourceUri, documentId, name, relativePath)
+}
 
 @Serializable
 data class Library(
@@ -71,7 +87,12 @@ data class DocumentEntry(
     val isVirtual: Boolean,
 )
 
-data class BrowserLocation(val sourceUri: String, val documentId: String, val name: String)
+data class BrowserLocation(
+    val sourceUri: String,
+    val documentId: String,
+    val name: String,
+    val relativePath: String = "",
+)
 
 data class BrowserState(
     val path: List<BrowserLocation> = emptyList(),

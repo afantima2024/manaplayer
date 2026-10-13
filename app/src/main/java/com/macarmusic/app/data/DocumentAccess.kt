@@ -2,15 +2,19 @@ package com.macarmusic.app.data
 
 import android.content.Context
 import android.content.Intent
+import android.annotation.SuppressLint
 import android.database.Cursor
 import android.net.Uri
+import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import android.provider.MediaStore
 import android.util.Log
 import com.macarmusic.app.R
 import com.macarmusic.app.model.AudioFiles
 import com.macarmusic.app.model.DocumentEntry
 import com.macarmusic.app.model.FolderSource
+import com.macarmusic.app.model.Track
 import com.macarmusic.app.lyrics.LyricFiles
 import java.io.IOException
 import java.util.Locale
@@ -21,6 +25,59 @@ class DocumentAccess(private val context: Context) {
 
     fun displayName(source: FolderSource): String =
         MediaStoreAccess.folder(Uri.parse(source.uri))?.let(deviceMusic::displayName) ?: source.name
+
+    @Suppress("DEPRECATION")
+    fun location(track: Track, sources: List<FolderSource>): String {
+        val uri = Uri.parse(track.uri)
+        if (uri.authority == "com.android.externalstorage.documents" && DocumentsContract.isDocumentUri(context, uri)) {
+            val id = DocumentsContract.getDocumentId(uri)
+            val volume = id.substringBefore(':')
+            if (':' in id) return "${storageName(volume)} / ${id.substringAfter(':')}"
+        }
+        for ((sourceUri, relative) in track.sourcePaths) {
+            val source = sources.firstOrNull { it.uri == sourceUri } ?: continue
+            return "${displayName(source)} / $relative"
+        }
+        if (uri.authority == "media" && Build.VERSION.SDK_INT < 29) {
+            resolver.query(uri, arrayOf(MediaStore.MediaColumns.DATA), null, null, null)?.use {
+                if (it.moveToFirst()) {
+                    val path = it.text(MediaStore.MediaColumns.DATA)
+                    if (MediaStoreAccess.legacyFolder(path).isNotEmpty()) return path
+                }
+            }
+        } else if (uri.authority == "media") {
+            resolver.query(uri, arrayOf(MediaStore.MediaColumns.RELATIVE_PATH,
+                MediaStore.MediaColumns.VOLUME_NAME, OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) {
+                    val path = it.text(MediaStore.MediaColumns.RELATIVE_PATH)
+                    if (path.isNotBlank()) return "${storageName(it.text(MediaStore.MediaColumns.VOLUME_NAME))} / " +
+                        path + it.text(OpenableColumns.DISPLAY_NAME).ifBlank { track.fileName }
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 26 && DocumentsContract.isTreeUri(uri)) {
+            val root = DocumentsContract.getTreeDocumentId(uri)
+            val path = DocumentsContract.findDocumentPath(resolver, uri)?.path.orEmpty()
+            val rootIndex = path.indexOf(root)
+            if (rootIndex >= 0 && path.size - rootIndex in 1..65) {
+                return path.drop(rootIndex).joinToString(" / ") {
+                    describe(DocumentsContract.buildDocumentUriUsingTree(uri, it)).name
+                }
+            }
+        }
+        return partialLocation(track, sources)
+    }
+
+    fun partialLocation(track: Track, sources: List<FolderSource>): String {
+        val source = sources.firstOrNull { it.uri in track.sourceUris }?.let(::displayName)
+        val file = listOfNotNull(source, track.fileName).joinToString(" / ")
+        return context.getString(R.string.file_location_partial, file)
+    }
+
+    private fun storageName(volume: String): String = when (volume) {
+        "primary", "external", "external_primary", "" -> context.getString(R.string.device_shared_storage)
+        else -> context.getString(R.string.device_storage_volume, volume)
+    }
 
     fun requireContentUri(uri: Uri) {
         if (uri.scheme != "content" || uri.authority.isNullOrBlank()) {
@@ -159,6 +216,7 @@ class DocumentAccess(private val context: Context) {
 
     private companion object {
         const val TAG = "DocumentAccess"
+        @SuppressLint("InlinedApi") // Recognize provider flags without calling API 24-only virtual-document APIs.
         const val FLAG_VIRTUAL_DOCUMENT = DocumentsContract.Document.FLAG_VIRTUAL_DOCUMENT
         val DOCUMENT_COLUMNS = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,

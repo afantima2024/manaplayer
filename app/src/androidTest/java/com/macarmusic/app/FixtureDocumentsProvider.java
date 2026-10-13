@@ -190,8 +190,14 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
     }
 
     @Override public Bundle call(String method, String arg, Bundle extras) {
+        if (method.equals("fixtureExternalDirectory")) {
+            File directory = getContext().getExternalFilesDir(null);
+            if (directory == null) throw new IllegalStateException("Fixture storage unavailable");
+            Bundle result = new Bundle();
+            result.putString("path", directory.getAbsolutePath());
+            return result;
+        }
         if (method.equals("seedIndexedMusic")) {
-            if (Build.VERSION.SDK_INT < 29) throw new UnsupportedOperationException("This fixture requires API 29+");
             try {
                 return seedIndexedMusic();
             } catch (IOException error) {
@@ -233,7 +239,7 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
         return super.call(method, arg, extras);
     }
 
-    @android.annotation.TargetApi(29)
+    @SuppressWarnings("deprecation")
     private Bundle seedIndexedMusic() throws IOException {
         clearIndexedMusic();
         String[] folders = {
@@ -245,10 +251,19 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             ContentValues values = new ContentValues();
             values.put(MediaStore.Audio.Media.DISPLAY_NAME, "Indexed fixture " + index + ".wav");
             values.put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav");
-            values.put(MediaStore.Audio.Media.RELATIVE_PATH, folders[index]);
-            values.put(MediaStore.Audio.Media.IS_PENDING, 1);
+            if (Build.VERSION.SDK_INT >= 29) {
+                values.put(MediaStore.Audio.Media.RELATIVE_PATH, folders[index]);
+                values.put(MediaStore.Audio.Media.IS_PENDING, 1);
+            } else {
+                File base = getContext().getExternalFilesDir(null);
+                if (base == null) throw new IOException("Fixture storage unavailable");
+                File directory = new File(base, folders[index]);
+                if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Cannot create fixture directory");
+                values.put(MediaStore.Audio.Media.DATA, new File(directory, "Indexed fixture " + index + ".wav").getAbsolutePath());
+            }
             Uri uri = getContext().getContentResolver().insert(
-                MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
+                Build.VERSION.SDK_INT >= 29 ? MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    : MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values);
             if (uri == null) throw new IOException("MediaStore rejected the fixture");
             uris.add(uri.toString());
             if (!getContext().getSharedPreferences("indexed-fixture", Context.MODE_PRIVATE).edit()
@@ -263,9 +278,11 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
                 int count;
                 while ((count = input.read(bytes)) != -1) output.write(bytes, 0, count);
             }
-            values.clear();
-            values.put(MediaStore.Audio.Media.IS_PENDING, 0);
-            getContext().getContentResolver().update(uri, values, null, null);
+            if (Build.VERSION.SDK_INT >= 29) {
+                values.clear();
+                values.put(MediaStore.Audio.Media.IS_PENDING, 0);
+                getContext().getContentResolver().update(uri, values, null, null);
+            }
         }
         Bundle result = new Bundle();
         result.putStringArrayList("uris", uris);

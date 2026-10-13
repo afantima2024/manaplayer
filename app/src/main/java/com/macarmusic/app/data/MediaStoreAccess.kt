@@ -88,12 +88,17 @@ class MediaStoreAccess(private val context: Context) {
 
     private suspend fun readSongs(folder: Folder?): List<Song> = withContext(Dispatchers.IO) {
         requirePermission()
-        if (folder != null && folder.volume != "external" &&
-            folder.volume !in MediaStore.getExternalVolumeNames(context)
-        ) throw IOException(context.getString(R.string.document_unavailable))
-        val pathColumn = MediaStore.MediaColumns.RELATIVE_PATH
+        if (folder != null && folder.volume != "external") {
+            if (Build.VERSION.SDK_INT < 29 || folder.volume !in MediaStore.getExternalVolumeNames(context)) {
+                throw IOException(context.getString(R.string.document_unavailable))
+            }
+        }
+        @Suppress("DEPRECATION")
+        val pathColumn = if (Build.VERSION.SDK_INT >= 29) MediaStore.MediaColumns.RELATIVE_PATH
+            else MediaStore.MediaColumns.DATA
         val columns = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.DISPLAY_NAME,
-            MediaStore.Audio.Media.MIME_TYPE, pathColumn, MediaStore.MediaColumns.VOLUME_NAME)
+            MediaStore.Audio.Media.MIME_TYPE, pathColumn) +
+            if (Build.VERSION.SDK_INT >= 29) arrayOf(MediaStore.MediaColumns.VOLUME_NAME) else emptyArray()
         val prefix = folder?.path?.takeIf { it.isNotEmpty() }
         val selection = prefix?.let { "$pathColumn LIKE ? ESCAPE '\\'" }
         val arguments = prefix?.let { arrayOf(likePrefix(it)) }
@@ -111,7 +116,9 @@ class MediaStoreAccess(private val context: Context) {
                         while (it.moveToNext()) {
                             continuation.context.ensureActive()
                             if (++examined > 100_000) throw IOException(context.getString(R.string.folder_safety_limit))
-                            val path = normalizeFolder(it.text(pathColumn))
+                            // Old MediaStore paths are metadata for grouping only; playback still uses content URIs.
+                            val path = if (Build.VERSION.SDK_INT >= 29) normalizeFolder(it.text(pathColumn))
+                                else legacyFolder(it.text(pathColumn))
                             if (folder != null && !contains(folder.path, path)) continue
                             val name = it.text(MediaStore.Audio.Media.DISPLAY_NAME)
                             val mime = it.text(MediaStore.Audio.Media.MIME_TYPE)
@@ -131,6 +138,10 @@ class MediaStoreAccess(private val context: Context) {
                             )))
                         }
                     }
+                }
+                if (Build.VERSION.SDK_INT < 29 && folder != null && songs.isEmpty()) {
+                    // Legacy providers cannot report individual USB mount states. Preserve saved references.
+                    throw IOException(context.getString(R.string.document_unavailable))
                 }
                 if (continuation.isActive) continuation.resume(songs)
             } catch (error: OperationCanceledException) {
@@ -167,6 +178,9 @@ class MediaStoreAccess(private val context: Context) {
             path.endsWith('/') -> path
             else -> "$path/"
         }
+
+        internal fun legacyFolder(file: String): String =
+            if (file.startsWith('/') && !file.endsWith('/')) file.substringBeforeLast('/') + "/" else ""
 
         internal fun contains(parent: String, child: String): Boolean =
             child == parent || (parent.isNotEmpty() && child.startsWith(parent))

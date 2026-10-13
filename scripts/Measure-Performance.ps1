@@ -108,6 +108,7 @@ function Seed([int] $Count, [string] $Feature) {
             title = "Performance fixture $index"; artist = 'Synthetic audio'; album = 'Performance evaluation'
             durationMs = 60000; mimeType = 'audio/wav'
             sourceUris = @{ $tree = $audio }; sourceParents = @{ $tree = 'music' }
+            sourcePaths = @{ $tree = 'Performance fixtures/01 - Synthetic.wav' }
         }
     })
     $library = @{

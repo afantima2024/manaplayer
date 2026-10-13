@@ -7,7 +7,7 @@ import javax.xml.parsers.DocumentBuilderFactory
 
 class MediaStoreAccessTest {
     @Test fun permissionMatchesEverySupportedAndroidGeneration() {
-        for (sdk in 29..32) assertEquals("android.permission.READ_EXTERNAL_STORAGE", MediaStoreAccess.requiredPermission(sdk))
+        for (sdk in 23..32) assertEquals("android.permission.READ_EXTERNAL_STORAGE", MediaStoreAccess.requiredPermission(sdk))
         for (sdk in 33..36) assertEquals("android.permission.READ_MEDIA_AUDIO", MediaStoreAccess.requiredPermission(sdk))
     }
 
@@ -25,9 +25,9 @@ class MediaStoreAccessTest {
             "READ_MEDIA_VIDEO", "QUERY_ALL_PACKAGES")) assertFalse(values.containsKey("android.permission.$name"))
     }
 
-    @Test fun android10IsTheMinimumSupportedVersion() {
+    @Test fun android6IsTheMinimumSupportedVersion() {
         val build = Paths.get("build.gradle.kts").toFile().readText()
-        assertTrue(Regex("""\bminSdk\s*=\s*29\b""").containsMatchIn(build))
+        assertTrue(Regex("""\bminSdk\s*=\s*23\b""").containsMatchIn(build))
     }
 
     @Test fun directoryBoundariesExcludeSimilarlyNamedSiblingsAndUnknownLocations() {
@@ -37,6 +37,21 @@ class MediaStoreAccessTest {
         assertFalse(MediaStoreAccess.contains("Music/Album/", "Music/Albums/"))
         assertTrue(MediaStoreAccess.contains("", ""))
         assertFalse(MediaStoreAccess.contains("", "Music/"))
+    }
+
+    @Test fun legacyPathsGroupInternalAndUsbAudioWithoutRawFileAccess() {
+        assertEquals("/storage/emulated/0/Music/", MediaStoreAccess.legacyFolder("/storage/emulated/0/Music/song.mp3"))
+        assertEquals("/storage/1234-ABCD/Music/中文/", MediaStoreAccess.legacyFolder("/storage/1234-ABCD/Music/中文/song.flac"))
+        assertEquals("/", MediaStoreAccess.legacyFolder("/song.wav"))
+        assertEquals("", MediaStoreAccess.legacyFolder(""))
+        assertEquals("", MediaStoreAccess.legacyFolder("song.mp3"))
+        assertEquals("", MediaStoreAccess.legacyFolder("Music/song.mp3"))
+        assertEquals("", MediaStoreAccess.legacyFolder("/storage/emulated/0/Music/"))
+        val parent = MediaStoreAccess.legacyFolder("/storage/usb/Music/one.mp3")
+        val nested = MediaStoreAccess.legacyFolder("/storage/usb/Music/Album/two.mp3")
+        val sibling = MediaStoreAccess.legacyFolder("/storage/usb/Music 2/three.mp3")
+        assertEquals("/storage/usb/Music/Album/", MediaStoreAccess.directChild(parent, nested))
+        assertFalse(MediaStoreAccess.contains(parent, sibling))
     }
 
     @Test fun nestedAudioProducesOnlyTheImmediateChildDirectory() {
