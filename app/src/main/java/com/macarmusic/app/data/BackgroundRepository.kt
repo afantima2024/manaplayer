@@ -28,6 +28,64 @@ class BackgroundRepository(private val context: Context) {
     private val cached = LinkedHashMap<Triple<Long, String, Int>, Bitmap>(4, 0.75f, true)
     private val cacheLimit = minOf(12L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 8)
 
+    suspend fun <T> withImageFiles(options: DisplayOptions, block: suspend (Map<String, File>) -> T): T =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                block(options.backgroundImages.associateWith { id ->
+                    if (id == BackgroundImages.LEGACY) {
+                        legacyImage.openRead().close()
+                        legacyImage.baseFile
+                    } else {
+                        require(BackgroundImages.isImportedName(id))
+                        File(directory, id).also { if (!it.isFile) throw IOException(context.getString(R.string.background_invalid)) }
+                    }
+                })
+            }
+        }
+
+    suspend fun <T> restoreImages(
+        files: List<File>,
+        preserveOnError: () -> Boolean,
+        commit: suspend (List<String>) -> T,
+    ): T = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (!directory.isDirectory && !directory.mkdirs()) throw IOException(context.getString(R.string.background_save_failed))
+            val staged = mutableListOf<File>()
+            var complete = false
+            try {
+                for (file in files) {
+                    currentCoroutineContext().ensureActive()
+                    validateBackupImage(file)
+                    val destination = File(directory, "${UUID.randomUUID()}.png")
+                    staged.add(destination)
+                    file.inputStream().use { input -> destination.outputStream().use {
+                        input.copyTo(it, 16_384)
+                        it.fd.sync()
+                    } }
+                }
+                currentCoroutineContext().ensureActive()
+                withContext(NonCancellable) {
+                    val ids = staged.map { it.name }
+                    val result = commit(ids)
+                    complete = true
+                    cached.clear()
+                    directory.listFiles()?.filter { BackgroundImages.isImportedName(it.name) && it.name !in ids }
+                        ?.forEach(::deletePrivateCopy)
+                    legacyImage.delete()
+                    result
+                }
+            } finally { if (!complete && !preserveOnError()) staged.forEach(::deletePrivateCopy) }
+        }
+    }
+
+    fun validateBackupImage(file: File) {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.path, bounds)
+        if (bounds.outWidth !in 1..2048 || bounds.outHeight !in 1..2048 || bounds.outMimeType != "image/png") {
+            throw IOException(context.getString(R.string.background_invalid))
+        }
+    }
+
     suspend fun importImages(uris: List<Uri>, save: suspend (List<String>) -> Unit) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val selected = uris.distinct()

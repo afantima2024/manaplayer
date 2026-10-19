@@ -101,12 +101,33 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/settingsLightMode"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="64dp"
+                        android:text="@string/light_mode"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="18sp" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingBottom="12dp"
+                        android:text="@string/light_mode_help"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        android:textSize="16sp" />
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/settingsLanguage"
                         style="@style/SettingButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/language" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsSystemInfo"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/system_info" />
                     <TextView
                         style="@style/SettingLabel"
                         android:layout_width="match_parent"
@@ -205,6 +226,66 @@
                         android:paddingTop="8dp"
                         android:paddingBottom="16dp"
                         android:text="@string/control_blocks_help"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        android:textSize="16sp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsDefaultPlayer"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/default_music_player" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsWidgets"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/home_widgets" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingBottom="16dp"
+                        android:text="@string/widgets_help"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        android:textSize="16sp" />
+                    <TextView
+                        android:id="@+id/widgetTransparencyValue"
+                        style="@style/SettingLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/widget_transparency"
+                        android:labelFor="@id/widgetTransparency" />
+                    <SeekBar
+                        android:id="@+id/widgetTransparency"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:max="100"
+                        android:contentDescription="@string/widget_transparency" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsBackup"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/backup_export" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsRestore"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/backup_restore" />
+                    <TextView
+                        android:id="@+id/settingsBackupStatus"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingBottom="8dp"
+                        android:text="@string/backup_working"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="16sp"
+                        android:visibility="gone" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingBottom="16dp"
+                        android:text="@string/backup_help"
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:textSize="16sp" />
                 </LinearLayout>
@@ -461,13 +542,6 @@
                         android:text="@string/lyrics_drag_seek"
                         android:textColor="?attr/colorOnSurface"
                         android:textSize="18sp" />
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:paddingBottom="8dp"
-                        android:text="@string/lyrics_drag_help"
-                        android:textColor="?attr/colorOnSurfaceVariant"
-                        android:textSize="16sp" />
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/settingsLyricSmoothScroll"
                         android:layout_width="match_parent"
@@ -530,6 +604,62 @@
                         android:textIsSelectable="true"
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:textSize="14sp" />
+                    <TextView
+                        style="@style/SettingLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:labelFor="@id/lyricsCacheInternalExpiry"
+                        android:text="@string/lyrics_cache_expiry_internal" />
+                    <Spinner
+                        android:id="@+id/lyricsCacheInternalExpiry"
+                        style="@style/SettingChoice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="@string/lyrics_cache_expiry_internal" />
+                    <TextView
+                        style="@style/SettingLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:labelFor="@id/lyricsCachePortableExpiry"
+                        android:text="@string/lyrics_cache_expiry_portable" />
+                    <Spinner
+                        android:id="@+id/lyricsCachePortableExpiry"
+                        style="@style/SettingChoice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="@string/lyrics_cache_expiry_portable" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/lyricsCacheInspect"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyrics_cache_inspect" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/lyricsCacheClear"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyrics_cache_clear" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/lyricsCacheMove"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyrics_cache_move" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/lyricsCacheInternal"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyrics_cache_internal" />
+                    <ProgressBar
+                        android:id="@+id/lyricsCacheProgress"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="8dp"
+                        android:contentDescription="@string/lyrics_cache_busy"
+                        android:indeterminate="true"
+                        android:visibility="gone" />
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -596,6 +726,12 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/manage_folders" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsRemoveAllFolders"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/remove_all_folders" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/settingsAboutPanel"

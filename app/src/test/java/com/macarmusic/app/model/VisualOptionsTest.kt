@@ -5,6 +5,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisualOptionsTest {
+    @Test fun spectrumOriginsAndBandCountsPreserveExistingDefaultsAndRoundTrip() {
+        val json = kotlinx.serialization.json.Json
+        assertEquals(SpectrumOrigin.BOTTOM, SpectrumOptions().origin)
+        assertEquals(SpectrumPosition.RIGHT, SpectrumOptions().position)
+        assertEquals(listOf(3, 8, 16, 32), SpectrumOptions.BAND_COUNTS)
+        for (origin in SpectrumOrigin.entries) for (bands in SpectrumOptions.BAND_COUNTS) {
+            val options = SpectrumOptions(origin = origin, bands = bands)
+            assertEquals(options, json.decodeFromString<SpectrumOptions>(
+                json.encodeToString(SpectrumOptions.serializer(), options)))
+            assertEquals(origin, options.nextMode().origin)
+            assertEquals(bands, options.nextMode().bands)
+            assertEquals(SpectrumPosition.RIGHT, options.nextMode().position)
+        }
+        assertEquals(SpectrumOrigin.BOTTOM, json.decodeFromString<SpectrumOptions>("{}").origin)
+        for (bands in listOf(0, 1, 2, 4, 7, 17, 64)) {
+            assertThrows(IllegalArgumentException::class.java) { SpectrumOptions(bands = bands) }
+        }
+    }
+
     @Test fun slideshowAndSettingsDefaultToTheRequestedFade() {
         val options = DisplayOptions()
         assertEquals(5, options.slideshow.intervalSeconds)
@@ -111,7 +130,30 @@ class VisualOptionsTest {
         assertThrows(IllegalArgumentException::class.java) { BlockOutline(arcDp = 49) }
     }
 
-    @Test fun tappingCyclesExactlyFiveModesWithoutChangingOtherSpectrumPreferences() {
+    @Test fun noBorderKeepsSavedDecorationOptionsWithoutEnablingAnOutline() {
+        val outlined = BlockOutline(BlockStyle.DASHED_ARC, "+", 36, true)
+        val none = outlined.copy(style = BlockStyle.NONE)
+        assertFalse(none.hasBorder)
+        assertFalse(none.hasArc)
+        assertEquals(outlined, none.copy(style = BlockStyle.DASHED_ARC))
+        assertTrue(BlockOutline().hasBorder)
+        assertEquals(BlockStyle.NONE, BlockStyle.valueOf("NONE"))
+    }
+
+    @Test fun legacyNoneBecomesDisabledControlsAndKeepsDecorationPreferences() {
+        val outline = BlockOutline(BlockStyle.NONE, "+", 36, true)
+        val old = DisplayOptions(blockOutline = outline)
+        val migrated = old.normalized()
+        assertFalse(migrated.controlBlocks)
+        assertEquals(outline.copy(style = BlockStyle.SOLID), migrated.blockOutline)
+        assertFalse(BlockStyle.NONE in BlockStyle.selectable)
+        assertEquals(5, BlockStyle.selectable.size)
+        assertSame(migrated, migrated.normalized())
+        val disabled = DisplayOptions(controlBlocks = false, blockOutline = outline.copy(style = BlockStyle.DASHED_ARC))
+        assertSame(disabled, disabled.normalized())
+    }
+
+    @Test fun tappingCyclesSixModesIncludingOffWithoutChangingOtherSpectrumPreferences() {
         val start = SpectrumOptions(enabled = true, style = SpectrumStyle.LINE, bands = 16, refreshRate = 15,
             classicColors = SpectrumColors(0, 0x808080, 0xffffff))
         val expected = listOf(
@@ -119,6 +161,7 @@ class VisualOptionsTest {
             Triple(SpectrumStyle.BARS, SpectrumPalette.CLASSIC, FireStyle.LED),
             Triple(SpectrumStyle.BARS, SpectrumPalette.FIRE, FireStyle.SMOOTH),
             Triple(SpectrumStyle.BARS, SpectrumPalette.FIRE, FireStyle.LED),
+            Triple(SpectrumStyle.OFF, SpectrumPalette.FIRE, FireStyle.LED),
             Triple(SpectrumStyle.LINE, SpectrumPalette.CLASSIC, FireStyle.LED),
         )
         var options = start

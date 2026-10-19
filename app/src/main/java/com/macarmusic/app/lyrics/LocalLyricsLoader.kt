@@ -23,13 +23,7 @@ class LocalLyricsLoader(private val context: Context, private val music: MusicRe
                 val entries = music.documents.children(source, parent, includeLyrics = true)
                 for (entry in LyricFiles.matching(track, entries).take(4)) {
                     try {
-                        val coroutine = currentCoroutineContext()
-                        val bytes = context.contentResolver.openInputStream(Uri.parse(entry.uri))?.use {
-                            BoundedInput.read(it, LyricsParser.MAX_BYTES) { coroutine.ensureActive() }
-                        } ?: throw IOException("Lyric document is unavailable")
-                        val lyrics = LyricsParser.parse(LyricsParser.decode(bytes))
-                            ?: throw IOException("Local lyric file is empty")
-                        return LyricResult(lyrics, LyricOrigin.LOCAL_FILE)
+                        return readFile(entry.uri, entry.name).result()
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: IOException) {
@@ -62,7 +56,8 @@ class LocalLyricsLoader(private val context: Context, private val music: MusicRe
                 ?: return LyricResult(issue = localIssue(failed, track))
             val lyrics = LyricsParser.parse(text)
             if (lyrics != null) return LyricResult(lyrics, LyricOrigin.EMBEDDED,
-                issue = if (failed) LyricIssue.LOCAL_UNREADABLE else null)
+                issue = if (failed) LyricIssue.LOCAL_UNREADABLE else null,
+                document = CachedLyric(text, LyricOrigin.EMBEDDED))
         } catch (error: CancellationException) {
             throw error
         } catch (error: IOException) {
@@ -79,6 +74,77 @@ class LocalLyricsLoader(private val context: Context, private val music: MusicRe
             Log.w(TAG, "Embedded lyric provider is unavailable", error)
         }
         return LyricResult(issue = localIssue(failed, track))
+    }
+
+    suspend fun readFile(uri: String, name: String): CachedLyric {
+        val document = Uri.parse(uri)
+        music.documents.requireContentUri(document)
+        val coroutine = currentCoroutineContext()
+        val bytes = context.contentResolver.openInputStream(document)?.use {
+            BoundedInput.read(it, LyricsParser.MAX_BYTES) { coroutine.ensureActive() }
+        } ?: throw IOException("Lyric document is unavailable")
+        val text = LyricsParser.decode(bytes)
+        if (LyricsParser.parse(text) == null) throw IOException("Local lyric file is empty")
+        return CachedLyric(text, LyricOrigin.LOCAL_FILE, name = name.take(512), sourceUri = uri)
+    }
+
+    suspend fun available(track: Track): LocalLyricChoices {
+        val choices = linkedMapOf<String, LyricChoice>()
+        var failed = false
+        for ((source, _) in track.sourceUris.entries.sortedBy { it.value != track.uri }) {
+            if (MediaStoreAccess.folder(Uri.parse(source)) != null) continue
+            try {
+                currentCoroutineContext().ensureActive()
+                val parent = track.sourceParents[source] ?: findParent(source, track) ?: continue
+                for (entry in LyricFiles.matching(track,
+                    music.documents.children(source, parent, includeLyrics = true), includeVersions = true)) {
+                    try {
+                        val document = readFile(entry.uri, entry.name)
+                        val version = document.version()
+                        val preview = document.result().lyrics?.lines?.firstOrNull { it.text.isNotBlank() }?.text.orEmpty()
+                        choices[version.id] = LyricChoice(version.id, entry.name, LyricOrigin.LOCAL_FILE,
+                            uri = entry.uri, preview = preview.take(160))
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: IOException) {
+                        failed = true
+                        Log.w(TAG, "Cannot read a local lyric version", error)
+                    } catch (error: SecurityException) {
+                        failed = true
+                        Log.w(TAG, "Cannot access a local lyric version", error)
+                    } catch (error: IllegalArgumentException) {
+                        failed = true
+                        Log.w(TAG, "Invalid local lyric version", error)
+                    } catch (error: IllegalStateException) {
+                        failed = true
+                        Log.w(TAG, "Local lyric version is unavailable", error)
+                    }
+                }
+            } catch (error: CancellationException) { throw error }
+            catch (error: IOException) { failed = true; Log.w(TAG, "Cannot list local lyric versions", error) }
+            catch (error: SecurityException) { failed = true; Log.w(TAG, "Cannot access local lyric versions", error) }
+            catch (error: IllegalArgumentException) { failed = true; Log.w(TAG, "Invalid local lyric folder", error) }
+            catch (error: IllegalStateException) { failed = true; Log.w(TAG, "Local lyric folder is unavailable", error) }
+        }
+        try {
+            currentCoroutineContext().ensureActive()
+            music.documents.requireContentUri(Uri.parse(track.uri))
+            val stream = context.contentResolver.openInputStream(Uri.parse(track.uri))
+                ?: throw IOException("Audio document is unavailable for lyric lookup")
+            val text = stream.use(Id3Lyrics::read)
+                ?: return LocalLyricChoices(choices.values.toList(), localIssue(failed, track))
+            val parsed = LyricsParser.parse(text)
+            if (parsed != null) {
+                val version = LyricVersion(text, LyricOrigin.EMBEDDED, name = track.fileName.take(512))
+                choices[version.id] = LyricChoice(version.id, version.name, version.origin, version,
+                    preview = parsed.lines.firstOrNull { it.text.isNotBlank() }?.text.orEmpty().take(160))
+            }
+        } catch (error: CancellationException) { throw error }
+        catch (error: IOException) { failed = true; Log.w(TAG, "Cannot read embedded lyric version", error) }
+        catch (error: SecurityException) { failed = true; Log.w(TAG, "Cannot access embedded lyric version", error) }
+        catch (error: IllegalArgumentException) { failed = true; Log.w(TAG, "Invalid embedded lyric document", error) }
+        catch (error: IllegalStateException) { failed = true; Log.w(TAG, "Embedded lyric document is unavailable", error) }
+        return LocalLyricChoices(choices.values.toList(), localIssue(failed, track))
     }
 
     private fun localIssue(failed: Boolean, track: Track): LyricIssue? = when {

@@ -1,15 +1,23 @@
 package com.macarmusic.app.model
 
 import kotlin.math.roundToInt
+import kotlinx.serialization.Serializable
 
 enum class TransitionStyle { FADE, SLIDE, ZOOM, NONE }
 enum class PlaybackTimeMode { ELAPSED, REMAINING }
 enum class NavigationPosition { BOTTOM, LEFT, RIGHT, TOP }
 enum class SpectrumPosition { LEFT, RIGHT }
-enum class SpectrumStyle { BARS, LINE }
+enum class SpectrumOrigin { BOTTOM, LEFT, RIGHT, TOP }
+enum class SpectrumStyle { BARS, LINE, OFF }
 enum class SpectrumPalette { CLASSIC, FIRE, THEME }
 enum class FireStyle { LED, SMOOTH }
-enum class BlockStyle { SOLID, DASHED, ARC, CHARACTERS, DASHED_ARC }
+enum class BlockStyle {
+    SOLID, DASHED, ARC, CHARACTERS, DASHED_ARC,
+    // Retained only to read earlier preferences and local backups.
+    NONE;
+
+    companion object { val selectable = listOf(SOLID, ARC, DASHED, DASHED_ARC, CHARACTERS) }
+}
 enum class LyricSide { START, END }
 enum class ThemeAccent { DEFAULT, BLUE, INDIGO, PURPLE, PINK, RED, ORANGE, GREEN, TEAL }
 enum class SpectrumDecay(val perSecond: Float) { SLOW(0.35f), MEDIUM(0.8f), FAST(1.8f) }
@@ -27,6 +35,7 @@ object ColorHex {
     }
 }
 
+@Serializable
 data class BlockOutline(
     val style: BlockStyle = BlockStyle.SOLID,
     val character: String = "*",
@@ -38,6 +47,7 @@ data class BlockOutline(
         require(arcDp in 0..48)
     }
 
+    val hasBorder: Boolean get() = style != BlockStyle.NONE
     val hasArc: Boolean get() = style == BlockStyle.ARC || style == BlockStyle.DASHED_ARC
 
     companion object {
@@ -51,6 +61,7 @@ data class BlockOutline(
     }
 }
 
+@Serializable
 data class LyricAppearance(
     val activeSizeSp: Int = 24,
     val otherSizeSp: Int = 20,
@@ -64,6 +75,7 @@ data class LyricAppearance(
     }
 }
 
+@Serializable
 data class SpectrumColors(val low: Int, val middle: Int, val high: Int) {
     init { require(listOf(low, middle, high).all { it in 0..0xffffff }) }
 
@@ -87,6 +99,7 @@ data class SpectrumColors(val low: Int, val middle: Int, val high: Int) {
     }
 }
 
+@Serializable
 data class SlideshowOptions(
     val intervalSeconds: Int = 5,
     val durationMs: Int = 2_000,
@@ -106,6 +119,7 @@ data class SlideshowOptions(
     )
 }
 
+@Serializable
 data class SpectrumOptions(
     val enabled: Boolean = false,
     val position: SpectrumPosition = SpectrumPosition.RIGHT,
@@ -115,14 +129,15 @@ data class SpectrumOptions(
     val peaks: Boolean = true,
     val falloff: SpectrumDecay = SpectrumDecay.MEDIUM,
     val peakFalloff: SpectrumDecay = SpectrumDecay.SLOW,
-    val refreshRate: Int = 30,
+    val refreshRate: Int = DEFAULT_REFRESH_RATE,
     val fireStyle: FireStyle = FireStyle.LED,
     val classicColors: SpectrumColors = SpectrumColors.CLASSIC,
     val fireColors: SpectrumColors = SpectrumColors.FIRE,
     val barStyle: FireStyle = FireStyle.SMOOTH,
+    val origin: SpectrumOrigin = SpectrumOrigin.BOTTOM,
 ) {
     init {
-        require(bands in setOf(16, 32))
+        require(bands in BAND_COUNTS)
         require(refreshRate in setOf(15, 30, 60))
     }
 
@@ -132,12 +147,19 @@ data class SpectrumOptions(
         if (palette == SpectrumPalette.FIRE) copy(fireStyle = value) else copy(barStyle = value)
 
     fun nextMode(): SpectrumOptions = when {
+        style == SpectrumStyle.OFF -> copy(style = SpectrumStyle.LINE, palette = SpectrumPalette.CLASSIC)
         style == SpectrumStyle.LINE -> copy(style = SpectrumStyle.BARS,
             palette = SpectrumPalette.CLASSIC, barStyle = FireStyle.SMOOTH)
         palette == SpectrumPalette.CLASSIC && barStyle == FireStyle.SMOOTH -> copy(barStyle = FireStyle.LED)
         palette == SpectrumPalette.CLASSIC -> copy(palette = SpectrumPalette.FIRE, fireStyle = FireStyle.SMOOTH)
         palette == SpectrumPalette.FIRE && fireStyle == FireStyle.SMOOTH -> copy(fireStyle = FireStyle.LED)
+        palette == SpectrumPalette.FIRE -> copy(style = SpectrumStyle.OFF)
         else -> copy(style = SpectrumStyle.LINE, palette = SpectrumPalette.CLASSIC)
+    }
+
+    companion object {
+        const val DEFAULT_REFRESH_RATE = 15
+        val BAND_COUNTS = listOf(3, 8, 16, 32)
     }
 }
 

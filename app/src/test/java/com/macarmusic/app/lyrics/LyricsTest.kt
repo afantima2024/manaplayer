@@ -76,33 +76,44 @@ class LyricsTest {
         assertEquals(listOf("Song.LRC", "SONG.txt"), LyricFiles.matching(track, files).map { it.name })
     }
 
-    @Test fun matchingRejectsWrongArtistAndDifferentVersions() {
+    @Test fun matchingUsesReferenceWeightsRatherThanHardSingerAndVersionRejection() {
         val query = LyricQuery("Synthetic song", "Fixture singer", 60_000)
-        assertNotNull(LyricMatch.score(query, "Synthetic Song", "Fixture singer", 61_000))
-        assertNull(LyricMatch.score(query, "Synthetic song (live)", "Fixture singer", 60_000))
-        assertNull(LyricMatch.score(query, "Synthetic song", "Someone else", 60_000))
-        assertNull(LyricMatch.score(query, "Synthetic song", "Fixture singer", 90_000))
+        assertEquals(29, LyricMatch.score(query, "Synthetic Song", "Fixture singer", 61_000))
+        assertEquals(24, LyricMatch.score(query, "Synthetic song (live)", "Fixture singer", 60_000))
+        assertEquals(19, LyricMatch.score(query, "Synthetic song", "Someone else", 60_000))
+        assertEquals(21, LyricMatch.score(query, "Synthetic song", "Fixture singer", 90_000))
     }
 
-    @Test fun missingArtistRequiresCloseDurationAndExactTitle() {
+    @Test fun versionInventoryIncludesNamedAlternativesButDoesNotChangeAutomaticMatching() {
+        val track = Track("id", "content://test/song", "01 - Synthetic.wav", "Synthetic")
+        val names = listOf("01 - Synthetic.LRC", "01 - Synthetic (take 2).lrc",
+            "Synthetic - QQ.txt", "Synthetic [Kuwo].lrc", "Synthetic.2.lrc",
+            "Synthetic other song.lrc", "SyntheticBird.lrc", "Unrelated.lrc")
+        val entries = names.map { DocumentEntry(it, "content://test/$it", it, "text/plain", false, false) }
+        assertEquals(listOf(names.first()), LyricFiles.matching(track, entries).map { it.name })
+        assertEquals(names.take(5).toSet(), LyricFiles.matching(track, entries, includeVersions = true).map { it.name }.toSet())
+    }
+
+    @Test fun titleOnlyMatchesDoNotRequireKnownDuration() {
         val query = LyricQuery("Fixture song", "", 60_000)
-        assertNotNull(LyricMatch.score(query, "Fixture Song", "Artist", 62_000))
-        assertNull(LyricMatch.score(query, "Fixture Song", "Artist", 70_000))
-        assertNull(LyricMatch.score(query.copy(durationMs = 0), "Fixture Song", "Artist", 60_000))
+        assertEquals(19, LyricMatch.score(query, "Fixture Song", "Artist", 62_000))
+        assertEquals(11, LyricMatch.score(query, "Fixture Song", "Artist", 70_000))
+        assertEquals(11, LyricMatch.score(query.copy(durationMs = 0), "Fixture Song", "Artist", 60_000))
     }
 
-    @Test fun collaborationsAndUnicodePunctuationMatch() {
-        assertNotNull(LyricMatch.score(LyricQuery("合成—歌曲", "测试歌手", 60_000), "合成歌曲", "测试歌手/嘉宾", 60_000))
+    @Test fun fuzzyNormalizationAndFirstResultPreferenceMatchTheReference() {
+        val query = LyricQuery("Synthetic_Song (Take)", "Fixture-Singer", 60_000)
+        assertEquals(29, LyricMatch.score(query, "synthetic song take", "Fixture Singer", 60_000))
+        assertEquals(28, LyricMatch.score(query, "synthetic song take", "Fixture Singer", 60_000, index = 1))
+        assertEquals(16, LyricMatch.score(query, "Synthetic Song (Take)", "Fixture Singer / Guest", index = 0))
     }
 
-    @Test fun duetMatchingIsOrderIndependentButRequiresEveryNamedSinger() {
-        val query = LyricQuery("当爱已成往事", "林忆莲_李宗盛", 279_000)
-        assertNotNull(LyricMatch.score(query, "当爱已成往事", "李宗盛、林忆莲", 279_483))
-        assertNotNull(LyricMatch.score(query, "当爱已成往事", "林忆莲/李宗盛", 278_490))
-        assertNull(LyricMatch.score(query, "当爱已成往事", "李宗盛", 279_000))
-        assertNull(LyricMatch.score(query, "当爱已成往事", "李宗盛、梁静茹", 279_000))
-        assertNull(LyricMatch.score(query, "当爱已成往事 (Live)", "林忆莲、李宗盛", 279_000))
-        assertNull(LyricMatch.score(query, "当爱已成往事", "林忆莲、李宗盛", 300_000))
+    @Test fun filenameTagDisambiguationStillRecognizesBothSingers() {
+        val artist = "林忆莲_李宗盛"
+        assertTrue(LyricMatch.artistsMatch(artist, "李宗盛、林忆莲"))
+        assertTrue(LyricMatch.artistsMatch(artist, "林忆莲/李宗盛"))
+        assertFalse(LyricMatch.artistsMatch(artist, "李宗盛"))
+        assertFalse(LyricMatch.artistsMatch(artist, "李宗盛、梁静茹"))
     }
 
     @Test fun numberedDuetFilenameRecoversSongAndBothArtists() {
@@ -111,7 +122,6 @@ class LyricsTest {
         assertEquals(expected, LyricQueries.candidates(LyricQuery(filename, "小高网分享", 279_000)).first())
         assertEquals(expected.copy(artist = "李宗盛/林忆莲"),
             LyricQueries.candidates(LyricQuery(filename, "李宗盛/林忆莲", 279_000)).first())
-        assertEquals("林忆莲 李宗盛", LyricMatch.artistKeywords(expected.artist))
     }
 
     @Test fun queryContainsOnlyBoundedMetadataNotLocalUris() {
@@ -135,6 +145,17 @@ class LyricsTest {
             "CD1 01 - Fixture song - Fixture singer [24bit].flac")) {
             assertTrue(LyricQueries.candidates(LyricQuery(name, "<unknown>", 60_000)).contains(expected))
         }
+    }
+
+    @Test fun copiedNumberedFilenameDoesNotTurnCopyIntoTheArtist() {
+        val filename = "1586.演员-薛之谦 - Copy (2).mp3"
+        val expected = LyricQuery("演员", "薛之谦", 261_000)
+        for (artist in listOf("", "Unknown artist", "薛之谦")) {
+            assertEquals(expected, LyricQueries.candidates(LyricQuery(filename, artist, 261_000), filename).first())
+        }
+        assertEquals(expected, LyricQueries.candidates(
+            LyricQuery("Unknown title", "Unknown artist", 261_000), filename).first())
+        assertEquals("Copy", LyricQueries.candidates(LyricQuery("Copy", "Singer", 0)).first().title)
     }
 
     @Test fun trustedArtistDisambiguatesACombinedTitle() {
@@ -173,10 +194,39 @@ class LyricsTest {
         assertTrue(large.all { it.title.length <= 160 && it.artist.length <= 120 && it.durationMs <= 86_400_000 })
     }
 
-    @Test fun providerHighlightMarkupIsNotPartOfTheSongName() {
-        assertNotNull(LyricMatch.score(LyricQuery("Synthetic song", "Fixture singer", 60_000),
-            "<em>Synthetic</em> song", "<em>Fixture singer</em>", 60_000))
-        assertNull(LyricMatch.score(LyricQuery("Synthetic song", "Fixture singer", 60_000),
-            "<em>Synthetic song</em> (Live)", "Fixture singer", 60_000))
+    @Test fun metadataNormalizationIgnoresHighlightMarkupButKeepsVersionWords() {
+        assertEquals(LyricMatch.normalize("Synthetic song"), LyricMatch.normalize("<em>Synthetic</em> song"))
+        assertNotEquals(LyricMatch.normalize("Synthetic song"), LyricMatch.normalize("<em>Synthetic song</em> (Live)"))
+    }
+
+    @Test fun durationBonusesUseTheReferenceStrictThreeFiveAndTenSecondBoundaries() {
+        val query = LyricQuery("Synthetic song", "Fixture singer", 60_000)
+        for ((difference, bonus) in listOf(2_999L to 8, 3_000L to 5, 4_999L to 5,
+            5_000L to 2, 9_999L to 2, 10_000L to 0)) {
+            assertEquals(20 + bonus, LyricMatch.score(query, query.title, query.artist, 60_000 + difference, index = 1))
+        }
+        assertEquals(20, LyricMatch.score(query, query.title, query.artist, index = 1))
+    }
+
+    @Test fun referenceKeywordCleanupOnlyAppliesToKugouAndKuwo() {
+        val query = LyricQuery("Synthetic song (Live)（Stage）", "Singer - extra", 0)
+        assertEquals("Synthetic song Singer", LyricQueries.keyword(query, cleaned = true))
+        assertEquals("Synthetic song (Live)（Stage） Singer - extra", LyricQueries.keyword(query, cleaned = false))
+        assertEquals("Synthetic song", LyricQueries.keyword(query.copy(artist = "Unknown artist"), cleaned = true))
+    }
+
+    @Test fun filenameRecoversUnusableTitleEvenWithAnUnrecognizedUploaderArtist() {
+        val queries = LyricQueries.candidates(LyricQuery("Unknown title", "An uploader", 60_000),
+            "01. Fixture song - Fixture singer.mp3")
+        assertEquals(LyricQuery("Fixture song", "Fixture singer", 60_000), queries.first())
+    }
+
+    @Test fun matchingFilenameTitleCanRecoverWrongArtistOnlyAfterRealTags() {
+        val tags = LyricQuery("Fixture song", "Wrong tagged artist", 60_000)
+        val queries = LyricQueries.candidates(tags, "Fixture singer - Fixture song.mp3")
+        assertEquals(tags, queries.first())
+        assertTrue(queries.contains(tags.copy(artist = "Fixture singer")))
+        val unrelated = LyricQueries.candidates(tags, "Another singer - Unrelated song.mp3")
+        assertTrue(unrelated.all { it.artist == tags.artist })
     }
 }

@@ -75,6 +75,50 @@ class LibraryEditsTest {
         assertTrue(result.tracks.single().standalonePersisted)
     }
 
+    @Test fun bulkRemovalKeepsStandaloneSongsAndCleansAllFolderMembershipInOneEdit() {
+        val shared = track.copy(
+            sourceUris = track.sourceUris + (other.uri to "content://disk/tree/album/document/song"),
+            sourceParents = mapOf(source.uri to "music", other.uri to "album"),
+            sourcePaths = mapOf(source.uri to "song.mp3", other.uri to "song.mp3"))
+        val opened = shared.copy(id = "opened", standaloneUri = "content://disk/document/opened", standalonePersisted = true)
+        val independent = track.copy(id = "independent", sourceUris = emptyMap(), standaloneUri = track.uri)
+        val original = Library(sources = listOf(source, other), tracks = listOf(shared, opened, independent),
+            favorites = setOf(shared.id, opened.id, independent.id),
+            playlists = listOf(LocalPlaylist("p", "Road", listOf(shared.id, opened.id, independent.id),
+                folders = listOf(PlaylistFolder(source.uri, "music", "Music", listOf(shared.id, opened.id))),
+                manualTrackIds = listOf(opened.id, independent.id))))
+        val result = LibraryEdits.removeSources(original, setOf(source.uri, other.uri))
+        assertTrue(result.sources.isEmpty())
+        assertEquals(listOf(opened.id, independent.id), result.tracks.map(Track::id))
+        assertEquals(opened.standaloneUri, result.tracks.first().uri)
+        assertTrue(result.tracks.first().standalonePersisted)
+        assertTrue(result.tracks.first().sourceUris.isEmpty())
+        assertTrue(result.tracks.first().sourceParents.isEmpty())
+        assertTrue(result.tracks.first().sourcePaths.isEmpty())
+        assertEquals(setOf(opened.id, independent.id), result.favorites)
+        assertEquals(listOf(opened.id, independent.id), result.playlists.single().trackIds)
+        assertEquals(result.playlists.single().trackIds, result.playlists.single().manualTrackIds)
+        assertTrue(result.playlists.single().folders.isEmpty())
+        assertEquals(2, original.sources.size)
+        assertEquals(3, original.tracks.size)
+    }
+
+    @Test fun bulkRemovalPreservesPinnedAndNewFoldersAndRejectsStalePinnedConfirmation() {
+        val pinned = other.copy(pinned = true)
+        val third = source.copy(uri = "content://disk/tree/new")
+        val shared = track.copy(sourceUris = track.sourceUris + (pinned.uri to "content://disk/tree/album/document/song"))
+        val original = Library(sources = listOf(source, pinned, third), tracks = listOf(shared),
+            favorites = setOf(shared.id))
+        val result = LibraryEdits.removeSources(original, setOf(source.uri))
+        assertEquals(listOf(pinned, third), result.sources)
+        assertEquals(mapOf(pinned.uri to "content://disk/tree/album/document/song"), result.tracks.single().sourceUris)
+        assertEquals(original.favorites, result.favorites)
+        assertThrows(PinnedFolderException::class.java) {
+            LibraryEdits.removeSources(original, setOf(source.uri, pinned.uri))
+        }
+        assertSame(original, LibraryEdits.removeSources(original, emptySet()))
+    }
+
     @Test fun rescanningPreservesStandaloneGrant() {
         val original = Library(tracks = listOf(track.copy(standaloneUri = "content://local/song", standalonePersisted = true)))
         val result = LibraryEdits.upsertTracks(original, listOf(track))

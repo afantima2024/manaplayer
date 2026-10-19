@@ -7,6 +7,7 @@ import android.util.Log
 import com.macarmusic.app.R
 import com.macarmusic.app.model.AudioFiles
 import com.macarmusic.app.model.DocumentEntry
+import com.macarmusic.app.model.MetadataReuse
 import com.macarmusic.app.model.Track
 import java.io.IOException
 
@@ -47,6 +48,7 @@ class MetadataReader(private val context: Context, private val documents: Docume
                         trackNumber = tag(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER),
                         year = tag(MediaMetadataRetriever.METADATA_KEY_YEAR),
                         genre = tag(MediaMetadataRetriever.METADATA_KEY_GENRE),
+                        metadataStamp = MetadataReuse.stamp(entry),
                     ),
                     warning = false,
                 )

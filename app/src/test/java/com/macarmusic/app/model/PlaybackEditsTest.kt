@@ -6,6 +6,21 @@ import org.junit.Test
 class PlaybackEditsTest {
     private val tracks = (0..2).map { Track("$it", "content://local/$it", "$it.mp3", "$it", durationMs = 10_000) }
 
+    @Test fun relativeSeekStaysInsideTheCurrentTrack() {
+        assertEquals(25_000L, PlaybackEdits.seekPosition(15_000, 60_000, 10_000))
+        assertEquals(5_000L, PlaybackEdits.seekPosition(15_000, 60_000, -10_000))
+        assertEquals(0L, PlaybackEdits.seekPosition(100, 60_000, -10_000))
+        assertEquals(59_999L, PlaybackEdits.seekPosition(55_000, 60_000, 10_000))
+        assertEquals(0L, PlaybackEdits.seekPosition(0, 1, 10_000))
+    }
+
+    @Test fun relativeSeekRejectsUnknownDurationAndAvoidsOverflow() {
+        assertNull(PlaybackEdits.seekPosition(100, 0, 10_000))
+        assertNull(PlaybackEdits.seekPosition(100, Long.MIN_VALUE + 1, 10_000))
+        assertEquals(Long.MAX_VALUE - 1, PlaybackEdits.seekPosition(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE))
+        assertEquals(0L, PlaybackEdits.seekPosition(Long.MAX_VALUE, Long.MAX_VALUE, Long.MIN_VALUE))
+    }
+
     @Test fun outOfRangeRestoreIsClamped() {
         val result = PlaybackEdits.normalized(PlaybackSnapshot(queue = tracks, index = 8, positionMs = 99_000, repeat = 91))
         assertEquals(2, result.index)

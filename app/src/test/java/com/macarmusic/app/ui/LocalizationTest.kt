@@ -56,4 +56,46 @@ class LocalizationTest {
                 values.none { it.contains("MaCarMusic") || it.contains("ManaPlayer") || it.contains("小悦播放器") })
         }
     }
+
+    @Test fun aboutHasLocalizedVersionAndNoPhotoViewerInstructions() {
+        for (directory in listOf("values", "values-zh")) {
+            val localized = strings(directory)
+            assertTrue(localized.getValue("about_version").single().contains("%1\$s"))
+            assertTrue(localized.getValue("about_version").single().contains("%2\$d"))
+            val body = localized.getValue("about_body").single()
+            for (removed in listOf("PHOTO VIEWER", "full resolution", "照片查看", "原始分辨率")) {
+                assertFalse("Removed viewer still advertised in $directory", body.contains(removed))
+            }
+            assertTrue(localized.keys.none { it.startsWith("about_photo") || it.startsWith("photo_") })
+            assertTrue(localized.getValue("app_logo").single().isNotBlank())
+        }
+    }
+
+    @Test fun settingsUseFunctionLabelsAndNoRedundantBorderChoice() {
+        val english = strings("values")
+        assertEquals(listOf("Classic"), english["spectrum_classic"])
+        assertEquals(listOf("Fire"), english["spectrum_fire"])
+        assertEquals(listOf("Theme accent"), english["spectrum_theme"])
+        for (directory in listOf("values", "values-zh")) {
+            val localized = strings(directory)
+            assertFalse(localized.containsKey("block_none"))
+            assertFalse(localized.getValue("control_blocks_help").single().contains("None"))
+            for (text in localized.values.flatten()) {
+                assertFalse(Regex("as requested|your requirement|you asked|按您的要求|根据您的需求",
+                    RegexOption.IGNORE_CASE).containsMatchIn(text))
+            }
+
+        }
+    }
+
+    @Test fun everyBandWidthUsesTheSameLocalizedCountFormat() {
+        for ((directory, suffix) in listOf("values" to "bands", "values-zh" to "个频段")) {
+            val localized = strings(directory)
+            assertFalse(localized.containsKey("spectrum_thick"))
+            assertFalse(localized.containsKey("spectrum_thin"))
+            for (count in listOf(3, 8, 16, 32)) {
+                assertEquals("$count $suffix", String.format(localized.getValue("spectrum_band_count").single(), count))
+            }
+        }
+    }
 }

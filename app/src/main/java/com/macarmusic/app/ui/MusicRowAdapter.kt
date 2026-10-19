@@ -9,6 +9,7 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.macarmusic.app.R
 import com.macarmusic.app.databinding.RowItemBinding
+import com.macarmusic.app.model.BlockOutline
 
 data class MusicRow(
     val key: String,
@@ -26,7 +27,16 @@ class MusicRowAdapter(
     private val onSelect: ((MusicRow) -> Unit)? = null,
     private val compact: Boolean = false,
 ) : ListAdapter<MusicRow, MusicRowAdapter.Holder>(Diff) {
-    class Holder(val binding: RowItemBinding) : RecyclerView.ViewHolder(binding.root)
+    private var blocks = false to BlockOutline()
+    class Holder(val binding: RowItemBinding) : RecyclerView.ViewHolder(binding.root) {
+        val buttons = BlockButtonStyler(binding.root)
+    }
+
+    fun configureBlocks(enabled: Boolean, outline: BlockOutline) {
+        if (blocks == (enabled to outline)) return
+        blocks = enabled to outline
+        notifyItemRangeChanged(0, itemCount, blocks)
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val binding = RowItemBinding.inflate(LayoutInflater.from(parent.context), parent, false)
@@ -44,6 +54,7 @@ class MusicRowAdapter(
     }
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
+        holder.buttons.apply(blocks.first, blocks.second)
         val row = getItem(position)
         with(holder.binding) {
             title.text = row.title

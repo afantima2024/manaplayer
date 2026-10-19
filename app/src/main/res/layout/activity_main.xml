@@ -27,11 +27,19 @@
         android:id="@+id/content"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
+    <!-- Start padding preserves the logo-title gap instead of Toolbar's collapsing inset. -->
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="48dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="0dp"
+        app:contentInsetStart="0dp"
+        app:contentInsetStartWithNavigation="0dp"
+        app:logo="@drawable/ic_brand_logo"
+        app:logoDescription="@string/app_logo"
         app:title="@string/app_name"
+        app:titleMarginStart="8dp"
         app:menu="@menu/toolbar" />
     <LinearLayout
         android:id="@+id/noticeBar"
@@ -151,6 +159,7 @@
             app:srcCompat="@drawable/ic_next" />
         </LinearLayout>
         <LinearLayout
+            android:id="@+id/miniProgress"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical">

@@ -79,7 +79,8 @@ class MiniPlayerLayout @JvmOverloads constructor(context: Context, attrs: Attrib
             if (time.textSize != TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sizeSp, resources.displayMetrics))
                 time.textSize = sizeSp
             val timeWidth = ceil(time.paint.measureText(time.text.toString())).toInt() + time.paddingLeft + time.paddingRight
-            val minimum = dp(104 + 8 + if (available >= dp(360)) 96 else 48) + timeWidth
+            val minimum = dp(104 + 8 + if (available >= dp(360)) 96 else 48) + timeWidth +
+                progress.paddingLeft + progress.paddingRight
             val width = maxOf(available, minimum)
             val spare = width - minimum
             val artworkWidth = if (spare >= dp(56)) dp(56) else 0

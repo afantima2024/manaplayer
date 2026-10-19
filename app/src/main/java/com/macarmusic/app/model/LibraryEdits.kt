@@ -27,6 +27,7 @@ object LibraryEdits {
                 standaloneUri = if (old.standalonePersisted && !track.standalonePersisted)
                     old.standaloneUri else track.standaloneUri ?: old.standaloneUri,
                 standalonePersisted = track.standalonePersisted || old.standalonePersisted,
+                restoredIds = old.restoredIds + track.restoredIds,
             )
         }
         return library.copy(tracks = tracks.values.toList())
@@ -40,7 +41,7 @@ object LibraryEdits {
         issue: String?,
     ): Library {
         val ids = discovered.mapTo(hashSetOf()) { it.id }
-        val merged = upsertTracks(library, discovered)
+        val merged = BackupEdits.reconcileScanned(upsertTracks(library, discovered), setOf(sourceUri))
         // A disconnected provider can return an empty cursor. Never erase saved references on rescan.
         return merged.copy(
             tracks = merged.tracks.map {
@@ -57,19 +58,51 @@ object LibraryEdits {
         )
     }
 
-    fun removeSource(library: Library, sourceUri: String): Library {
-        if (library.sources.any { it.uri == sourceUri && it.pinned }) throw PinnedFolderException()
+    fun applyScans(library: Library, scans: List<LibraryScan>, completedAt: Long,
+        missingIssue: (Int) -> String,
+    ): Library {
+        val full = scans.filter { it.fullSource }.associateBy { it.sourceUri }
+        val found = scans.flatMapTo(hashSetOf()) { it.tracks.map(Track::id) }
+        val ids = full.mapValues { (_, scan) -> scan.tracks.mapTo(hashSetOf(), Track::id) }
+        val missing = full.keys.associateWith { 0 }.toMutableMap()
+        val merged = BackupEdits.reconcileScanned(upsertTracks(library, scans.flatMap { it.tracks }),
+            scans.mapTo(hashSetOf()) { it.sourceUri })
+        for (track in merged.tracks) {
+            for (source in track.sourceUris.keys) {
+                if (source in ids && track.id !in ids.getValue(source)) missing[source] = missing.getValue(source) + 1
+            }
+        }
+        return merged.copy(
+            tracks = merged.tracks.map { track ->
+                if (track.id !in found && track.sourceUris.keys.any(full::containsKey)) track.copy(missing = true) else track
+            },
+            sources = merged.sources.map { source ->
+                full[source.uri]?.let { scan -> source.copy(
+                    lastScanMs = completedAt,
+                    lastScanCount = scan.tracks.size,
+                    unavailable = false,
+                    lastIssue = missing.getValue(source.uri).takeIf { it > 0 }?.let(missingIssue),
+                ) } ?: source
+            },
+        )
+    }
+
+    fun removeSource(library: Library, sourceUri: String): Library = removeSources(library, setOf(sourceUri))
+
+    fun removeSources(library: Library, sourceUris: Set<String>): Library {
+        if (sourceUris.isEmpty()) return library
+        if (library.sources.any { it.uri in sourceUris && it.pinned }) throw PinnedFolderException()
         val remaining = library.tracks.mapNotNull { track ->
-            if (sourceUri !in track.sourceUris) return@mapNotNull track
-            val locations = track.sourceUris - sourceUri
+            if (track.sourceUris.keys.none(sourceUris::contains)) return@mapNotNull track
+            val locations = track.sourceUris - sourceUris
             val uri = locations.values.firstOrNull() ?: track.standaloneUri ?: return@mapNotNull null
-            track.copy(uri = uri, sourceUris = locations, sourceParents = track.sourceParents - sourceUri,
-                sourcePaths = track.sourcePaths - sourceUri)
+            track.copy(uri = uri, sourceUris = locations, sourceParents = track.sourceParents - sourceUris,
+                sourcePaths = track.sourcePaths - sourceUris)
         }
         return prune(
-            library.copy(sources = library.sources.filterNot { it.uri == sourceUri },
+            library.copy(sources = library.sources.filterNot { it.uri in sourceUris },
                 playlists = library.playlists.map { playlist ->
-                    playlist.copy(folders = playlist.folders.filterNot { it.sourceUri == sourceUri })
+                    playlist.copy(folders = playlist.folders.filterNot { it.sourceUri in sourceUris })
                 }),
             remaining,
         )
@@ -145,7 +178,9 @@ object LibraryEdits {
         val sources = library.sources.associateBy { it.uri }
         require(folders.all { it.sourceUri in sources } && folders.distinctBy { it.key }.size == folders.size)
         val keys = folders.mapTo(hashSetOf()) { it.key }
-        if (playlist.folders.any { it.key !in keys && sources[it.sourceUri]?.pinned == true }) {
+        val resolvedPaths = folders.filter { it.documentId.isNotEmpty() }.mapTo(hashSetOf()) { it.pathKey }
+        if (playlist.folders.any { it.key !in keys &&
+            !(it.documentId.isEmpty() && it.pathKey in resolvedPaths) && sources[it.sourceUri]?.pinned == true }) {
             throw PinnedFolderException()
         }
         val manual = playlist.manualTrackIds ?: playlist.trackIds

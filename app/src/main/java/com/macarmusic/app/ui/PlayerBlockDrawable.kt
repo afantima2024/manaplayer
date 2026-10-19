@@ -39,6 +39,7 @@ class PlayerBlockDrawable(
     private var baseline = 0f
 
     override fun onBoundsChange(bounds: Rect) {
+        if (!outline.hasBorder) return
         val characters = outline.style == BlockStyle.CHARACTERS
         val inset = if (characters) 6 * density else density / 2
         val shadow = if (outline.shadow && !divider) 4 * density else 0f
@@ -80,7 +81,7 @@ class PlayerBlockDrawable(
     }
 
     override fun draw(canvas: Canvas) {
-        if (box.width() <= 0 || box.height() <= 0) return
+        if (!outline.hasBorder || box.width() <= 0 || box.height() <= 0) return
         if (outline.shadow && !divider) canvas.drawPath(shadowPath, shadowPaint)
         val characters = outline.style == BlockStyle.CHARACTERS
         if (!characters) {

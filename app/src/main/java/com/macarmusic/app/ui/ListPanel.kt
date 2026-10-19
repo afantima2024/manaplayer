@@ -13,9 +13,11 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.macarmusic.app.R
+import com.macarmusic.app.model.BlockOutline
 
 class ListPanel @JvmOverloads constructor(context: Context, private val compact: Boolean = false) : LinearLayout(context) {
     val top = LinearLayout(context).apply { orientation = VERTICAL }
+    private val buttons by lazy { BlockButtonStyler(top) }
     val heading = TextView(context).apply {
         textSize = 16f
         setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
@@ -67,6 +69,11 @@ class ListPanel @JvmOverloads constructor(context: Context, private val compact:
             minHeight = dp(if (compact) 48 else 56)
             setOnClickListener { click() }
         }
+
+    fun configureBlocks(enabled: Boolean, outline: BlockOutline) {
+        buttons.apply(enabled, outline)
+        (list.adapter as? MusicRowAdapter)?.configureBlocks(enabled, outline)
+    }
 
     fun empty(message: CharSequence, visible: Boolean) {
         empty.text = message

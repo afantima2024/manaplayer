@@ -18,7 +18,7 @@ param(
     [int] $FeatureTrackCount = 1,
     [int[]] $TrackCounts = @(0, 2000, 10000),
     [ValidateSet('minimal', 'lyrics', 'static', 'slideshow', 'blurred-slideshow',
-        'spectrum15', 'spectrum30', 'spectrum60', 'combined')]
+        'spectrum15', 'spectrum30', 'spectrum60', 'combined', 'light')]
     [string[]] $Features = @('minimal', 'lyrics', 'static', 'slideshow', 'blurred-slideshow',
         'spectrum15', 'spectrum30', 'spectrum60', 'combined'),
     [switch] $SkipStartup,
@@ -118,19 +118,20 @@ function Seed([int] $Count, [string] $Feature) {
     $playback = @{ version = 1; queue = $tracks; index = 0; positionMs = 0; shuffle = $false; repeat = 0 }
     $library | ConvertTo-Json -Depth 8 -Compress | Set-Content -LiteralPath "$report\library.json" -Encoding utf8NoBOM
     $playback | ConvertTo-Json -Depth 8 -Compress | Set-Content -LiteralPath "$report\playback.json" -Encoding utf8NoBOM
-    $pictures = $Feature -in @('static', 'slideshow', 'blurred-slideshow', 'combined')
-    $lyrics = $Feature -in @('lyrics', 'combined')
-    $spectrum = $Feature.StartsWith('spectrum') -or $Feature -eq 'combined'
+    $pictures = $Feature -in @('static', 'slideshow', 'blurred-slideshow', 'combined', 'light')
+    $lyrics = $Feature -in @('lyrics', 'combined', 'light')
+    $spectrum = $Feature.StartsWith('spectrum') -or $Feature -in @('combined', 'light')
     $rate = if ($Feature -eq 'spectrum15') { 15 } elseif ($Feature -eq 'spectrum60') { 60 } else { 30 }
     $ids = @()
     if ($Feature -eq 'static') { $ids = @($imageNames[0]) }
     elseif ($pictures) { $ids = $imageNames }
     $escapedIds = [Security.SecurityElement]::Escape((ConvertTo-Json -InputObject @($ids) -Compress))
-    $blur = if ($Feature -in @('blurred-slideshow', 'combined')) { 60 } else { 0 }
+    $blur = if ($Feature -in @('blurred-slideshow', 'combined', 'light')) { 60 } else { 0 }
     @"
 <?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 <map>
 <boolean name="parkedNoticeSeen" value="true" />
+<boolean name="lightMode" value="$(($Feature -eq 'light').ToString().ToLowerInvariant())" />
 <int name="theme" value="2" />
 <boolean name="lyricsEnabled" value="$($lyrics.ToString().ToLowerInvariant())" />
 <boolean name="onlineLyrics" value="false" />
@@ -151,7 +152,10 @@ function Seed([int] $Count, [string] $Feature) {
 "@ | Set-Content -LiteralPath "$report\settings.xml" -Encoding utf8NoBOM
     Adb shell mkdir -p "$data/files" "$data/shared_prefs" | Out-Null
     Adb shell chown "${appUid}:${appUid}" "$data/files" "$data/shared_prefs" | Out-Null
+    Adb shell rm -f "$data/files/library.json.bak" "$data/files/library.json.new" `
+        "$data/files/playback.json.bak" "$data/files/playback.json.new" "$data/shared_prefs/settings.xml.bak" | Out-Null
     Install-DataFile "$report\library.json" "$data/files/library.json"
+    Adb shell rm -f "$data/files/playback-position.json" "$data/files/playback-position.json.bak" "$data/files/playback-position.json.new" | Out-Null
     Install-DataFile "$report\playback.json" "$data/files/playback.json"
     Install-DataFile "$report\settings.xml" "$data/shared_prefs/settings.xml"
     Adb shell restorecon -RF $data | Out-Null
@@ -255,6 +259,18 @@ try {
                 $snapshotPath = "$report\$name-playback.json"
                 Adb pull "$data/files/playback.json" $snapshotPath | Out-Null
                 $snapshot = Get-Content -Raw -LiteralPath $snapshotPath | ConvertFrom-Json
+                $positionBytes = 0
+                if ($snapshot.checkpointGeneration) {
+                    $positionPath = "$report\$name-position.json"
+                    Adb pull "$data/files/playback-position.json" $positionPath | Out-Null
+                    $position = Get-Content -Raw -LiteralPath $positionPath | ConvertFrom-Json
+                    if ($position.generation -ne $snapshot.checkpointGeneration) {
+                        throw 'The latest position checkpoint belongs to another queue generation.'
+                    }
+                    $snapshot.positionMs = $position.positionMs
+                    $snapshot.index = $position.index
+                    $positionBytes = (Get-Item -LiteralPath $positionPath).Length
+                }
                 if ($snapshot.queue.Count -ne $FeatureTrackCount -or $snapshot.positionMs -lt 1000) {
                     throw 'The persisted queue/position did not reflect the requested playing fixture.'
                 }
@@ -267,6 +283,7 @@ try {
                     WriteBytes = $after.Written - $before.Written
                     KernelWriteBytes = $after.KernelWritten - $before.KernelWritten
                     SnapshotBytes = (Get-Item -LiteralPath $snapshotPath).Length
+                    PositionCheckpointBytes = $positionBytes
                 }
                 $results | Export-Csv -LiteralPath "$report\features.csv" -NoTypeInformation
                 if ($run -eq 1) {

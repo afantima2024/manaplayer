@@ -2,6 +2,9 @@ package com.macarmusic.app.ui
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.content.res.Configuration
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.util.AttributeSet
@@ -28,6 +31,7 @@ import com.google.android.material.color.MaterialColors
 import com.macarmusic.app.R
 import com.macarmusic.app.model.BlockOutline
 import com.macarmusic.app.model.BlockStyle
+import kotlin.math.ceil
 
 class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) :
     FrameLayout(context, attrs) {
@@ -46,10 +50,23 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
     private val items = mutableListOf<Item>()
     private val row = LinearLayout(context)
     private var vertical: Boolean? = null
-    private var compact = false
+    private val labelsBesideIcons get() = vertical == false &&
+        resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     private var listener: ((Int) -> Unit)? = null
     private var blockOutline: BlockOutline? = null
     private val gap get() = resources.getDimensionPixelSize(R.dimen.player_gap)
+    private val itemInset get() = dp(if (blockOutline?.style == BlockStyle.CHARACTERS) 12 else 4)
+    private val labelPaint by lazy {
+        Paint().apply {
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12f, resources.displayMetrics)
+            typeface = Typeface.DEFAULT_BOLD
+        }
+    }
+    private val widestLabel by lazy { ceil(items.maxOf { labelPaint.measureText(it.label.text.toString()) }).toInt() }
+    private val labelHeight by lazy { ceil(labelPaint.fontSpacing).toInt() }
+    private val inlineWidth get() = itemInset * 2 + dp(24 + 8) + widestLabel
+    private val itemHeight get() = if (labelsBesideIcons) maxOf(dp(48), itemInset * 2 + maxOf(dp(24), labelHeight))
+        else maxOf(dp(80), itemInset * 2 + dp(24 + 2) + labelHeight * 2)
 
     var selectedItemId: Int = R.id.nav_player
         set(value) {
@@ -72,9 +89,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
             }
             val label = AppCompatTextView(context).apply {
                 text = entry.title
-                gravity = Gravity.CENTER
                 textSize = 12f
-                maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
                 TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(this, 10, 12, 1, TypedValue.COMPLEX_UNIT_SP)
                 includeFontPadding = false
@@ -82,7 +97,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
             }
             val button = LinearLayout(context).apply {
                 id = entry.itemId
-                orientation = LinearLayout.VERTICAL
+                isBaselineAligned = false
                 gravity = Gravity.CENTER
                 minimumWidth = dp(48)
                 minimumHeight = dp(64)
@@ -90,9 +105,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
                 isFocusable = true
                 contentDescription = entry.title
                 addView(icon, LinearLayout.LayoutParams(dp(24), dp(24)))
-                addView(label, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = dp(2)
-                })
+                addView(label)
                 setOnClickListener { listener?.invoke(entry.itemId) }
             }
             ViewCompat.setAccessibilityDelegate(button, object : AccessibilityDelegateCompat() {
@@ -112,7 +125,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
     fun setOnItemSelectedListener(value: (Int) -> Unit) { listener = value }
 
     fun configureBlocks(enabled: Boolean, outline: BlockOutline) {
-        val next = outline.takeIf { enabled }
+        val next = outline.takeIf { enabled && it.hasBorder }
         if (blockOutline == next) return
         blockOutline = next
         renderSelection()
@@ -120,28 +133,47 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        if (vertical == true && MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.UNSPECIFIED) {
-            val itemHeight = maxOf(dp(64),
+        val sideWidth = resources.getDimensionPixelSize(R.dimen.navigation_side_width)
+        val widthSpec = if (vertical == true)
+            MeasureSpec.makeMeasureSpec(resolveSize(sideWidth, widthMeasureSpec), MeasureSpec.EXACTLY) else widthMeasureSpec
+        val heightSpec = if (vertical == false)
+            MeasureSpec.makeMeasureSpec(resolveSize(itemHeight, heightMeasureSpec), MeasureSpec.EXACTLY) else heightMeasureSpec
+        if (vertical == true && MeasureSpec.getMode(heightSpec) != MeasureSpec.UNSPECIFIED) {
+            val height = maxOf(itemHeight,
                 (MeasureSpec.getSize(heightMeasureSpec) - gap * (row.childCount - 1)) / row.childCount)
-            val lines = if (itemHeight < dp(80)) 1 else 2
-            items.forEach { if (it.label.maxLines != lines) it.label.maxLines = lines }
-            for (index in 0 until row.childCount) row.getChildAt(index).layoutParams.height = itemHeight
-        } else if (vertical == false && MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED) {
-            items.forEach { if (it.label.maxLines != 2) it.label.maxLines = 2 }
-            val itemWidth = maxOf(dp(48),
-                (MeasureSpec.getSize(widthMeasureSpec) - gap * (row.childCount - 1)) / row.childCount)
-            for (index in 0 until row.childCount) row.getChildAt(index).layoutParams.width = itemWidth
+            for (index in 0 until row.childCount) {
+                val child = row.getChildAt(index)
+                if (child.layoutParams.height != height)
+                    child.layoutParams = child.layoutParams.apply { this.height = height }
+            }
+        } else if (vertical == false && MeasureSpec.getMode(widthSpec) != MeasureSpec.UNSPECIFIED) {
+            val available = MeasureSpec.getSize(widthSpec) - gap * (row.childCount - 1)
+            val width = if (labelsBesideIcons) maxOf(inlineWidth, (available - dp(48)) / items.size)
+                else maxOf(dp(48), available / row.childCount)
+            for (index in 0 until row.childCount) {
+                val child = row.getChildAt(index)
+                val itemWidth = if (index == 0 && labelsBesideIcons) dp(48) else width
+                if (child.layoutParams.width != itemWidth)
+                    child.layoutParams = child.layoutParams.apply { this.width = itemWidth }
+            }
         }
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        super.onMeasure(widthSpec, heightSpec)
     }
 
-    fun configure(vertical: Boolean, compact: Boolean = false) {
-        if (this.vertical == vertical && this.compact == compact) return
+    fun configure(vertical: Boolean) {
+        if (this.vertical == vertical) return
         this.vertical = vertical
-        this.compact = compact
+        val besideIcons = labelsBesideIcons
         items.forEach {
-            it.view.minimumHeight = dp(if (compact && !vertical) 48 else 64)
-            it.label.visibility = if (compact && !vertical) View.GONE else View.VISIBLE
+            it.view.orientation = if (besideIcons) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            it.view.minimumHeight = dp(48)
+            it.label.gravity = if (besideIcons) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.CENTER
+            it.label.maxLines = if (besideIcons) 1 else 2
+            it.label.layoutParams = if (besideIcons) {
+                LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
+            } else LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(2)
+            }
             TooltipCompat.setTooltipText(it.view, it.label.text)
         }
         (row.parent as? android.view.ViewGroup)?.removeView(row)
@@ -180,8 +212,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
         val artworkInset = maxOf(dp(8), characterInset)
         artwork.setPadding(artworkInset, artworkInset, artworkInset, artworkInset)
         items.forEach { item ->
-            val inset = maxOf(dp(4), characterInset)
-            item.view.setPadding(inset, inset, inset, inset)
+            item.view.setPadding(itemInset, itemInset, itemInset, itemInset)
             val selected = item.view.id == selectedItemId
             item.view.isSelected = selected
             val color = if (selected) primary else foreground

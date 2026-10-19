@@ -6,12 +6,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.macarmusic.app.lyrics.HttpsLyricsTransport
 import com.macarmusic.app.lyrics.LyricQuery
+import com.macarmusic.app.lyrics.LyricResponse
 import com.macarmusic.app.lyrics.LyricsParser
 import com.macarmusic.app.lyrics.LyricsTransport
 import com.macarmusic.app.lyrics.OnlineLyricsClient
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertTrue
@@ -34,6 +34,10 @@ class LiveLyricsSmokeTest {
         verifyQuery(LyricQuery("1542. 当爱已成往事-林忆莲_李宗盛.MP3", "小高网分享", 279_000))
     }
 
+    @Test fun reportedCopiedFilenameRetrievesTimedLyrics() {
+        verifyQuery(LyricQuery("1586.演员-薛之谦 - Copy (2).mp3", "", 261_000))
+    }
+
     private fun verifyQuery(query: LyricQuery) {
         assumeTrue(InstrumentationRegistry.getArguments().getString("liveLyrics") == "true")
         val app = ApplicationProvider.getApplicationContext<MaCarMusicApp>()
@@ -42,20 +46,23 @@ class LiveLyricsSmokeTest {
         val transport = HttpsLyricsTransport(app.applicationScope)
         val client = OnlineLyricsClient(LyricsTransport { url, body, referer ->
             val response = transport.request(url, body, referer)
-            val json = Json.parseToJsonElement(response) as? JsonObject
-            val catalog = (json?.get("data") as? JsonObject)?.get("lists") as? JsonArray
+            val json = LyricResponse.json(response, singleQuoted = url.contains("search.kuwo.cn"))
+            val data = json["data"] as? JsonObject
+            val catalog = data?.get("info") as? JsonArray
+                ?: (data?.get("song") as? JsonObject)?.get("list") as? JsonArray
             val candidates = json?.get("candidates") as? JsonArray
             val songs = (json?.get("result") as? JsonObject)?.get("songs") as? JsonArray
             responses.add("${url.substringBefore('?')}: status=${json?.get("status") ?: json?.get("code")}, " +
                 "catalog=${catalog?.size}, candidates=${candidates?.size}, songs=${songs?.size}, " +
                 "keyword=${Uri.parse(url).getQueryParameter("keyword")}, " +
-                "error=${json?.get("error_code") ?: json?.get("message")}, keys=${json?.keys}")
+                "error=${json["error_code"] ?: json["message"]}, keys=${json.keys}, dataKeys=${data?.keys}, " +
+                "resultKeys=${(json["result"] as? JsonObject)?.keys}")
             response
         }) { provider, error ->
-            failures.add("$provider: ${error.javaClass.simpleName}")
+            failures.add("$provider: ${error.javaClass.simpleName}: ${error.message?.take(240)}")
         }
         val result = try {
-            runBlocking { withTimeout(25_000) { client.find(query) } }
+            runBlocking { withTimeout(OnlineLyricsClient.TOTAL_TIMEOUT_MS) { client.find(query) } }
         } catch (error: IOException) {
             throw AssertionError("Live lookup failed; $failures; $responses", error)
         }

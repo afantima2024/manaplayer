@@ -38,6 +38,7 @@ try {
     }
     Copy-Item -LiteralPath $staged -Destination 'dist\optimized\manaplayer.apk' -Force
     Copy-Item -LiteralPath $staged -Destination 'dist\manaplayer.apk' -Force
+    Copy-Item -LiteralPath 'manaplayer.png', 'manaplayer.ico' -Destination 'dist' -Force
     foreach ($sidecar in @('dist\manaplayer.apk.idsig', 'dist\optimized\manaplayer.apk.idsig')) {
         if (Test-Path -LiteralPath $sidecar) { Remove-Item -LiteralPath $sidecar }
     }

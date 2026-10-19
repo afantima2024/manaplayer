@@ -8,6 +8,8 @@ import com.macarmusic.app.data.LocalizedContext
 import com.macarmusic.app.data.MusicRepository
 import com.macarmusic.app.data.PlaybackRepository
 import com.macarmusic.app.data.PlaybackSettings
+import com.macarmusic.app.data.CollectionPositionRepository
+import com.macarmusic.app.data.LocalBackupRepository
 import com.macarmusic.app.data.BackgroundRepository
 import com.macarmusic.app.data.BackgroundTint
 import com.macarmusic.app.data.DisplaySettings
@@ -15,6 +17,7 @@ import com.macarmusic.app.lyrics.LyricsRepository
 import com.macarmusic.app.model.Notice
 import com.macarmusic.app.model.SortOrder
 import com.macarmusic.app.playback.SpectrumSource
+import com.macarmusic.app.widgets.HomeWidgets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,14 +36,26 @@ class MaCarMusicApp : Application() {
     val notice = mutableNotice.asStateFlow()
     val repository by lazy { MusicRepository(localizedContext, applicationScope, ::report) }
     val artwork by lazy { ArtworkRepository(localizedContext) }
-    val playback by lazy { PlaybackRepository(localizedContext, applicationScope, ::report) }
+    val playback by lazy { PlaybackRepository(localizedContext, applicationScope, ::report) { collections.remember(it) } }
+    val collections by lazy { CollectionPositionRepository(localizedContext, applicationScope, ::report) }
+    val backups by lazy { LocalBackupRepository(this) }
     val playbackSettings by lazy { PlaybackSettings(this) }
     lateinit var displaySettings: DisplaySettings
         private set
     val backgrounds by lazy { BackgroundRepository(localizedContext) }
-    val lyrics by lazy { LyricsRepository(localizedContext, repository, applicationScope) }
+    private val lyricRepository = lazy {
+        LyricsRepository(localizedContext, repository, applicationScope, onCacheProblem = ::report,
+            internalExpiry = { displaySettings.options.value.internalLyricExpiry },
+            portableExpiry = { displaySettings.options.value.portableLyricExpiry })
+    }
+    val lyrics get() = lyricRepository.value
+
+    fun lyricsTrackChanged(trackId: String?) {
+        if (lyricRepository.isInitialized()) lyricRepository.value.trackChanged(trackId)
+    }
     internal val playbackReady = MutableStateFlow(false)
     val spectrum by lazy { SpectrumSource(applicationScope) }
+    val homeWidgets by lazy { HomeWidgets(this) }
     val localizedContext by lazy { LocalizedContext(this) }
 
     override fun onCreate() {

@@ -1,5 +1,7 @@
 package com.macarmusic.app.model
 
+import kotlinx.serialization.Serializable
+
 enum class LoopMode(val repeatMode: Int) {
     OFF(0), SINGLE_FILE(1), FOLDER(2), SELECTED_FOLDERS(2);
 
@@ -14,6 +16,7 @@ enum class LoopMode(val repeatMode: Int) {
 
 enum class PlayOrder { SEQUENTIAL, RANDOM }
 
+@Serializable
 data class PlaybackOptions(
     val loop: LoopMode = LoopMode.OFF,
     val order: PlayOrder = PlayOrder.SEQUENTIAL,
@@ -21,7 +24,7 @@ data class PlaybackOptions(
 
 object PlaybackScope {
     fun selectedSources(library: Library): List<FolderSource> =
-        library.sources.filter { it.selectedForPlayback }
+        library.sources.filter { it.selectedForPlayback && !it.needsReconnect }
 
     fun folderFor(library: Library, track: Track?): FolderSource? {
         if (track == null) return selectedSources(library).firstOrNull()

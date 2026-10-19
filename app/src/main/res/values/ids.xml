@@ -1,23 +1,43 @@
 <resources>
+    <item name="lyricsVersionsList" type="id" />
+    <item name="lyricsVersionsStatus" type="id" />
+    <item name="lyricsVersionChoose" type="id" />
+    <item name="lyricsVersionBest" type="id" />
+    <item name="lyricsVersionSource" type="id" />
+    <item name="lyricsTimingValue" type="id" />
+    <item name="lyricsEarlierFine" type="id" />
+    <item name="lyricsLaterFine" type="id" />
+    <item name="lyricsEarlierCoarse" type="id" />
+    <item name="lyricsLaterCoarse" type="id" />
+    <item name="lyricsTimingReset" type="id" />
     <item type="id" name="navigationArtwork" />
     <item type="id" name="colorPreview" />
     <item type="id" name="colorGrid" />
     <item type="id" name="customColorInput" />
     <item type="id" name="customColorLayout" />
+    <item type="id" name="colorEditorPreview" />
+    <item type="id" name="colorEditSlot" />
+    <item type="id" name="colorAddSlot" />
+    <item type="id" name="colorRed" />
+    <item type="id" name="colorGreen" />
+    <item type="id" name="colorBlue" />
     <item type="id" name="settingsCategoryDivider" />
     <item type="id" name="aboutBody" />
     <item type="id" name="librarySelection" />
     <item type="id" name="libraryAddSelected" />
     <item type="id" name="librarySelectAll" />
     <item type="id" name="libraryList" />
+    <item type="id" name="libraryBrowse" />
+    <item type="id" name="libraryBack" />
+    <item type="id" name="folderRestorePosition" />
+    <item type="id" name="folderRemoveAll" />
+    <item type="id" name="homeLogo" />
+    <item type="id" name="playlistRestorePosition" />
     <item type="id" name="queueList" />
     <item type="id" name="playlistSaveFolders" />
     <item type="id" name="playlistUpdate" />
     <item type="id" name="blockCharacterInput" />
-    <item type="id" name="aboutPhoto" />
+    <item type="id" name="aboutLogo" />
     <item type="id" name="aboutHeading" />
-    <item type="id" name="fullResolutionPhoto" />
-    <item type="id" name="photoZoomIn" />
-    <item type="id" name="photoZoomOut" />
-    <item type="id" name="photoReset" />
+    <item type="id" name="aboutVersion" />
 </resources>

@@ -13,8 +13,8 @@ android {
         applicationId = "com.macarmusic.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 17
-        versionName = "1.9.3"
+        versionCode = 34
+        versionName = "1.20.0"
         testInstrumentationRunner = if (providers.gradleProperty("optimizedSmoke").orNull == "true") {
             "com.macarmusic.app.OptimizedSmokeInstrumentation"
         } else {

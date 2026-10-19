@@ -18,6 +18,17 @@
         style="@style/SettingLabel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:text="@string/spectrum_origin"
+        android:labelFor="@id/spectrumOrigin" />
+    <Spinner
+        android:id="@+id/spectrumOrigin"
+        style="@style/SettingChoice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+    <TextView
+        style="@style/SettingLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:text="@string/spectrum_style"
         android:labelFor="@id/spectrumStyle" />
     <Spinner

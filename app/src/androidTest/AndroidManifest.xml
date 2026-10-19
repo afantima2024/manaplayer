@@ -5,6 +5,16 @@
     </queries>
     <application>
         <provider
+            android:name="com.macarmusic.app.FixtureCacheProvider"
+            android:authorities="com.macarmusic.app.test.cache"
+            android:exported="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS"
+            android:grantUriPermissions="true">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+        <provider
             android:name="com.macarmusic.app.FixtureDocumentsProvider"
             android:authorities="com.macarmusic.app.test.documents"
             android:exported="true"
@@ -20,6 +30,10 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <activity
             android:name="com.macarmusic.app.FixtureMediaControllerActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <activity
+            android:name="com.macarmusic.app.FixtureWidgetHostActivity"
             android:exported="true"
             android:theme="@android:style/Theme.Material.Light.NoActionBar" />
     </application>

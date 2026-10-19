@@ -25,6 +25,24 @@ public class FixtureGrantActivity extends Activity {
             DocumentsContract.buildDocumentUri(authority, "pictures/second"), Intent.FLAG_GRANT_READ_URI_PERMISSION);
         grantUriPermission("com.macarmusic.app",
             DocumentsContract.buildDocumentUri(authority, "pictures/invalid"), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        for (String root : new String[] {"root", "second", "readonly", "foreign", "temporary"}) {
+            int cacheFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
+                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION;
+            if (!root.equals("temporary")) cacheFlags |= Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION;
+            grantUriPermission("com.macarmusic.app",
+                DocumentsContract.buildTreeDocumentUri("com.macarmusic.app.test.cache", root), cacheFlags);
+        }
+        String cacheDocument = getIntent().getStringExtra("cacheDocumentId");
+        if (cacheDocument != null) {
+            grantUriPermission("com.macarmusic.app",
+                DocumentsContract.buildTreeDocumentUri("com.macarmusic.app.test.cache", cacheDocument),
+                flags | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        }
+        String token = getIntent().getStringExtra("cacheGrantToken");
+        if (token != null) {
+            getContentResolver().call(DocumentsContract.buildTreeDocumentUri("com.macarmusic.app.test.cache", "root"),
+                "cacheGrant", token, null);
+        }
         finish();
     }
 }

@@ -11,11 +11,13 @@ import android.os.CancellationSignal
 import android.os.OperationCanceledException
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.util.Log
 import androidx.core.content.PermissionChecker
 import com.macarmusic.app.R
 import com.macarmusic.app.model.AudioFiles
 import com.macarmusic.app.model.DocumentEntry
 import com.macarmusic.app.model.FolderSource
+import com.macarmusic.app.model.IndexedTags
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -30,7 +32,7 @@ class MediaStoreAccess(private val context: Context) {
         val uri: Uri get() = collection.buildUpon().appendQueryParameter(FOLDER_KEY, path).build()
     }
 
-    private data class Song(val folder: Folder, val entry: DocumentEntry)
+    data class Song(val folder: Folder, val entry: DocumentEntry, val tags: IndexedTags? = null)
 
     fun hasPermission(): Boolean = PermissionChecker.checkSelfPermission(context, requiredPermission()) ==
         PermissionChecker.PERMISSION_GRANTED
@@ -86,10 +88,45 @@ class MediaStoreAccess(private val context: Context) {
         folders.values.toList() + tracks
     }
 
-    private suspend fun readSongs(folder: Folder?): List<Song> = withContext(Dispatchers.IO) {
+    suspend fun scanCatalog(folders: List<Folder>): Map<Folder, List<Song>> = withContext(Dispatchers.IO) {
+        val result = folders.distinct().associateWith { mutableListOf<Song>() }
+        var matched = 0
+        for ((volume, roots) in result.keys.groupBy { it.volume }) {
+            val selected = roots.associateBy { it.path }
+            // One query for a volume replaces a subtree query for every directory and chosen root.
+            for (song in readSongs(roots.singleOrNull(), volume, includeTags = true)) {
+                ensureActive()
+                var path = song.folder.path
+                while (true) {
+                    selected[path]?.let {
+                        val depth = song.folder.path.substring(path.length).count { character -> character == '/' }
+                        if (depth > 64 || ++matched > 100_000) {
+                            throw IOException(context.getString(R.string.folder_safety_limit))
+                        }
+                        result.getValue(it).add(song)
+                    }
+                    if (path.isEmpty() || path == "/") break
+                    val trimmed = path.removeSuffix("/")
+                    val slash = trimmed.lastIndexOf('/')
+                    if (slash < 0) break
+                    path = trimmed.substring(0, slash + 1)
+                }
+            }
+        }
+        for ((folder, songs) in result) {
+            if (Build.VERSION.SDK_INT < 29 && songs.isEmpty()) {
+                throw IOException(context.getString(R.string.document_unavailable) + ": " + displayName(folder))
+            }
+        }
+        result
+    }
+
+    private suspend fun readSongs(folder: Folder?, volume: String? = folder?.volume,
+        includeTags: Boolean = false,
+    ): List<Song> = withContext(Dispatchers.IO) {
         requirePermission()
-        if (folder != null && folder.volume != "external") {
-            if (Build.VERSION.SDK_INT < 29 || folder.volume !in MediaStore.getExternalVolumeNames(context)) {
+        if (volume != null && volume != "external") {
+            if (Build.VERSION.SDK_INT < 29 || volume !in MediaStore.getExternalVolumeNames(context)) {
                 throw IOException(context.getString(R.string.document_unavailable))
             }
         }
@@ -97,8 +134,12 @@ class MediaStoreAccess(private val context: Context) {
         val pathColumn = if (Build.VERSION.SDK_INT >= 29) MediaStore.MediaColumns.RELATIVE_PATH
             else MediaStore.MediaColumns.DATA
         val columns = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.DISPLAY_NAME,
-            MediaStore.Audio.Media.MIME_TYPE, pathColumn) +
+            MediaStore.Audio.Media.MIME_TYPE, pathColumn,
+            MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED) +
             if (Build.VERSION.SDK_INT >= 29) arrayOf(MediaStore.MediaColumns.VOLUME_NAME) else emptyArray()
+        val tagColumns = arrayOf(MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST,
+            MediaStore.Audio.Media.ALBUM, MediaStore.Audio.Media.DURATION, MediaStore.Audio.Media.TRACK,
+            MediaStore.Audio.Media.YEAR) + if (Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.Audio.Media.GENRE) else emptyArray()
         val prefix = folder?.path?.takeIf { it.isNotEmpty() }
         val selection = prefix?.let { "$pathColumn LIKE ? ESCAPE '\\'" }
         val arguments = prefix?.let { arrayOf(likePrefix(it)) }
@@ -106,10 +147,17 @@ class MediaStoreAccess(private val context: Context) {
             val signal = CancellationSignal()
             continuation.invokeOnCancellation { signal.cancel() }
             try {
-                val cursor = context.contentResolver.query(
-                    folder?.collection ?: MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                    columns, selection, arguments, null, signal,
-                ) ?: throw IOException(context.getString(R.string.provider_no_response))
+                val collection = volume?.let(MediaStore.Audio.Media::getContentUri) ?: MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                var queriedTags = includeTags
+                val cursor = try {
+                    context.contentResolver.query(collection, if (includeTags) columns + tagColumns else columns,
+                        selection, arguments, null, signal)
+                } catch (error: IllegalArgumentException) {
+                    if (!includeTags) throw error
+                    Log.w("MediaStoreAccess", "Provider rejected indexed tags; using file metadata instead", error)
+                    queriedTags = false
+                    context.contentResolver.query(collection, columns, selection, arguments, null, signal)
+                } ?: throw IOException(context.getString(R.string.provider_no_response))
                 val songs = cursor.use {
                     buildList {
                         var examined = 0
@@ -127,15 +175,26 @@ class MediaStoreAccess(private val context: Context) {
                             if (it.isNull(idColumn)) throw IOException(context.getString(R.string.invalid_document_id))
                             val id = it.getLong(idColumn)
                             if (id < 0) throw IOException(context.getString(R.string.invalid_document_id))
-                            val volume = it.text(MediaStore.MediaColumns.VOLUME_NAME)
-                                .ifEmpty { folder?.volume ?: "external" }
-                            val location = Folder(volume, path)
+                            val rowVolume = it.text(MediaStore.MediaColumns.VOLUME_NAME)
+                                .ifEmpty { volume ?: "external" }
+                            val location = Folder(rowVolume, path)
                             val uri = ContentUris.withAppendedId(location.collection, id)
                             add(Song(location, DocumentEntry(
                                 id = uri.toString(), uri = uri.toString(),
                                 name = name.ifBlank { context.getString(R.string.unnamed_file) },
                                 mimeType = mime, isDirectory = false, isVirtual = false,
-                            )))
+                                sizeBytes = it.positiveLong(MediaStore.MediaColumns.SIZE),
+                                modifiedMs = it.positiveLong(MediaStore.MediaColumns.DATE_MODIFIED)
+                                    ?.takeIf { seconds -> seconds <= Long.MAX_VALUE / 1000 }?.times(1000),
+                            ), if (queriedTags) IndexedTags(
+                                title = it.text(MediaStore.Audio.Media.TITLE),
+                                artist = it.text(MediaStore.Audio.Media.ARTIST),
+                                album = it.text(MediaStore.Audio.Media.ALBUM),
+                                durationMs = it.positiveLong(MediaStore.Audio.Media.DURATION) ?: 0,
+                                track = it.positiveLong(MediaStore.Audio.Media.TRACK) ?: 0,
+                                year = it.text(MediaStore.Audio.Media.YEAR),
+                                genre = if (Build.VERSION.SDK_INT >= 30) it.text(MediaStore.Audio.Media.GENRE) else "",
+                            ) else null))
                         }
                     }
                 }
@@ -154,6 +213,11 @@ class MediaStoreAccess(private val context: Context) {
     private fun Cursor.text(column: String): String {
         val index = getColumnIndex(column)
         return if (index >= 0 && !isNull(index)) getString(index).orEmpty() else ""
+    }
+
+    private fun Cursor.positiveLong(column: String): Long? {
+        val index = getColumnIndex(column)
+        return if (index >= 0 && !isNull(index)) getLong(index).takeIf { it > 0 } else null
     }
 
     companion object {

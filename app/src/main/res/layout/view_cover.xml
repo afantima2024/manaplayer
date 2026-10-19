@@ -14,7 +14,7 @@
             android:layout_height="match_parent"
             android:contentDescription="@string/cover_art"
             android:scaleType="fitCenter"
-            app:srcCompat="@drawable/ic_launcher" />
+            app:srcCompat="@drawable/player_logo" />
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/lyricsList"
             android:layout_width="match_parent"
@@ -51,9 +51,28 @@
             android:importantForAccessibility="no" />
         </LinearLayout>
     </FrameLayout>
+    <LinearLayout
+        android:id="@+id/lyricsFooter"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:visibility="gone">
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/lyricVersions"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginEnd="4dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:padding="12dp"
+        android:contentDescription="@string/lyrics_versions"
+        android:visibility="gone"
+        app:srcCompat="@drawable/ic_queue"
+        app:tint="?attr/colorPrimary" />
     <TextView
         android:id="@+id/lyricsStatus"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
+        android:layout_weight="1"
         android:layout_height="wrap_content"
         android:gravity="center"
         android:minHeight="32dp"
@@ -63,6 +82,29 @@
         android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="12sp"
         android:visibility="gone" />
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/nextLyrics"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginStart="4dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:padding="12dp"
+        android:contentDescription="@string/lyrics_next"
+        android:visibility="gone"
+        app:srcCompat="@drawable/ic_lyrics_next"
+        app:tint="?attr/colorPrimary" />
+    <androidx.appcompat.widget.AppCompatImageButton
+        android:id="@+id/lyricsTiming"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginStart="4dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:padding="12dp"
+        android:contentDescription="@string/lyrics_timing"
+        android:visibility="gone"
+        app:srcCompat="@drawable/ic_lyrics_timing"
+        app:tint="?attr/colorPrimary" />
+    </LinearLayout>
     <com.google.android.material.button.MaterialButton
         android:id="@+id/retryLyrics"
         style="@style/Widget.Material3.Button.TextButton"

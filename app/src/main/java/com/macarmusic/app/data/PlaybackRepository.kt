@@ -20,17 +20,29 @@ class PlaybackRepository(
     context: Context,
     scope: CoroutineScope,
     private val report: (String) -> Unit,
+    private val rememberCollection: (PlaybackSnapshot) -> Unit,
 ) {
-    private val store = AtomicTextStore(File(context.filesDir, "playback.json"))
+    private val store = PlaybackStateStore(
+        AtomicTextStore(File(context.filesDir, "playback.json")),
+        AtomicTextStore(File(context.filesDir, "playback-position.json")),
+    )
     private val ready = CompletableDeferred<Unit>()
     private val writes = Channel<PlaybackSnapshot>(Channel.CONFLATED)
     @Volatile private var current = PlaybackSnapshot()
     @Volatile private var writable = true
+    @Volatile private var writeFailed = false
 
     init {
         scope.launch {
             try {
-                current = store.read()?.let(LibraryCodec::decodePlayback) ?: PlaybackSnapshot()
+                val loaded = store.read()
+                current = loaded.snapshot
+                if (loaded.ignoredPosition) Log.w(TAG, "Ignored a position checkpoint from another queue generation")
+                loaded.positionError?.let { error ->
+                    writable = false
+                    Log.e(TAG, "Unreadable position checkpoint preserved; using the queue recovery position", error)
+                    report(context.getString(R.string.playback_position_load_failed, error.localizedMessage.orEmpty()))
+                }
             } catch (error: IOException) {
                 readFailure(context, error)
             } catch (error: SerializationException) {
@@ -42,8 +54,10 @@ class PlaybackRepository(
             }
             for (snapshot in writes) {
                 try {
-                    store.write(LibraryCodec.encode(snapshot))
+                    store.write(snapshot)
+                    writeFailed = false
                 } catch (error: IOException) {
+                    writeFailed = true
                     Log.e(TAG, "Playback state write failed", error)
                     report(context.getString(R.string.playback_save_failed, error.localizedMessage.orEmpty()))
                 }
@@ -62,11 +76,16 @@ class PlaybackRepository(
 
     suspend fun reconcile(library: Library) {
         val snapshot = read()
-        save(withContext(Dispatchers.Default) { PlaybackEdits.reconcile(snapshot, library.tracks) })
+        val reconciled = withContext(Dispatchers.Default) { PlaybackEdits.reconcile(snapshot, library.tracks) }
+        synchronized(this) {
+            if (current === snapshot) save(reconciled)
+            else Log.d(TAG, "A newer playback change superseded saved-queue reconciliation")
+        }
     }
 
-    fun save(snapshot: PlaybackSnapshot) {
-        if (!ready.isCompleted || !writable || snapshot == current) return
+    @Synchronized fun save(snapshot: PlaybackSnapshot) {
+        if (!ready.isCompleted || !writable || (snapshot == current && !writeFailed)) return
+        if (current.collection != null && current.collection != snapshot.collection) rememberCollection(current)
         current = snapshot
         check(writes.trySend(snapshot).isSuccess)
     }

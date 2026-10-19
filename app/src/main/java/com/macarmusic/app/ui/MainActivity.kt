@@ -17,6 +17,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.provider.DocumentsContract
 import android.text.InputFilter
 import android.util.Log
 import android.view.View
@@ -73,12 +74,17 @@ import com.macarmusic.app.data.MediaStoreAccess
 import com.macarmusic.app.lyrics.LyricIssue
 import com.macarmusic.app.lyrics.LyricOrigin
 import com.macarmusic.app.lyrics.LyricState
+import com.macarmusic.app.lyrics.CachedLyric
+import com.macarmusic.app.lyrics.LyricTiming
+import com.macarmusic.app.lyrics.LyricChoices
 import com.macarmusic.app.lyrics.OnlineLyricsClient
+import com.macarmusic.app.lyrics.LyricSearchRoute
 import com.macarmusic.app.model.AudioFiles
 import com.macarmusic.app.model.BlockOutline
 import com.macarmusic.app.model.BlockStyle
 import com.macarmusic.app.model.BrowserLocation
 import com.macarmusic.app.model.LyricAppearance
+import com.macarmusic.app.model.LyricCacheExpiry
 import com.macarmusic.app.model.LyricSide
 import com.macarmusic.app.model.ThemeAccent
 import com.macarmusic.app.model.DocumentEntry
@@ -97,8 +103,16 @@ import com.macarmusic.app.model.SortOrder
 import com.macarmusic.app.model.SpectrumDecay
 import com.macarmusic.app.model.SpectrumPalette
 import com.macarmusic.app.model.SpectrumPosition
+import com.macarmusic.app.model.SpectrumOptions
+import com.macarmusic.app.model.SpectrumOrigin
 import com.macarmusic.app.model.SpectrumStyle
 import com.macarmusic.app.model.Track
+import com.macarmusic.app.model.LibraryMode
+import com.macarmusic.app.model.PlaybackCollection
+import com.macarmusic.app.model.CollectionKind
+import com.macarmusic.app.model.BackupEdits
+import com.macarmusic.app.data.PreparedBackup
+import com.macarmusic.app.playback.withCollection
 import com.macarmusic.app.model.TransitionStyle
 import com.macarmusic.app.playback.PlaybackService
 import com.macarmusic.app.playback.toMediaItem
@@ -127,6 +141,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var now: ViewNowPlayingBinding
     private lateinit var settings: ViewSettingsBinding
+    private lateinit var settingsButtons: BlockButtonStyler
     private lateinit var libraryPanel: ListPanel
     private lateinit var folderPanel: ListPanel
     private lateinit var queuePanel: ListPanel
@@ -141,24 +156,37 @@ class MainActivity : AppCompatActivity() {
     private lateinit var librarySelectionActions: View
     private lateinit var libraryAddSelected: MaterialButton
     private lateinit var librarySelectAll: MaterialButton
+    private lateinit var libraryBrowse: MaterialButton
+    private lateinit var libraryBack: MaterialButton
     private lateinit var folderUp: MaterialButton
     private lateinit var folderPlay: MaterialButton
     private lateinit var folderRescan: MaterialButton
+    private lateinit var folderRestore: MaterialButton
+    private lateinit var folderRemoveAll: MaterialButton
     private lateinit var cancelScan: MaterialButton
     private lateinit var playlistBack: MaterialButton
     private lateinit var playlistPlay: MaterialButton
     private lateinit var playlistAdd: MaterialButton
     private lateinit var playlistUpdate: MaterialButton
+    private lateinit var playlistRestore: MaterialButton
     private lateinit var audio: AudioManager
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller: MediaController? = null
     private val controllerConnected = MutableStateFlow(false)
+    private val progressPolling = MutableStateFlow(false)
+    private val volumePolling = MutableStateFlow(false)
     private val firstFrame = CompletableDeferred<Unit>()
     private var optionalContentStarted = false
     private var coreReported = false
     private var parkedNoticeShown = false
     private var deviceMusicDialog: AlertDialog? = null
+    private var lyricTimingDialog: AlertDialog? = null
+    private var lyricVersionsDialog: LyricVersionsDialog? = null
+    private var timingTrackId: String? = null
+    private var timingDocument: CachedLyric? = null
     private var renderedDeviceMusic: DeviceMusicPicker? = null
+    private var backupDialog: AlertDialog? = null
+    private var shownBackup: PreparedBackup? = null
     private var artworkJob: Job? = null
     private val slideshow by lazy {
         BackgroundSlideshow(binding.backgroundImage, binding.backgroundIncoming,
@@ -177,12 +205,13 @@ class MainActivity : AppCompatActivity() {
     private var appliedCustomAccent: Int? = null
     private val compactChrome get() = resources.configuration.screenHeightDp < 480
     private val controlBlockContainers by lazy {
-        listOf<View>(now.controls.trackInformation, now.controls.spectrum, now.controls.seekBlock, now.controls.volumeBlock)
+        listOf<View>(now.controls.trackInformation, now.controls.spectrum, now.controls.seekBlock,
+            now.controls.volumeBlock, binding.miniProgress)
     }
     private val controlBlockButtons by lazy {
         listOf(now.controls.shuffle, now.controls.previous, now.controls.rewind, now.controls.play,
-            now.controls.forward, now.controls.next, now.controls.repeat,
-            binding.miniPlay, binding.miniNext)
+            now.controls.forward, now.controls.next, now.controls.repeat, now.controls.volumeMute,
+            binding.miniPlay, binding.miniNext, now.cover.lyricVersions, now.cover.nextLyrics, now.cover.lyricsTiming)
     }
     private val controlBlockOverlays by lazy {
         listOfNotNull<View>(now.cover.root, binding.miniPlayer.takeUnless { compactChrome },
@@ -229,7 +258,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val pickFile = registerForActivityResult(ActivityResultContracts.StartActivityForResult(), ::handlePickedFile)
+    private val pickLyricCache = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = result.data?.data
+            if (uri == null) model.app.report(getString(R.string.picker_no_document))
+            else model.moveLyricCache(uri, result.data?.flags ?: 0)
+        }
+    }
     private val pickBackground = registerForActivityResult(ActivityResultContracts.StartActivityForResult(), ::handlePickedBackground)
+    private val createBackup = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = result.data?.data
+            if (uri == null) model.app.report(getString(R.string.picker_no_document))
+            else model.exportBackup(uri, AppCompatDelegate.getApplicationLocales().toLanguageTags())
+        }
+    }
+    private val backupPickers = List(3) {
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                val uri = result.data?.data
+                if (uri == null) model.app.report(getString(R.string.picker_no_document)) else model.previewBackup(uri)
+            }
+        }
+    }
+    private val reconnectPickers = List(3) { index ->
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val id = model.consumeReconnectTrack(index)
+            if (id != null && result.resultCode == Activity.RESULT_OK) {
+                val uri = result.data?.data
+                if (uri == null) model.app.report(getString(R.string.picker_no_document))
+                else model.reconnectTrack(id, uri, result.data?.flags ?: 0)
+            }
+        }
+    }
     // A failed start may still send RESULT_CANCELED; it must not consume the fallback's result.
     private val compatibleFiles = List(2) {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult(), ::handlePickedFile)
@@ -304,6 +365,26 @@ class MainActivity : AppCompatActivity() {
             true
         }
         binding.toolbar.setNavigationOnClickListener { model.closeSettings() }
+        binding.toolbar.children.filterIsInstance<android.widget.ImageView>()
+            .single { it.drawable === binding.toolbar.logo }.apply {
+                id = R.id.homeLogo
+                layoutParams = layoutParams.apply { width = dp(48); height = dp(48) }
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                contentDescription = getString(R.string.logo_now_playing)
+                val background = android.util.TypedValue()
+                theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, background, true)
+                setBackgroundResource(background.resourceId)
+                isFocusable = true
+                setOnClickListener { model.screen(R.id.nav_player) }
+                ViewCompat.setAccessibilityDelegate(this, object : androidx.core.view.AccessibilityDelegateCompat() {
+                    override fun onInitializeAccessibilityNodeInfo(host: View,
+                        info: androidx.core.view.accessibility.AccessibilityNodeInfoCompat) {
+                        super.onInitializeAccessibilityNodeInfo(host, info)
+                        info.className = "android.widget.Button"
+                    }
+                })
+            }
         binding.navigation.setOnItemSelectedListener(model::screen)
         binding.miniInfo.setOnClickListener { model.screen(R.id.nav_player) }
         binding.miniArtwork.setOnClickListener { model.screen(R.id.nav_player) }
@@ -312,6 +393,7 @@ class MainActivity : AppCompatActivity() {
             when {
                 model.selectedScreen.value == R.id.action_settings -> model.closeSettings()
                 model.selectedScreen.value == R.id.nav_library && model.librarySelecting.value -> model.selectLibrary(false)
+                model.selectedScreen.value == R.id.nav_library && model.libraryUp() -> Unit
                 model.selectedScreen.value == R.id.nav_folders && model.browserUp() -> Unit
                 model.selectedScreen.value == R.id.nav_playlists && model.selectedPlaylist.value != null -> model.playlist(null)
                 model.selectedScreen.value != R.id.nav_player -> model.screen(R.id.nav_player)
@@ -322,9 +404,34 @@ class MainActivity : AppCompatActivity() {
         renderBackground(display)
         showScreen(model.selectedScreen.value)
         observeState()
+        if (savedInstanceState == null && intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0) {
+            handlePlaybackIntent(intent)
+        }
         lifecycleScope.launch {
             binding.root.awaitDraw()
             firstFrame.complete(Unit)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handlePlaybackIntent(intent)
+    }
+
+    private fun handlePlaybackIntent(incoming: Intent) {
+        when (incoming.action) {
+            Intent.ACTION_VIEW -> {
+                val uri = incoming.data
+                // A configuration change or a later launch from Recents must not replay this request.
+                setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
+                if (incoming.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+                model.screen(R.id.nav_player)
+                if (uri == null) model.app.report(getString(R.string.picker_no_document))
+                else model.openFile(uri, incoming.flags)
+            }
+            "android.intent.action.MUSIC_PLAYER" -> model.screen(R.id.nav_player)
+            Intent.ACTION_MAIN -> if (incoming.hasCategory(Intent.CATEGORY_APP_MUSIC)) model.screen(R.id.nav_player)
         }
     }
 
@@ -368,8 +475,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        lyricVersionsDialog?.dismiss()
+        lyricTimingDialog?.dismiss()
         deviceMusicDialog?.dismiss()
         deviceMusicDialog = null
+        backupDialog?.dismiss()
+        backupDialog = null
         artworkJob?.cancel()
         screenAnimator?.cancel()
         if (optionalContentStarted) model.app.spectrum.setVisible(this, false)
@@ -428,7 +539,7 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { model.selectedScreen.collectLatest { screen ->
                     showScreen(screen)
-                    if (screen == R.id.nav_library) model.visibleTracks.collect { renderLibrary() }
+                    if (screen == R.id.nav_library) model.libraryPage.collect { renderLibrary() }
                 } }
                 launch { model.settingsCategory.collect(::showSettingsCategory) }
                 launch { model.favoritesOnly.collect { renderLibrary() } }
@@ -459,18 +570,61 @@ class MainActivity : AppCompatActivity() {
                     configureNavigation(it.navigationPosition)
                     renderBackground(it)
                     renderLyrics(model.lyrics.value)
+                    model.lyricChoices.value?.let { lyricVersionsDialog?.update(it) }
                     updateProgress()
                     updateSpectrum()
                 } }
                 launch { model.lyrics.collect(::renderLyrics) }
+                launch { model.lyricChoices.collect(::renderLyricChoices) }
                 launch { model.importingBackground.collect { renderSettings() } }
+                launch { model.lyricCacheBusy.collect { renderLyricCache() } }
                 launch { model.deviceMusic.collect(::renderDeviceMusicPicker) }
+                launch { model.backupBusy.collect { renderSettings(); renderFolders() } }
+                launch { model.preparedBackup.collect(::renderBackupPreview) }
+                launch { model.sharedBackup.collect { uri ->
+                    if (uri != null) {
+                        model.consumedSharedBackup(uri)
+                        try {
+                            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                                type = "application/zip"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                clipData = android.content.ClipData.newRawUri("backup", uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }, getString(R.string.backup_share)))
+                        } catch (error: ActivityNotFoundException) {
+                            Log.w("MainActivity", "No application can save the shared backup", error)
+                            model.app.report(getString(R.string.backup_picker_missing))
+                        } catch (error: SecurityException) {
+                            Log.w("MainActivity", "Android denied backup sharing", error)
+                            model.app.report(getString(R.string.picker_denied))
+                        }
+                    }
+                } }
+                launch { model.backupRestored.collect { result ->
+                    if (result != null) {
+                        model.consumedBackup(result)
+                        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(result.language))
+                        model.app.homeWidgets.refresh()
+                        if (result.positionError != null) model.app.report(result.positionError)
+                        else model.app.inform(model.app.text(R.string.backup_restored, result.unresolved))
+                    }
+                } }
                 launch {
                     firstFrame.await()
-                    while (isActive) {
-                        updateProgress()
-                        updateVolume()
-                        delay(500)
+                    progressPolling.collectLatest { active ->
+                        if (active) while (isActive) {
+                            delay(500)
+                            updateProgress()
+                        }
+                    }
+                }
+                launch {
+                    firstFrame.await()
+                    volumePolling.collectLatest { visible ->
+                        if (visible) while (isActive) {
+                            updateVolume()
+                            delay(2_000)
+                        }
                     }
                 }
                 launch {
@@ -494,9 +648,11 @@ class MainActivity : AppCompatActivity() {
                             delay(1_000)
                             model.app.displaySettings.options.distinctUntilChanged { old, next ->
                                 old.customTheme == next.customTheme && old.imageVersion == next.imageVersion &&
-                                    old.imageIds == next.imageIds && old.blur == next.blur && old.slideshow == next.slideshow
+                                    old.imageIds == next.imageIds && old.blur == next.blur && old.slideshow == next.slideshow &&
+                                    old.lightMode == next.lightMode
                             }.collectLatest { display ->
-                                slideshow.show(display, model.backgroundIndex(display.imageVersion, display.backgroundImages.size))
+                                val effective = display.effective()
+                                slideshow.show(effective, model.backgroundIndex(effective.imageVersion, effective.backgroundImages.size))
                             }
                         }
                         launch { model.app.spectrum.frames.collect { now.controls.spectrum.submit(it) } }
@@ -532,6 +688,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
         now.cover.retryLyrics.setOnClickListener { model.requestLyrics(currentTrack(), refresh = true) }
+        now.cover.lyricVersions.setOnClickListener { model.showLyricVersions() }
+        now.cover.nextLyrics.setOnClickListener { model.nextLyrics() }
+        now.cover.lyricsTiming.setOnClickListener { showLyricTiming() }
+        TooltipCompat.setTooltipText(now.cover.nextLyrics, getString(R.string.lyrics_next))
+        TooltipCompat.setTooltipText(now.cover.lyricsTiming, getString(R.string.lyrics_timing))
         now.controls.spectrum.setOnClickListener {
             model.app.displaySettings.update { it.copy(spectrum = it.spectrum.nextMode()) }
         }
@@ -563,6 +724,10 @@ class MainActivity : AppCompatActivity() {
         }
         if (view.parent == null) {
             AccentTheme.tintControls(view)
+            if (view is ListPanel) {
+                val display = model.app.displaySettings.options.value
+                view.configureBlocks(display.controlBlocks, display.blockOutline)
+            }
             view.isVisible = false
             view.setBackgroundColor(Color.TRANSPARENT)
             binding.screenContainer.addView(view)
@@ -588,10 +753,19 @@ class MainActivity : AppCompatActivity() {
         }
         searchLayout.addView(search)
         libraryPanel.top.addView(searchLayout)
-        libraryPlay = libraryPanel.action(R.string.play_all) { model.requestPlay(model.visibleTracks.value, useLoopScope = true) }
+        libraryPlay = libraryPanel.action(R.string.play_all) {
+            val page = model.libraryPage.value
+            model.requestPlay(page.tracks, useLoopScope = page.location.mode == LibraryMode.SONGS)
+        }
+        libraryBrowse = libraryPanel.action(R.string.browse) {
+            choiceDialog(getString(R.string.library_browse), LibraryMode.entries.map { mode ->
+                getString(libraryModeLabel(mode)) to { model.libraryMode(mode) }
+            })
+        }.apply { id = R.id.libraryBrowse }
+        libraryBack = libraryPanel.action(R.string.back) { model.libraryUp() }.apply { id = R.id.libraryBack }
         favoriteFilter = libraryPanel.action(R.string.favorites_only) { model.toggleFavorites() }
         libraryActions = libraryPanel.actionRow(
-            libraryPlay,
+            libraryPlay, libraryBrowse, libraryBack,
             libraryPanel.action(R.string.select_songs) { model.selectLibrary(true) }.apply { id = R.id.librarySelection },
             favoriteFilter,
             libraryPanel.action(R.string.sort) { sortDialog() },
@@ -620,15 +794,24 @@ class MainActivity : AppCompatActivity() {
         libraryAdapter = MusicRowAdapter(
             compact = compactChrome,
             onClick = { row ->
-                if (model.librarySelecting.value) model.selectTrack(row.key)
+                val page = model.libraryPage.value
+                if (page.showingGroups) model.libraryGroup(row.key)
+                else if (model.librarySelecting.value) model.selectTrack(row.key)
                 else {
-                    val tracks = model.visibleTracks.value
+                    val tracks = page.tracks
                     val index = tracks.indexOfFirst { it.id == row.key }
-                    if (index >= 0) model.requestPlay(tracks, index, useLoopScope = true)
+                    if (index >= 0) model.requestPlay(tracks, index, useLoopScope = page.location.mode == LibraryMode.SONGS)
                 }
             },
-            onMore = { row -> findTrack(row.key)?.let(::trackMenu) },
-            onSelect = { row -> model.selectTrack(row.key) },
+            onMore = { row ->
+                if (model.libraryPage.value.showingGroups) choiceDialog(row.title, listOf(
+                    getString(R.string.browse) to { model.libraryGroup(row.key) },
+                    getString(R.string.play_all) to { model.playLibraryGroup(row.key); Unit },
+                )) else findTrack(row.key)?.let(::trackMenu)
+            },
+            onSelect = { row ->
+                if (model.libraryPage.value.showingGroups) model.libraryGroup(row.key) else model.selectTrack(row.key)
+            },
         )
         libraryPanel.list.adapter = libraryAdapter
     }
@@ -639,13 +822,24 @@ class MainActivity : AppCompatActivity() {
         folderPlay = folderPanel.action(R.string.play_folder) {
             if (model.browser.value.path.isEmpty()) model.playSelectedFolders() else playCurrentFolder()
         }
+        folderRestore = folderPanel.action(R.string.restore_position) {
+            model.browser.value.path.lastOrNull()?.let { model.restorePosition(PlaybackCollection.folder(it)) }
+        }.apply { id = R.id.folderRestorePosition }
         folderRescan = folderPanel.action(R.string.rescan_all) {
             val source = currentSource()
-            if (source == null) model.scanFolders(model.library.value.sources)
-            else model.scanFolders(listOf(source), model.browser.value.path.lastOrNull())
-            model.refreshBrowser()
+            val sources = source?.let(::listOf) ?: model.library.value.sources.filterNot { it.needsReconnect }
+            val location = model.browser.value.path.lastOrNull()
+            choiceDialog(getString(R.string.rescan), listOf(
+                getString(R.string.rescan_quick) to { model.scanFolders(sources, location); model.refreshBrowser() },
+                getString(R.string.rescan_full) to {
+                    model.scanFolders(sources, location, forceMetadata = true)
+                    model.refreshBrowser()
+                },
+            ))
         }
         cancelScan = folderPanel.action(R.string.cancel_scan) { model.cancelScan() }
+        folderRemoveAll = folderPanel.action(R.string.remove_all_folders, ::removeAllFoldersDialog)
+            .apply { id = R.id.folderRemoveAll }
         folderPanel.actionRow(
             folderPanel.action(R.string.add_folder) { launchFolderPicker() },
             folderPanel.action(R.string.select_folders) { foldersDialog() },
@@ -653,15 +847,19 @@ class MainActivity : AppCompatActivity() {
             folderPanel.action(R.string.device_music) { launchDeviceMusic() },
             folderUp,
             folderPlay,
+            folderRestore,
             folderRescan,
             folderPanel.action(R.string.save_folder_playlist) { saveFoldersDialog() },
+            folderRemoveAll,
             cancelScan,
         )
         folderAdapter = MusicRowAdapter(
             compact = compactChrome,
             onClick = { row ->
                 val state = model.browser.value
-                if (state.path.isEmpty()) model.library.value.sources.firstOrNull { it.uri == row.key }?.let(model::openSource)
+                if (state.path.isEmpty()) model.library.value.sources.firstOrNull { it.uri == row.key }?.let {
+                    if (it.needsReconnect) reconnectSourceDialog(it) else model.openSource(it)
+                }
                 else state.entries.firstOrNull { it.uri == row.key }?.let {
                     if (it.isDirectory) model.openDirectory(it) else model.playBrowserFile(it)
                 }
@@ -712,7 +910,14 @@ class MainActivity : AppCompatActivity() {
     private fun buildPlaylists() {
         playlistPanel = ListPanel(this, compactChrome)
         playlistBack = playlistPanel.action(R.string.back_playlists) { model.playlist(null) }
-        playlistPlay = playlistPanel.action(R.string.play_all) { model.requestPlay(playlistTrackRows) }
+        playlistPlay = playlistPanel.action(R.string.play_all) {
+            model.selectedPlaylist.value?.let {
+                model.requestPlay(playlistTrackRows, collection = PlaybackCollection.playlist(it))
+            }
+        }
+        playlistRestore = playlistPanel.action(R.string.restore_position) {
+            model.selectedPlaylist.value?.let { model.restorePosition(PlaybackCollection.playlist(it)) }
+        }.apply { id = R.id.playlistRestorePosition }
         playlistAdd = playlistPanel.action(R.string.add_songs) { addSongsDialog() }
         playlistUpdate = playlistPanel.action(R.string.update_playlist) {
             model.library.value.playlists.firstOrNull { it.id == model.selectedPlaylist.value }?.let(::playlistMenu)
@@ -720,7 +925,7 @@ class MainActivity : AppCompatActivity() {
         playlistPanel.actionRow(
             playlistPanel.action(R.string.create_playlist) { newPlaylistDialog() },
             playlistPanel.action(R.string.save_folder_playlist) { saveFoldersDialog() }.apply { id = R.id.playlistSaveFolders },
-            playlistBack, playlistPlay, playlistAdd, playlistUpdate,
+            playlistBack, playlistPlay, playlistRestore, playlistAdd, playlistUpdate,
         )
         playlistAdapter = MusicRowAdapter(
             compact = compactChrome,
@@ -728,7 +933,8 @@ class MainActivity : AppCompatActivity() {
                 if (model.selectedPlaylist.value == null) model.playlist(row.key)
                 else {
                     val index = playlistTrackRows.indexOfFirst { it.id == row.key }
-                    if (index >= 0) model.requestPlay(playlistTrackRows, index)
+                    if (index >= 0) model.requestPlay(playlistTrackRows, index,
+                        collection = PlaybackCollection.playlist(checkNotNull(model.selectedPlaylist.value)))
                 }
             },
             onMore = { row ->
@@ -742,6 +948,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildSettings() {
         settings = ViewSettingsBinding.inflate(layoutInflater, binding.screenContainer, false)
+        settingsButtons = BlockButtonStyler(settings.root)
         settings.settingsHeading.isVisible = !compactChrome
         SettingsCategory.pages.forEachIndexed { index, category ->
             if (index > 0) settings.settingsCategories.addView(View(this).apply {
@@ -755,7 +962,9 @@ class MainActivity : AppCompatActivity() {
                 model.settingsCategory(category)
             }
         }
-        renderCategoryDividers(model.app.displaySettings.options.value.blockOutline)
+        val appearance = model.app.displaySettings.options.value
+        settingsButtons.apply(appearance.controlBlocks, appearance.blockOutline)
+        renderCategoryDividers(appearance.controlBlocks, appearance.blockOutline)
         ViewCompat.setAccessibilityHeading(settings.settingsHeading, true)
         settings.settingsScroll.isSaveEnabled = false
         settings.settingsScroll.setOnScrollChangeListener { _, _, y, _, _ ->
@@ -763,6 +972,18 @@ class MainActivity : AppCompatActivity() {
         }
         showSettingsCategory(model.settingsCategory.value)
         settings.settingsLanguage.setOnClickListener { languageDialog() }
+        settings.settingsSystemInfo.setOnClickListener { systemInformationDialog() }
+        settings.settingsBackup.setOnClickListener { launchBackupExport() }
+        settings.settingsRestore.setOnClickListener { launchBackupImport() }
+        settings.settingsWidgets.setOnClickListener { homeWidgetsDialog() }
+        settings.settingsDefaultPlayer.setOnClickListener { defaultPlayerDialog() }
+        settings.widgetTransparency.setOnSeekBarChangeListener(backgroundSlider(
+            label = { settings.widgetTransparencyValue.text = getString(R.string.widget_transparency_value, it) },
+            save = { value -> model.app.displaySettings.update { it.copy(widgetTransparency = value) } },
+        ))
+        settings.settingsLightMode.setOnCheckedChangeListener { _, checked ->
+            model.app.displaySettings.update { it.copy(lightMode = checked) }
+        }
         settings.settingsTheme.setOnClickListener { themeDialog() }
         settings.settingsAccent.setOnClickListener { accentDialog() }
         settings.settingsUseCustomTheme.setOnClickListener { model.app.themeMode = DisplaySettings.CUSTOM_THEME }
@@ -802,7 +1023,49 @@ class MainActivity : AppCompatActivity() {
         settings.lyricResetAppearance.setOnClickListener {
             model.app.displaySettings.update { it.copy(lyricAppearance = LyricAppearance()) }
         }
-        settings.lyricsCacheLocation.text = getString(R.string.lyrics_cache_location, File(cacheDir, "lyrics").absolutePath)
+        settings.lyricsCacheClear.setOnClickListener {
+            val cache = model.app.lyrics.cache.info.value
+            val location = if (cache.invalidLocation) getString(R.string.lyrics_cache_unavailable)
+                else cache.folder?.name ?: cache.internalPath
+            AccentTheme.dialog(this).setTitle(R.string.lyrics_cache_clear)
+                .setMessage(getString(R.string.lyrics_cache_clear_confirm, location))
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.lyrics_cache_clear) { _, _ -> model.clearLyricCache() }.show()
+        }
+        settings.lyricsCacheMove.setOnClickListener {
+            AccentTheme.dialog(this).setTitle(R.string.lyrics_cache_move)
+                .setMessage(R.string.lyrics_cache_move_confirm)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.lyrics_cache_choose) { _, _ -> launchLyricCachePicker() }.show()
+        }
+        settings.lyricsCacheInternal.setOnClickListener {
+            AccentTheme.dialog(this).setTitle(R.string.lyrics_cache_internal)
+                .setMessage(R.string.lyrics_cache_internal_confirm)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.lyrics_cache_internal) { _, _ -> model.useInternalLyricCache() }.show()
+        }
+        settings.lyricsCacheInspect.setOnClickListener { model.inspectLyricCache(reportResult = true) }
+        val expiry = model.app.displaySettings.options.value
+        choices(settings.lyricsCacheInternalExpiry, LyricCacheExpiry.entries, expiry.internalLyricExpiry,
+            ::lyricExpiryLabel) { value ->
+            if (value != model.app.displaySettings.options.value.internalLyricExpiry) {
+                model.app.displaySettings.update { it.copy(internalLyricExpiry = value) }
+                if (model.app.lyrics.cache.info.value.internal) model.inspectLyricCache()
+            }
+        }
+        choices(settings.lyricsCachePortableExpiry, LyricCacheExpiry.entries, expiry.portableLyricExpiry,
+            ::lyricExpiryLabel) { value ->
+            if (value != model.app.displaySettings.options.value.portableLyricExpiry) {
+                model.app.displaySettings.update { it.copy(portableLyricExpiry = value) }
+                if (!model.app.lyrics.cache.info.value.internal) model.inspectLyricCache()
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                model.app.lyrics.cache.info.collect { renderLyricCache() }
+            }
+        }
+        renderLyricCache()
         settings.settingsBackgroundImage.setOnClickListener { launchBackgroundPicker() }
         settings.settingsBackgroundTint.setOnClickListener { backgroundTintDialog() }
         settings.backgroundInterval.setOnSeekBarChangeListener(backgroundSlider(
@@ -826,7 +1089,7 @@ class MainActivity : AppCompatActivity() {
             { getString(if (it == LyricSide.START) R.string.navigation_top else R.string.navigation_bottom) }) { side ->
             model.app.displaySettings.update { it.copy(portraitLyrics = side) }
         }
-        choices(settings.settingsBlockStyle, BlockStyle.entries, display.blockOutline.style,
+        choices(settings.settingsBlockStyle, BlockStyle.selectable, display.blockOutline.style,
             { getString(blockStyleLabel(it)) }) { value ->
             model.app.displaySettings.update { it.copy(blockOutline = it.blockOutline.copy(style = value)) }
         }
@@ -867,6 +1130,7 @@ class MainActivity : AppCompatActivity() {
         settings.settingsDeviceMusic.setOnClickListener { launchDeviceMusic() }
         settings.settingsPlayFolders.setOnClickListener { model.playSelectedFolders() }
         settings.settingsManageFolders.setOnClickListener { model.screen(R.id.nav_folders) }
+        settings.settingsRemoveAllFolders.setOnClickListener { removeAllFoldersDialog() }
     }
 
     private fun buildSpectrumSettings() {
@@ -882,8 +1146,21 @@ class MainActivity : AppCompatActivity() {
             { getString(if (it == SpectrumPosition.LEFT) R.string.position_left else R.string.position_right) }) { value ->
             model.app.displaySettings.update { it.copy(spectrum = it.spectrum.copy(position = value)) }
         }
+        choices(fields.spectrumOrigin, SpectrumOrigin.entries, spectrum.origin,
+            { getString(when (it) {
+                SpectrumOrigin.BOTTOM -> R.string.navigation_bottom
+                SpectrumOrigin.LEFT -> R.string.position_left
+                SpectrumOrigin.RIGHT -> R.string.position_right
+                SpectrumOrigin.TOP -> R.string.navigation_top
+            }) }) { value ->
+            model.app.displaySettings.update { it.copy(spectrum = it.spectrum.copy(origin = value)) }
+        }
         choices(fields.spectrumStyle, SpectrumStyle.entries, spectrum.style,
-            { getString(if (it == SpectrumStyle.BARS) R.string.spectrum_bars else R.string.spectrum_line) }) { value ->
+            { getString(when (it) {
+                SpectrumStyle.BARS -> R.string.spectrum_bars
+                SpectrumStyle.LINE -> R.string.spectrum_line
+                SpectrumStyle.OFF -> R.string.spectrum_off
+            }) }) { value ->
             model.app.displaySettings.update { it.copy(spectrum = it.spectrum.copy(style = value)) }
         }
         choices(fields.spectrumPalette, SpectrumPalette.entries, spectrum.palette,
@@ -905,8 +1182,8 @@ class MainActivity : AppCompatActivity() {
             val palette = model.app.displaySettings.options.value.spectrum.palette
             changeSpectrumColors(palette) { if (palette == SpectrumPalette.FIRE) SpectrumColors.FIRE else SpectrumColors.CLASSIC }
         }
-        choices(fields.spectrumBands, listOf(16, 32), spectrum.bands,
-            { getString(if (it == 16) R.string.spectrum_thick else R.string.spectrum_thin) }) { value ->
+        choices(fields.spectrumBands, SpectrumOptions.BAND_COUNTS, spectrum.bands,
+            { getString(R.string.spectrum_band_count, it) }) { value ->
             model.app.displaySettings.update { it.copy(spectrum = it.spectrum.copy(bands = value)) }
         }
         choices(fields.spectrumFalloff, SpectrumDecay.entries, spectrum.falloff, { getString(decayLabel(it)) }) { value ->
@@ -939,7 +1216,7 @@ class MainActivity : AppCompatActivity() {
         val colors = if (spectrum.palette == SpectrumPalette.FIRE) spectrum.fireColors else spectrum.classicColors
         val color = listOf(colors.low, colors.middle, colors.high)[index]
         val label = listOf(R.string.spectrum_color_low, R.string.spectrum_color_middle, R.string.spectrum_color_high)[index]
-        ColorSwatchDialog.show(this, getString(label), color) { selected, _ ->
+        ColorSwatchDialog.show(this, getString(label), color) { selected ->
             changeSpectrumColors(spectrum.palette) {
                 when (index) {
                     0 -> it.copy(low = selected)
@@ -951,7 +1228,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun blockStyleLabel(style: BlockStyle) = when (style) {
-        BlockStyle.SOLID -> R.string.block_solid
+        BlockStyle.SOLID, BlockStyle.NONE -> R.string.block_solid
         BlockStyle.DASHED -> R.string.block_dashed
         BlockStyle.ARC -> R.string.block_arc
         BlockStyle.CHARACTERS -> R.string.block_characters
@@ -962,14 +1239,12 @@ class MainActivity : AppCompatActivity() {
         val swatches = AccentTheme.swatches(this)
         val options = model.app.displaySettings.options.value
         val selected = options.customAccentColor ?: swatches.getValue(options.themeAccent)
-        ColorSwatchDialog.show(this, getString(R.string.theme_accent), selected, swatches.values.toList(),
-            customInitial = options.customAccentColor != null,
+        ColorSwatchDialog.show(this, getString(R.string.theme_accent), selected,
             reset = { model.app.displaySettings.update {
                 it.copy(themeAccent = ThemeAccent.DEFAULT, customAccentColor = null)
-            } }) { color, custom ->
-            val accent = if (custom) null else swatches.entries.firstOrNull { it.value == color }?.key
+            } }) { color ->
             model.app.displaySettings.update {
-                it.copy(themeAccent = accent ?: ThemeAccent.DEFAULT, customAccentColor = color.takeIf { accent == null })
+                it.copy(themeAccent = ThemeAccent.DEFAULT, customAccentColor = color)
             }
         }
     }
@@ -983,7 +1258,7 @@ class MainActivity : AppCompatActivity() {
                 else it.lyricAppearance.copy(otherColor = value))
         }
         ColorSwatchDialog.show(this, getString(if (active) R.string.lyric_active_color else R.string.lyric_other_color),
-            color and 0xffffff, reset = { save(null) }) { selected, _ -> save(selected) }
+            color and 0xffffff, reset = { save(null) }) { selected -> save(selected) }
     }
 
     private fun colorButton(button: MaterialButton, label: Int, color: Int) {
@@ -1050,13 +1325,21 @@ class MainActivity : AppCompatActivity() {
             else -> R.string.theme_system
         }
         settings.settingsLanguage.text = getString(R.string.setting_value, getString(R.string.language), getString(language))
+        settings.settingsBackup.isEnabled = !model.backupBusy.value && model.scan.value == null && !model.importingBackground.value
+        settings.settingsRestore.isEnabled = settings.settingsBackup.isEnabled
+        settings.settingsBackupStatus.isVisible = model.backupBusy.value
         settings.settingsTheme.text = getString(R.string.setting_value, getString(R.string.theme), getString(theme))
         val display = model.app.displaySettings.options.value
+        settings.settingsLightMode.isChecked = display.lightMode
+        if (!settings.widgetTransparency.isPressed) {
+            settings.widgetTransparency.progress = display.widgetTransparency
+            settings.widgetTransparencyValue.text = getString(R.string.widget_transparency_value, display.widgetTransparency)
+        }
         colorButton(settings.settingsAccent, R.string.theme_accent,
             AccentTheme.color(binding.root, com.google.android.material.R.attr.colorPrimary))
         settings.settingsControlBlocks.isChecked = display.controlBlocks
         settings.blockStyleControls.isVisible = display.controlBlocks
-        settings.settingsBlockStyle.setSelection(display.blockOutline.style.ordinal, false)
+        settings.settingsBlockStyle.setSelection(BlockStyle.selectable.indexOf(display.blockOutline.style), false)
         settings.settingsBlockCharacter.isVisible = display.blockOutline.style == BlockStyle.CHARACTERS
         settings.settingsBlockCharacter.text = getString(R.string.setting_value,
             getString(R.string.block_character), display.blockOutline.character)
@@ -1066,13 +1349,16 @@ class MainActivity : AppCompatActivity() {
             settings.blockArcValue.text = getString(R.string.block_arc_value, display.blockOutline.arcDp)
         }
         settings.settingsBlockShadow.isChecked = display.blockOutline.shadow
+        settings.settingsBlockShadow.isVisible = display.blockOutline.hasBorder
         settings.settingsLyrics.isChecked = display.lyricsEnabled
         settings.settingsOnlineLyrics.isChecked = display.onlineLyrics
-        settings.settingsOnlineLyrics.isEnabled = display.lyricsEnabled
+        settings.settingsOnlineLyrics.isEnabled = display.lyricsEnabled && !display.lightMode
         settings.settingsLyricDragSeek.isChecked = display.lyricsDragSeek
         settings.settingsLyricDragSeek.isEnabled = display.lyricsEnabled
         settings.settingsLyricSmoothScroll.isChecked = display.lyricsSmoothScroll
-        settings.settingsLyricSmoothScroll.isEnabled = display.lyricsEnabled
+        settings.settingsLyricSmoothScroll.isEnabled = display.lyricsEnabled && !display.lightMode
+        settings.lyricsCacheInternalExpiry.setSelection(display.internalLyricExpiry.ordinal, false)
+        settings.lyricsCachePortableExpiry.setSelection(display.portableLyricExpiry.ordinal, false)
         settings.lyricsLandscapePosition.setSelection(display.landscapeLyrics.ordinal, false)
         settings.lyricsPortraitPosition.setSelection(display.portraitLyrics.ordinal, false)
         settings.lyricActiveSize.isEnabled = display.lyricsEnabled
@@ -1091,16 +1377,22 @@ class MainActivity : AppCompatActivity() {
             AccentTheme.color(binding.root, com.google.android.material.R.attr.colorPrimary))
         colorButton(settings.lyricOtherColor, R.string.lyric_other_color, display.lyricAppearance.otherColor ?:
             MaterialColors.getColor(binding.root, com.google.android.material.R.attr.colorOnSurface))
-        val providers = OnlineLyricsClient.PROVIDERS.mapIndexed { index, provider ->
+        val providers = OnlineLyricsClient.ROUTES.mapIndexed { index, provider ->
             getString(R.string.lyrics_provider_step, index + 1, getString(
-                if (provider == LyricOrigin.KUGOU) R.string.provider_kugou else R.string.provider_netease,
+                when (provider) {
+                    LyricSearchRoute.KUGOU_DIRECT -> R.string.provider_kugou_direct
+                    LyricSearchRoute.KUGOU_MOBILE -> R.string.provider_kugou_mobile
+                    LyricSearchRoute.NETEASE -> R.string.provider_netease
+                    LyricSearchRoute.QQ -> R.string.provider_qq
+                    LyricSearchRoute.KUWO -> R.string.provider_kuwo
+                },
             ))
         }.joinToString("\n")
         settings.lyricsProviderOrder.text = getString(R.string.lyrics_provider_order, providers,
-            getString(if (display.lyricsEnabled && display.onlineLyrics) R.string.lyrics_online_enabled else R.string.lyrics_online_disabled))
+            getString(if (display.lyricsEnabled && display.effective().onlineLyrics) R.string.lyrics_online_enabled else R.string.lyrics_online_disabled))
         settings.settingsBackground.isVisible = display.customTheme
         settings.settingsUseCustomTheme.isVisible = !display.customTheme
-        settings.settingsBackgroundImage.isEnabled = !model.importingBackground.value
+        settings.settingsBackgroundImage.isEnabled = !model.importingBackground.value && !model.backupBusy.value
         settings.settingsBackgroundImage.setText(
             if (display.imageVersion == 0L) R.string.background_choose else R.string.background_change,
         )
@@ -1121,7 +1413,11 @@ class MainActivity : AppCompatActivity() {
             settings.backgroundDurationValue.text = getString(R.string.background_duration_value,
                 (display.slideshow.durationMs / 1_000.0).toString())
         }
-        settings.backgroundDuration.isEnabled = display.slideshow.transition != TransitionStyle.NONE
+        settings.backgroundDuration.isEnabled = !display.lightMode && display.slideshow.transition != TransitionStyle.NONE
+        settings.backgroundInterval.isEnabled = !display.lightMode
+        settings.backgroundTransition.isEnabled = !display.lightMode
+        settings.backgroundBlur.isEnabled = !display.lightMode
+        settings.settingsTransition.isEnabled = !display.lightMode
         settings.backgroundTransition.setSelection(display.slideshow.transition.ordinal, false)
         settings.settingsTransition.setSelection(display.settingsTransition.ordinal, false)
         settings.settingsTimeMode.setSelection(display.timeMode.ordinal, false)
@@ -1131,6 +1427,7 @@ class MainActivity : AppCompatActivity() {
         settings.spectrumSettings.apply {
             root.isVisible = display.spectrum.enabled
             spectrumPosition.setSelection(display.spectrum.position.ordinal, false)
+            spectrumOrigin.setSelection(display.spectrum.origin.ordinal, false)
             spectrumStyle.setSelection(display.spectrum.style.ordinal, false)
             spectrumPalette.setSelection(display.spectrum.palette.ordinal, false)
             spectrumFireStyle.setSelection(display.spectrum.rendering.ordinal, false)
@@ -1142,7 +1439,7 @@ class MainActivity : AppCompatActivity() {
             listOf(spectrumColorLow, spectrumColorMiddle, spectrumColorHigh).forEachIndexed { index, button ->
                 colorButton(button, labels[index], values[index])
             }
-            spectrumBands.setSelection(if (display.spectrum.bands == 16) 0 else 1, false)
+            spectrumBands.setSelection(SpectrumOptions.BAND_COUNTS.indexOf(display.spectrum.bands), false)
             spectrumPeaks.isChecked = display.spectrum.peaks
             spectrumFalloff.setSelection(display.spectrum.falloff.ordinal, false)
             spectrumPeakFalloff.setSelection(display.spectrum.peakFalloff.ordinal, false)
@@ -1173,6 +1470,36 @@ class MainActivity : AppCompatActivity() {
         settings.settingsAddFolder.isEnabled = model.repository.isReadable && model.scan.value == null
         settings.settingsDeviceMusic.isEnabled = model.repository.isReadable && model.scan.value == null
         settings.settingsPlayFolders.isEnabled = selected.isNotEmpty() && model.scan.value == null
+        settings.settingsRemoveAllFolders.isEnabled = model.repository.isReadable && sources.isNotEmpty() &&
+            model.scan.value == null && !model.backupBusy.value
+    }
+
+    private fun lyricExpiryLabel(value: LyricCacheExpiry): String =
+        if (value == LyricCacheExpiry.NEVER) getString(R.string.lyrics_cache_expiry_never)
+        else resources.getQuantityString(R.plurals.lyrics_cache_expiry_days, value.days, value.days)
+
+    private fun renderLyricCache() {
+        if (!::settings.isInitialized) return
+        val state = model.app.lyrics.cache.info.value
+        val busy = state.busy || model.lyricCacheBusy.value
+        val location = when {
+            state.invalidLocation -> getString(R.string.lyrics_cache_unavailable)
+            state.folder != null -> state.folder.name
+            else -> state.internalPath
+        }
+        val size = state.size?.let {
+            "\n" + getString(R.string.lyrics_cache_size, it.files,
+                android.text.format.Formatter.formatFileSize(this, it.bytes))
+        }.orEmpty()
+        val status = if (state.unavailable) "\n\n" + getString(R.string.lyrics_cache_unavailable) else ""
+        settings.lyricsCacheLocation.text = getString(R.string.lyrics_cache_location, location) + size + status
+        settings.lyricsCacheClear.isEnabled = !busy && !state.invalidLocation
+        settings.lyricsCacheMove.isEnabled = !busy
+        settings.lyricsCacheInternal.isEnabled = !busy && !state.internal
+        settings.lyricsCacheInspect.isEnabled = !busy
+        settings.lyricsCacheInternalExpiry.isEnabled = !busy
+        settings.lyricsCachePortableExpiry.isEnabled = !busy
+        settings.lyricsCacheProgress.isVisible = busy
     }
 
     private fun showSettingsCategory(category: SettingsCategory) {
@@ -1188,7 +1515,18 @@ class MainActivity : AppCompatActivity() {
             settings.root.findViewById<MaterialButton>(it.buttonId).isChecked = it == category
         }
         settings.settingsHeading.setText(category.label)
-        if (category == SettingsCategory.ABOUT) AboutContent.populate(settings.settingsAboutPanel, supportFragmentManager)
+        settings.settingsHeading.isVisible = category != SettingsCategory.ABOUT
+        if (category == SettingsCategory.ABOUT) {
+            AboutContent.populate(settings.settingsAboutPanel)
+            val appearance = model.app.displaySettings.options.value
+            AboutContent.configureBorder(settings.settingsAboutPanel, appearance.controlBlocks, appearance.blockOutline)
+        }
+        if (category == SettingsCategory.LYRICS && !model.lyricCacheBusy.value &&
+            !model.backupBusy.value && model.scan.value == null) {
+            val display = model.app.displaySettings.options.value
+            val expiry = if (model.app.lyrics.cache.info.value.internal) display.internalLyricExpiry else display.portableLyricExpiry
+            if (expiry != LyricCacheExpiry.NEVER) model.inspectLyricCache()
+        }
         AccentTheme.tintControls(settings.root.findViewById(category.panelId))
         ViewCompat.setAccessibilityPaneTitle(settings.settingsDetails, getString(category.label))
         settings.settingsScroll.scrollTo(0, 0)
@@ -1214,7 +1552,7 @@ class MainActivity : AppCompatActivity() {
             }
             visibleScreen = target
             if (target !== now.root) lyricScrolling.stop()
-            val transition = model.app.displaySettings.options.value.settingsTransition
+            val transition = model.app.displaySettings.options.value.effective().settingsTransition
             if (previous != null && ::settings.isInitialized &&
                 (target === settings.root || previous === settings.root) &&
                 transition != TransitionStyle.NONE && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
@@ -1233,9 +1571,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         val inSettings = id == R.id.action_settings
-        val singleRow = inSettings || compactChrome
-        if (binding.miniPlayer.singleRow != singleRow) {
-            binding.miniPlayer.singleRow = singleRow
+        if (target !== now.root && !binding.miniPlayer.singleRow) {
+            binding.miniPlayer.singleRow = true
             appliedControlBlocks = null
             val display = model.app.displaySettings.options.value
             renderControlBlocks(display.controlBlocks, display.blockOutline)
@@ -1262,10 +1599,10 @@ class MainActivity : AppCompatActivity() {
         appliedNavigationPosition = position
         val side = position == NavigationPosition.LEFT || position == NavigationPosition.RIGHT
         val gap = resources.getDimensionPixelSize(R.dimen.player_gap)
-        binding.navigation.configure(side, compactChrome)
+        binding.navigation.configure(side)
         binding.navigation.layoutParams = RelativeLayout.LayoutParams(
-            if (side) resources.getDimensionPixelSize(R.dimen.navigation_side_width) else RelativeLayout.LayoutParams.MATCH_PARENT,
-            if (side) RelativeLayout.LayoutParams.MATCH_PARENT else dp(if (compactChrome) 48 else 80),
+            if (side) RelativeLayout.LayoutParams.WRAP_CONTENT else RelativeLayout.LayoutParams.MATCH_PARENT,
+            if (side) RelativeLayout.LayoutParams.MATCH_PARENT else RelativeLayout.LayoutParams.WRAP_CONTENT,
         ).apply {
             addRule(when (position) {
                 NavigationPosition.BOTTOM -> RelativeLayout.ALIGN_PARENT_BOTTOM
@@ -1329,23 +1666,34 @@ class MainActivity : AppCompatActivity() {
         }
         view.isVisible = options.enabled
         view.configure(options)
-        val mode = if (options.style == SpectrumStyle.LINE) getString(R.string.spectrum_line)
+        val mode = if (options.style == SpectrumStyle.OFF) getString(R.string.spectrum_off)
+            else if (options.style == SpectrumStyle.LINE) getString(R.string.spectrum_line)
             else getString(R.string.spectrum_mode, getString(when (options.palette) {
                 SpectrumPalette.CLASSIC -> R.string.spectrum_classic
                 SpectrumPalette.FIRE -> R.string.spectrum_fire
                 SpectrumPalette.THEME -> R.string.spectrum_theme
             }), getString(if (options.rendering == FireStyle.LED) R.string.spectrum_led else R.string.spectrum_smooth))
         view.contentDescription = getString(R.string.spectrum_tap_cycle, mode)
-        val visible = options.enabled && visibleScreen === now.root &&
+        val visible = options.enabled && options.style != SpectrumStyle.OFF && visibleScreen === now.root &&
             lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
-        if (optionalContentStarted) model.app.spectrum.setVisible(this, visible)
+        if (optionalContentStarted) {
+            model.app.spectrum.setRefreshRate(options.refreshRate)
+            model.app.spectrum.setVisible(this, visible)
+        }
         view.setPlaybackActive(optionalContentStarted && visible && controller?.isPlaying == true)
+    }
+
+    private fun libraryModeLabel(mode: LibraryMode): Int = when (mode) {
+        LibraryMode.SONGS -> R.string.library_songs
+        LibraryMode.ARTISTS -> R.string.library_artists
+        LibraryMode.ALBUMS -> R.string.library_albums
     }
 
     private fun renderLibrary() {
         if (!::libraryPanel.isInitialized || visibleScreen !== libraryPanel) return
         favoriteFilter.setText(if (model.favoritesOnly.value) R.string.all_tracks else R.string.favorites_only)
-        val tracks = model.visibleTracks.value
+        val page = model.libraryPage.value
+        val tracks = page.tracks
         val selecting = model.librarySelecting.value
         val selected = model.librarySelection.value.toSet()
         libraryActions.isVisible = !selecting
@@ -1354,8 +1702,25 @@ class MainActivity : AppCompatActivity() {
         librarySelectAll.isEnabled = tracks.isNotEmpty()
         librarySelectAll.setText(if (tracks.isNotEmpty() && tracks.all { it.id in selected })
             R.string.deselect_all_shown else R.string.select_all_shown)
-        libraryAdapter.submitList(tracks.map { trackRow(it).copy(selected = if (selecting) it.id in selected else null) })
+        libraryBrowse.text = getString(R.string.setting_value, getString(R.string.browse), getString(libraryModeLabel(page.location.mode)))
+        libraryBack.isVisible = page.location.group != null
+        libraryPanel.findViewById<View>(R.id.librarySelection).isEnabled = !page.showingGroups
+        val rows = if (page.showingGroups) page.groups.map { group ->
+            val name = group.name.ifBlank {
+                getString(if (page.location.mode == LibraryMode.ARTISTS) R.string.unknown_artist else R.string.unknown_album)
+            }
+            MusicRow(group.key, name, listOf(
+                group.artist.ifBlank { getString(R.string.unknown_artist) }.takeIf { page.location.mode == LibraryMode.ALBUMS }.orEmpty(),
+                resources.getQuantityString(R.plurals.track_count, group.count, group.count)).filter(String::isNotEmpty).joinToString(" · "),
+                icon = if (page.location.mode == LibraryMode.ARTISTS) R.drawable.ic_note else R.drawable.ic_library)
+        } else tracks.map { trackRow(it).copy(selected = if (selecting) it.id in selected else null) }
+        libraryAdapter.submitList(rows)
         libraryPanel.heading.text = if (selecting) getString(R.string.selected_songs, selected.size)
+            else if (page.showingGroups) getString(R.string.library_groups, getString(libraryModeLabel(page.location.mode)), rows.size)
+            else if (page.selectedGroup != null) getString(R.string.library_group_tracks,
+                page.selectedGroup.name.ifBlank {
+                    getString(if (page.location.mode == LibraryMode.ARTISTS) R.string.unknown_artist else R.string.unknown_album)
+                }, resources.getQuantityString(R.plurals.track_count, tracks.size, tracks.size))
             else resources.getQuantityString(R.plurals.track_count, tracks.size, tracks.size)
         libraryPlay.isEnabled = tracks.isNotEmpty()
         val message = when {
@@ -1363,7 +1728,7 @@ class MainActivity : AppCompatActivity() {
             model.library.value.tracks.isEmpty() -> R.string.library_empty
             else -> R.string.search_empty
         }
-        libraryPanel.empty(getString(message), tracks.isEmpty())
+        libraryPanel.empty(getString(message), rows.isEmpty())
         updateCompactHeading(libraryPanel)
     }
 
@@ -1372,11 +1737,15 @@ class MainActivity : AppCompatActivity() {
         val state = model.browser.value
         val scan = model.scan.value
         folderUp.isVisible = state.path.isNotEmpty()
+        folderRestore.isVisible = state.path.isNotEmpty()
+        folderRestore.isEnabled = scan == null && !state.loading
         folderPlay.setText(if (state.path.isEmpty()) R.string.play_selected_folders else R.string.play_folder)
         folderPlay.isEnabled = scan == null && !state.loading &&
             (state.path.isNotEmpty() || PlaybackScope.selectedSources(model.library.value).isNotEmpty())
         folderRescan.isEnabled = scan == null && model.library.value.sources.isNotEmpty()
         folderRescan.setText(if (state.path.isEmpty()) R.string.rescan_all else R.string.rescan)
+        folderRemoveAll.isEnabled = model.repository.isReadable && scan == null && !model.backupBusy.value &&
+            model.library.value.sources.isNotEmpty()
         cancelScan.isVisible = scan != null
         folderPanel.heading.text = when {
             scan != null -> getString(R.string.scan_progress, scan.folderName, scan.found)
@@ -1389,6 +1758,7 @@ class MainActivity : AppCompatActivity() {
         val rows = if (state.path.isEmpty()) {
             model.library.value.sources.map { source ->
                 val status = when {
+                    source.needsReconnect -> getString(R.string.reconnect_folder_first)
                     source.unavailable -> getString(R.string.source_unavailable)
                     MediaStoreAccess.folder(Uri.parse(source.uri)) != null -> getString(R.string.access_music)
                     !source.persisted -> getString(R.string.access_temporary)
@@ -1428,6 +1798,7 @@ class MainActivity : AppCompatActivity() {
         playlistPlay.isVisible = playlist != null
         playlistAdd.isVisible = playlist != null
         playlistUpdate.isVisible = playlist != null
+        playlistRestore.isVisible = playlist != null
         playlistTrackRows = if (id == null) emptyList() else LibraryEdits.playlistTracks(library, id)
         playlistPlay.isEnabled = playlistTrackRows.isNotEmpty()
         val rows = if (id == null) library.playlists.map {
@@ -1515,6 +1886,9 @@ class MainActivity : AppCompatActivity() {
         binding.miniSeek.setOnSeekBarChangeListener(seekListener)
         now.controls.volume.max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         now.controls.volume.isEnabled = !audio.isVolumeFixed
+        now.controls.volumeMute.setOnClickListener {
+            model.app.playbackSettings.setMuted(!model.app.playbackSettings.muted.value)
+        }
         now.controls.volume.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
             override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
@@ -1522,6 +1896,7 @@ class MainActivity : AppCompatActivity() {
                 if (fromUser) {
                     try {
                         audio.setStreamVolume(AudioManager.STREAM_MUSIC, progress, 0)
+                        if (progress > 0) model.app.playbackSettings.setMuted(false)
                     } catch (error: SecurityException) {
                         model.app.report(getString(R.string.volume_failed))
                     }
@@ -1543,12 +1918,17 @@ class MainActivity : AppCompatActivity() {
     private fun consumePlayRequest() {
         val player = controller ?: return
         val request = model.playRequest.value ?: return
-        val mediaItems = request.tracks.map(Track::toMediaItem)
+        val mediaItems = request.tracks.mapIndexed { index, track ->
+            val item = track.toMediaItem()
+            if (index == 0 && request.collection != null) item.withCollection(request.collection) else item
+        }
         when (request.mode) {
             QueueMode.REPLACE -> {
-                player.setMediaItems(mediaItems, request.index, 0)
-                player.prepare()
-                player.play()
+                if (!request.playWhenReady) player.pause()
+                player.setMediaItems(mediaItems, request.index, request.positionMs)
+                if (request.playWhenReady) { player.prepare(); player.play() }
+                else model.app.inform(getString(R.string.collection_position_restored,
+                    request.tracks[request.index].title, TimeText.format(request.positionMs)))
             }
             QueueMode.APPEND -> {
                 player.addMediaItems(mediaItems)
@@ -1568,6 +1948,7 @@ class MainActivity : AppCompatActivity() {
     private fun updatePlayer() {
         val player = controller
         val ready = player != null && model.app.playbackReady.value
+        backupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = ready && !model.backupBusy.value
         val track = currentTrack()
         val title = track?.title?.ifBlank { track.fileName } ?: getString(R.string.no_track)
         val artist = track?.artist?.ifBlank { getString(R.string.unknown_artist) } ?: getString(R.string.no_track_hint)
@@ -1621,39 +2002,51 @@ class MainActivity : AppCompatActivity() {
             "$status  ·  ${getString(R.string.queue_position, player.currentMediaItemIndex + 1, player.mediaItemCount)}"
         } else status
         updateProgress()
+        updateVolume()
+        progressPolling.value = player?.isPlaying == true && (visibleScreen === now.root || binding.miniPlayer.isVisible)
+        volumePolling.value = visibleScreen === now.root
         updateSpectrum()
         updateArtwork(track?.uri)
-        model.requestLyrics(track)
+        // A reconnecting controller is not a cleared queue.
+        if (ready) model.requestLyrics(track)
     }
 
     private fun updateProgress() {
+        val mainVisible = visibleScreen === now.root
+        val miniVisible = binding.miniPlayer.isVisible
+        if (!mainVisible && !miniVisible) return
         val player = controller
         val duration = player?.duration?.takeIf { it > 0 && it != C.TIME_UNSET }
-        val fallback = currentTrack()?.durationMs?.takeIf { it > 0 }
-        val total = duration ?: fallback
+        val total = duration ?: currentTrack()?.durationMs?.takeIf { it > 0 }
         val seekable = duration != null && player?.isCurrentMediaItemSeekable == true &&
             player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
-        now.controls.rewind.isEnabled = seekable
-        now.controls.forward.isEnabled = seekable
         // Retain an invalidated drag until release so later move events cannot seek the next track.
         val preview = draggingSeek?.takeIf { seekable && draggingTrackId == player?.currentMediaItem?.mediaId }
         val position = if (preview != null && duration != null) {
             duration * preview.progress / 10_000
         } else player?.currentPosition?.coerceAtLeast(0) ?: 0
-        now.controls.duration.setTextIfChanged(total?.let(TimeText::format) ?: getString(R.string.empty_time))
-        val mainTimeMode = model.app.displaySettings.options.value.mainTimeMode
-        now.controls.position.setTextIfChanged(TimeText.position(position, total, mainTimeMode, getString(R.string.empty_time)))
-        now.controls.position.contentDescription = getString(R.string.toggle_time_mode,
-            now.controls.position.text, getString(if (mainTimeMode == PlaybackTimeMode.ELAPSED) R.string.time_remaining else R.string.time_elapsed))
-        for (seek in listOf(now.controls.seek, binding.miniSeek)) {
+        fun updateSeek(seek: SeekBar) {
             seek.isEnabled = seekable
             if (seek !== preview) {
                 seek.progress = if (duration != null) ((position * 10_000) / duration).coerceIn(0, 10_000).toInt() else 0
             }
         }
-        binding.miniTime.setTextIfChanged(TimeText.progress(position, total, model.app.displaySettings.options.value.timeMode,
-            getString(R.string.empty_time)))
-        updateLyricProgress()
+        if (mainVisible) {
+            now.controls.rewind.isEnabled = seekable
+            now.controls.forward.isEnabled = seekable
+            now.controls.duration.setTextIfChanged(total?.let(TimeText::format) ?: getString(R.string.empty_time))
+            val mainTimeMode = model.app.displaySettings.options.value.mainTimeMode
+            now.controls.position.setTextIfChanged(TimeText.position(position, total, mainTimeMode, getString(R.string.empty_time)))
+            now.controls.position.contentDescription = getString(R.string.toggle_time_mode,
+                now.controls.position.text, getString(if (mainTimeMode == PlaybackTimeMode.ELAPSED) R.string.time_remaining else R.string.time_elapsed))
+            updateSeek(now.controls.seek)
+            updateLyricProgress()
+        }
+        if (miniVisible) {
+            updateSeek(binding.miniSeek)
+            binding.miniTime.setTextIfChanged(TimeText.progress(position, total, model.app.displaySettings.options.value.timeMode,
+                getString(R.string.empty_time)))
+        }
     }
 
     private fun seekToProgress(progress: Int) {
@@ -1665,16 +2058,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun seekBy(deltaMs: Long) = withController { player ->
-        val duration = player.duration
-        if (duration > 0 && duration != C.TIME_UNSET && player.isCurrentMediaItemSeekable &&
-            player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
-        ) {
-            player.seekTo((player.currentPosition + deltaMs).coerceIn(0, duration - 1))
+        if (com.macarmusic.app.playback.SystemMediaControls.seek(player, deltaMs)) {
             updateProgress()
         }
     }
 
     private fun updateVolume() {
+        val muted = model.app.playbackSettings.muted.value
+        now.controls.volumeMute.setImageResource(if (muted) R.drawable.ic_volume_off else R.drawable.ic_volume_on)
+        now.controls.volumeMute.contentDescription = getString(if (muted) R.string.unmute_player else R.string.mute_player)
+        now.controls.volumeMute.imageTintList = tint(muted)
         now.controls.volume.progress = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
         now.controls.volumeValue.setTextIfChanged(getString(R.string.volume_level, now.controls.volume.progress))
     }
@@ -1689,7 +2082,7 @@ class MainActivity : AppCompatActivity() {
         artworkUri = uri
         artworkWarning = null
         artworkJob?.cancel()
-        now.cover.artwork.setImageResource(R.drawable.ic_launcher)
+        now.cover.artwork.setImageResource(R.drawable.player_logo)
         binding.miniArtwork.setImageResource(R.drawable.ic_launcher)
         binding.navigation.artwork.setImageResource(R.drawable.ic_launcher)
         if (uri.isNullOrBlank()) return
@@ -1713,7 +2106,7 @@ class MainActivity : AppCompatActivity() {
         val lyrics = result?.lyrics.takeIf { enabled }
         val changed = lyrics != lyricsAdapter.lyrics || state.trackId != renderedLyricTrackId
         renderedLyricTrackId = state.trackId
-        val display = model.app.displaySettings.options.value
+        val display = model.app.displaySettings.options.value.effective()
         val resized = lyricsAdapter.configure(display.lyricAppearance)
         now.root.configureLyrics(display.landscapeLyrics, display.portraitLyrics)
         lyricScrolling.configure(display.lyricsDragSeek, display.lyricsSmoothScroll)
@@ -1721,6 +2114,18 @@ class MainActivity : AppCompatActivity() {
         now.cover.artwork.isVisible = lyrics == null
         now.cover.lyricsList.isVisible = lyrics != null
         now.cover.lyricsStatus.isVisible = enabled
+        now.cover.lyricsFooter.isVisible = enabled
+        now.cover.lyricsStatus.maxLines = if (lyrics == null) 4 else 1
+        now.cover.lyricVersions.isVisible = enabled
+        now.cover.lyricVersions.isEnabled = !state.loading
+        now.cover.nextLyrics.isVisible = enabled && lyrics != null
+        now.cover.nextLyrics.isEnabled = !state.loading && display.onlineLyrics && !display.lightMode
+        now.cover.lyricsTiming.isVisible = enabled && lyrics?.timed == true && result?.document != null
+        now.cover.lyricsTiming.isEnabled = !state.loading
+        if (lyricTimingDialog != null && (!enabled || timingTrackId != state.trackId ||
+                timingDocument?.text != result?.document?.text || timingDocument?.origin != result?.origin)) {
+            lyricTimingDialog?.dismiss()
+        }
         now.cover.retryLyrics.isVisible = enabled && !state.loading && lyrics == null
         now.cover.lyricsStatus.text = when {
             !enabled -> ""
@@ -1731,12 +2136,15 @@ class MainActivity : AppCompatActivity() {
                     LyricOrigin.EMBEDDED -> R.string.lyrics_embedded
                     LyricOrigin.KUGOU -> R.string.lyrics_kugou
                     LyricOrigin.NETEASE -> R.string.lyrics_netease
+                    LyricOrigin.QQ -> R.string.lyrics_qq
+                    LyricOrigin.KUWO -> R.string.lyrics_kuwo
                     null -> R.string.lyrics
                 }
                 val label = if (result?.cached == true) getString(R.string.lyrics_cached, getString(source)) else getString(source)
                 if (result?.issue == LyricIssue.LOCAL_UNREADABLE) "$label\n${getString(R.string.lyrics_local_failed)}" else label
             }
             result?.issue == LyricIssue.LOCAL_UNREADABLE -> getString(R.string.lyrics_local_failed)
+            result?.issue == LyricIssue.CACHE_UNAVAILABLE -> getString(R.string.lyrics_cache_unavailable)
             result?.issue == LyricIssue.LOOKUP_FAILED -> getString(R.string.lyrics_lookup_failed)
             result?.issue == LyricIssue.FOLDER_ACCESS_NEEDED -> getString(R.string.lyrics_folder_needed)
             else -> getString(R.string.lyrics_not_found)
@@ -1752,6 +2160,117 @@ class MainActivity : AppCompatActivity() {
             player?.isCurrentMediaItemSeekable == true && player.duration > 0 &&
                 player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) &&
                 player.isCommandAvailable(Player.COMMAND_PLAY_PAUSE), force)
+    }
+
+    private fun renderLyricChoices(state: LyricChoices?) {
+        if (state == null) {
+            lyricVersionsDialog?.dismiss()
+            return
+        }
+        val dialog = lyricVersionsDialog ?: LyricVersionsDialog(this,
+            { model.app.displaySettings.options.value },
+            { model.chooseLyricVersion(it) },
+            { model.chooseLyricVersion(it, best = true) }) {
+                lyricVersionsDialog = null
+                if (!isChangingConfigurations) model.closeLyricVersions()
+            }.also {
+                lyricVersionsDialog = it
+                it.show()
+            }
+        dialog.update(state)
+    }
+
+    private fun showLyricTiming() {
+        val state = model.lyrics.value
+        val trackId = state.trackId ?: return
+        val result = state.result ?: return
+        val document = result.document ?: return
+        if (state.loading || result.lyrics?.timed != true || lyricTimingDialog != null) return
+        var offset = document.offsetMs
+        var saveRequested = false
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        val value = TextView(this).apply {
+            id = R.id.lyricsTimingValue
+            textSize = 20f
+            gravity = android.view.Gravity.CENTER
+            minHeight = dp(48)
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
+            ViewCompat.setAccessibilityLiveRegion(this, ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE)
+        }
+        body.addView(value, LinearLayout.LayoutParams(-1, -2))
+        val controls = mutableListOf<Pair<MaterialButton, Long>>()
+        fun refresh() {
+            value.text = if (offset == 0L) getString(R.string.lyrics_timing_original) else getString(
+                if (offset > 0) R.string.lyrics_timing_earlier_value else R.string.lyrics_timing_later_value,
+                String.format(java.util.Locale.getDefault(), "%.1f", kotlin.math.abs(offset) / 1_000.0))
+            controls.forEach { (button, delta) ->
+                button.isEnabled = offset + delta in -LyricTiming.MAX_OFFSET_MS..LyricTiming.MAX_OFFSET_MS
+            }
+        }
+        for ((step, earlier, later) in listOf(
+            Triple(100L, R.string.lyrics_earlier_fine, R.string.lyrics_later_fine),
+            Triple(1_000L, R.string.lyrics_earlier_coarse, R.string.lyrics_later_coarse))) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            body.addView(row, LinearLayout.LayoutParams(-1, -2))
+            for ((label, delta) in listOf(earlier to step, later to -step)) {
+                val button = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                    setText(label)
+                    minHeight = dp(48)
+                    isAllCaps = false
+                    id = when (delta) {
+                        100L -> R.id.lyricsEarlierFine
+                        -100L -> R.id.lyricsLaterFine
+                        1_000L -> R.id.lyricsEarlierCoarse
+                        else -> R.id.lyricsLaterCoarse
+                    }
+                    setOnClickListener {
+                        offset += delta
+                        refresh()
+                        model.previewLyricTiming(trackId, result, offset)
+                    }
+                }
+                row.addView(button, LinearLayout.LayoutParams(0, -2, 1f).apply {
+                    marginStart = dp(2); marginEnd = dp(2)
+                })
+                controls.add(button to delta)
+            }
+        }
+        val reset = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            id = R.id.lyricsTimingReset
+            setText(R.string.lyrics_timing_reset)
+            minHeight = dp(48)
+            isAllCaps = false
+            setOnClickListener {
+                offset = 0
+                refresh()
+                model.previewLyricTiming(trackId, result, offset)
+            }
+        }
+        body.addView(reset, LinearLayout.LayoutParams(-1, -2))
+        val display = model.app.displaySettings.options.value
+        AccentTheme.tintControls(body)
+        BlockButtonStyler(body).apply(display.controlBlocks, display.blockOutline)
+        refresh()
+        timingTrackId = trackId
+        timingDocument = document
+        val scroll = android.widget.ScrollView(this).apply { addView(body) }
+        lyricTimingDialog = AccentTheme.dialog(this).setTitle(R.string.lyrics_timing).setView(scroll)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.save) { _, _ ->
+                saveRequested = model.saveLyricTiming(trackId, result, offset)
+            }
+            .create().also { dialog ->
+                dialog.setOnDismissListener {
+                    lyricTimingDialog = null
+                    timingTrackId = null
+                    timingDocument = null
+                    if (!saveRequested) model.cancelLyricTiming(trackId, result)
+                }
+                dialog.show()
+            }
     }
 
     @Suppress("DEPRECATION")
@@ -1804,6 +2323,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderControlBlocks(enabled: Boolean, outline: BlockOutline) {
         if (appliedControlBlocks == (enabled to outline)) return
+        val framed = enabled && outline.hasBorder
         val backgrounds = originalControlBackgrounds
         val padding = originalControlPadding
         val shapes = originalActionShapes
@@ -1812,9 +2332,9 @@ class MainActivity : AppCompatActivity() {
         val ripple = ColorStateList.valueOf(MaterialColors.getColor(binding.root, com.google.android.material.R.attr.colorControlHighlight))
         fun border() = PlayerBlockDrawable(outline, color, resources.displayMetrics.density)
         controlBlockContainers.forEach {
-            it.background = if (enabled) border() else backgrounds[it]
+            it.background = if (framed) border() else backgrounds[it]
         }
-        val inset = if (!enabled) 0 else dp(if (outline.style == BlockStyle.CHARACTERS) 12 else 8)
+        val inset = if (!framed) 0 else dp(if (outline.style == BlockStyle.CHARACTERS) 12 else 8)
         padding.forEach { (view, original) ->
             if (view === binding.miniPlayer && binding.miniPlayer.singleRow) return@forEach
             val vertical = if (view === now.controls.trackInformation || view === now.controls.spectrum ||
@@ -1823,25 +2343,34 @@ class MainActivity : AppCompatActivity() {
                 maxOf(original.right, inset), maxOf(original.bottom, vertical))
         }
         controlBlockButtons.forEach {
-            it.background = if (enabled) RippleDrawable(ripple, border(), ColorDrawable(Color.WHITE)) else backgrounds[it]
+            it.background = if (framed) RippleDrawable(ripple, border(), ColorDrawable(Color.WHITE)) else backgrounds[it]
         }
         controlBlockOverlays.forEach {
-            it.foreground = if (enabled && !(it === binding.miniPlayer && binding.miniPlayer.singleRow)) border() else null
+            it.foreground = if (framed && !(it === binding.miniPlayer && binding.miniPlayer.singleRow)) border() else null
         }
         binding.navigation.configureBlocks(enabled, outline)
-        renderCategoryDividers(outline)
+        listOfNotNull(
+            if (::libraryPanel.isInitialized) libraryPanel else null,
+            if (::folderPanel.isInitialized) folderPanel else null,
+            if (::queuePanel.isInitialized) queuePanel else null,
+            if (::playlistPanel.isInitialized) playlistPanel else null,
+        ).forEach { it.configureBlocks(enabled, outline) }
+        if (::settingsButtons.isInitialized) settingsButtons.apply(enabled, outline)
+        if (::settings.isInitialized) AboutContent.configureBorder(settings.settingsAboutPanel, enabled, outline)
+        renderCategoryDividers(enabled, outline)
         shapes.forEach { (button, shape) ->
-            button.shapeAppearanceModel = if (enabled) shape.toBuilder().setAllCornerSizes(dp(6).toFloat()).build() else shape
-            button.strokeWidth = if (enabled) 0 else requireNotNull(strokes[button])
+            button.shapeAppearanceModel = if (framed) shape.toBuilder().setAllCornerSizes(dp(6).toFloat()).build() else shape
+            button.strokeWidth = if (enabled || !outline.hasBorder) 0 else requireNotNull(strokes[button])
         }
         appliedControlBlocks = enabled to outline
     }
 
-    private fun renderCategoryDividers(outline: BlockOutline) {
+    private fun renderCategoryDividers(enabled: Boolean, outline: BlockOutline) {
         if (!::settings.isInitialized) return
         val color = MaterialColors.getColor(settings.root, com.google.android.material.R.attr.colorOutline)
         settings.settingsCategories.children.filter { it.id == R.id.settingsCategoryDivider }.forEach {
-            it.background = PlayerBlockDrawable(outline, color, resources.displayMetrics.density, divider = true)
+            it.background = if (enabled && outline.hasBorder)
+                PlayerBlockDrawable(outline, color, resources.displayMetrics.density, divider = true) else null
         }
     }
 
@@ -1896,6 +2425,184 @@ class MainActivity : AppCompatActivity() {
         } else action(player)
     }
 
+    private fun homeWidgetsDialog() {
+        choiceDialog(getString(R.string.home_widgets), com.macarmusic.app.widgets.HomeWidgetKind.entries.map { kind ->
+            getString(kind.label) to {
+                val manager = android.appwidget.AppWidgetManager.getInstance(this)
+                try {
+                    if (Build.VERSION.SDK_INT >= 26 && manager.isRequestPinAppWidgetSupported &&
+                        manager.requestPinAppWidget(kind.component(this), null, null)) {
+                        model.app.inform(getString(R.string.widget_pin_confirmation))
+                    } else {
+                        AccentTheme.dialog(this).setTitle(kind.label).setMessage(R.string.widgets_help)
+                            .setPositiveButton(R.string.understood, null).show()
+                    }
+                } catch (error: IllegalStateException) {
+                    Log.w("MainActivity", "Launcher refused widget pinning", error)
+                    model.app.report(getString(R.string.widget_pin_failed))
+                } catch (error: SecurityException) {
+                    Log.w("MainActivity", "Launcher denied widget pinning", error)
+                    model.app.report(getString(R.string.widget_pin_failed))
+                }
+                Unit
+            }
+        })
+    }
+
+    private fun systemInformationDialog() {
+        fun reported(value: String?): String =
+            value?.takeIf(String::isNotBlank) ?: getString(R.string.system_info_unreported)
+        val details = getString(R.string.system_info_details,
+            reported(Build.VERSION.RELEASE), Build.VERSION.SDK_INT, reported(Build.VERSION.SECURITY_PATCH),
+            reported(Build.MANUFACTURER), reported(Build.MODEL), reported(Build.DISPLAY),
+            reported(System.getProperty("os.version")))
+        AccentTheme.dialog(this).setTitle(R.string.system_info).setMessage(details)
+            .setPositiveButton(R.string.understood, null).show()
+            .findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
+    }
+
+    private fun defaultPlayerDialog() {
+        AccentTheme.dialog(this).setTitle(R.string.default_music_player).setMessage(R.string.default_music_player_help)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.open_system_settings) { _, _ ->
+                val intents = buildList {
+                    if (Build.VERSION.SDK_INT >= 24) add(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+                    add(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:$packageName")))
+                }
+                for (intent in intents) {
+                    try {
+                        startActivity(intent)
+                        return@setPositiveButton
+                    } catch (error: ActivityNotFoundException) {
+                        Log.w("MainActivity", "Default-app settings page unavailable", error)
+                    } catch (error: SecurityException) {
+                        Log.w("MainActivity", "Default-app settings page denied", error)
+                    }
+                }
+                model.app.report(getString(R.string.default_music_player_unavailable))
+            }.show()
+    }
+
+    private fun launchBackupExport() {
+        try {
+            createBackup.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                type = "application/zip"
+                addCategory(Intent.CATEGORY_OPENABLE)
+                putExtra(Intent.EXTRA_LOCAL_ONLY, true)
+                val date = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
+                putExtra(Intent.EXTRA_TITLE, "ManaMusicPlayer-backup-$date.zip")
+                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            })
+        } catch (error: ActivityNotFoundException) {
+            Log.i("MainActivity", "Save-document picker unavailable; offering a local backup file", error)
+            AccentTheme.dialog(this).setTitle(R.string.backup_export).setMessage(R.string.backup_share_help)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.backup_share) { _, _ ->
+                    model.prepareSharedBackup(AppCompatDelegate.getApplicationLocales().toLanguageTags())
+                }.show()
+        } catch (error: SecurityException) {
+            Log.w("MainActivity", "Android denied backup export", error)
+            model.app.report(getString(R.string.picker_denied))
+        }
+    }
+
+    private fun pickerIndex(intent: Intent): Int = when {
+        intent.action == Intent.ACTION_OPEN_DOCUMENT -> 0
+        intent.hasCategory(Intent.CATEGORY_OPENABLE) -> 1
+        else -> 2
+    }
+
+    private fun launchBackupImport() {
+        try {
+            if (!DocumentPicker.launch("*/*") { backupPickers[pickerIndex(it)].launch(it) }) {
+                model.app.report(getString(R.string.picker_missing))
+            }
+        } catch (error: SecurityException) {
+            Log.w("MainActivity", "Android denied backup selection", error)
+            model.app.report(getString(R.string.picker_denied))
+        }
+    }
+
+    private fun renderBackupPreview(backup: PreparedBackup?) {
+        if (backup == null) {
+            backupDialog?.dismiss()
+            backupDialog = null
+            shownBackup = null
+            return
+        }
+        if (shownBackup === backup && backupDialog?.isShowing == true) return
+        if (controller == null) connectController()
+        backupDialog?.dismiss()
+        shownBackup = backup
+        backupDialog = AccentTheme.dialog(this).setTitle(R.string.backup_restore)
+            .setMessage(getString(R.string.backup_restore_confirmation, backup.manifest.library.tracks.size,
+                backup.manifest.library.favorites.size, backup.manifest.library.playlists.size,
+                backup.manifest.settings.display.imageIds.size))
+            .setNegativeButton(R.string.cancel) { _, _ -> model.dismissBackup() }
+            .setOnCancelListener { model.dismissBackup() }
+            .setPositiveButton(R.string.backup_restore) { _, _ ->
+                withController { it.pause(); model.restoreBackup() }
+            }.show().also {
+                it.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = controller != null && model.app.playbackReady.value
+            }
+    }
+
+    private fun reconnectSourceDialog(source: FolderSource) {
+        val targets = model.library.value.sources.filterNot { it.needsReconnect || it.uri == source.uri }
+        if (targets.isEmpty()) {
+            model.app.inform(getString(R.string.reconnect_add_folder))
+            return
+        }
+        choiceDialog(getString(R.string.reconnect_choose_folder, source.name), targets.map { target ->
+            sourceName(target) to {
+                AccentTheme.dialog(this).setTitle(R.string.reconnect_folder)
+                    .setMessage(getString(R.string.reconnect_confirm, source.name, sourceName(target)))
+                    .setNegativeButton(R.string.cancel, null)
+                    .setPositiveButton(R.string.reconnect_folder) { _, _ -> model.reconnectSource(source, target) }.show()
+                Unit
+            }
+        })
+    }
+
+    private fun launchReconnectTrack(track: Track) {
+        try {
+            if (!DocumentPicker.launch("*/*") { intent ->
+                val index = pickerIndex(intent)
+                model.prepareReconnectTrack(track.id, index)
+                reconnectPickers[index].launch(intent)
+            }) {
+                model.prepareReconnectTrack(null, -1)
+                model.app.report(getString(R.string.picker_missing))
+            }
+        } catch (error: SecurityException) {
+            model.prepareReconnectTrack(null, -1)
+            Log.w("MainActivity", "Android denied restored-file selection", error)
+            model.app.report(getString(R.string.picker_denied))
+        }
+    }
+
+    private fun launchLyricCachePicker() {
+        try {
+            pickLyricCache.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                putExtra(Intent.EXTRA_LOCAL_ONLY, true)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+                if (Build.VERSION.SDK_INT >= 26) {
+                    model.app.lyrics.cache.info.value.folder?.let {
+                        putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse(it.documentUri))
+                    }
+                }
+            })
+        } catch (error: ActivityNotFoundException) {
+            Log.i("MainActivity", "No writable document-folder picker", error)
+            model.app.report(getString(R.string.lyrics_cache_picker_missing))
+        } catch (error: SecurityException) {
+            Log.w("MainActivity", "Android denied cache-folder selection", error)
+            model.app.report(getString(R.string.picker_denied))
+        }
+    }
+
     private fun launchFolderPicker() {
         try {
             pickFolder.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
@@ -1917,6 +2624,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchFilePicker() {
+        choiceDialog(getString(R.string.open_file), listOf(
+            getString(R.string.device_music_browse) to { launchDeviceMusic(browse = true) },
+            getString(R.string.android_file_picker) to { launchAndroidFilePicker() },
+        ))
+    }
+
+    private fun launchAndroidFilePicker() {
         try {
             // Some USB providers mislabel audio as application/octet-stream; validate after selection.
             if (!DocumentPicker.launch("*/*") { intent ->
@@ -1935,7 +2649,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun launchDeviceMusic() {
+    private fun launchDeviceMusic(browse: Boolean = false) {
+        model.prepareDeviceMusic(browse)
         if (model.repository.documents.deviceMusic.hasPermission()) {
             model.loadDeviceMusicFolders()
             return
@@ -1975,24 +2690,40 @@ class MainActivity : AppCompatActivity() {
         if (deviceMusicDialog?.isShowing == true && rendered?.token == choice.token &&
             rendered.loading == choice.loading
         ) {
-            deviceMusicDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = choice.selected.isNotEmpty()
+            if (!choice.loading && !choice.browse) {
+                val dialog = checkNotNull(deviceMusicDialog)
+                choice.folders.forEachIndexed { index, source -> dialog.listView.setItemChecked(index, source.uri in choice.selected) }
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = choice.selected.isNotEmpty()
+                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setText(
+                    if (choice.selected.size == choice.folders.size) R.string.deselect_all_folders else R.string.select_all_folders)
+            }
+            renderedDeviceMusic = choice
             return
         }
         deviceMusicDialog?.dismiss()
         val builder = AccentTheme.dialog(this)
-            .setTitle(if (choice.loading) R.string.device_music else R.string.device_music_choose_folders)
+            .setTitle(if (choice.loading) R.string.device_music else if (choice.browse) R.string.device_music_browse else R.string.device_music_choose_folders)
             .setNegativeButton(R.string.cancel) { _, _ -> model.dismissDeviceMusic() }
             .setOnCancelListener { model.dismissDeviceMusic() }
         if (choice.loading) builder.setMessage(R.string.device_music_loading)
-        else {
+        else if (choice.browse) {
+            builder.setItems(choice.folders.map(::sourceName).toTypedArray()) { _, index ->
+                model.browseDeviceMusicFolder(choice.folders[index].uri)
+            }
+        } else {
             builder.setMultiChoiceItems(choice.folders.map(::sourceName).toTypedArray(),
                 BooleanArray(choice.folders.size) { choice.folders[it].uri in choice.selected }) { _, index, checked ->
                 model.selectDeviceMusicFolder(choice.folders[index].uri, checked)
             }.setPositiveButton(R.string.add_folder) { _, _ -> model.addDeviceMusicFolders() }
+                .setNeutralButton(if (choice.selected.size == choice.folders.size)
+                    R.string.deselect_all_folders else R.string.select_all_folders, null)
         }
         renderedDeviceMusic = choice
         deviceMusicDialog = builder.show().also {
-            if (!choice.loading) it.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = choice.selected.isNotEmpty()
+            if (!choice.loading && !choice.browse) {
+                it.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = choice.selected.isNotEmpty()
+                it.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { model.selectAllDeviceMusicFolders() }
+            }
         }
     }
 
@@ -2007,16 +2738,23 @@ class MainActivity : AppCompatActivity() {
         model.scanFolders(listOf(source), model.browser.value.path.lastOrNull(), play = true)
     }
 
-    private fun sourceMenu(source: FolderSource) = choiceDialog(
-        sourceName(source),
-        listOf(
+    private fun sourceMenu(source: FolderSource) {
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        if (source.needsReconnect) actions.add(getString(R.string.reconnect_folder) to { reconnectSourceDialog(source) })
+        else actions.addAll(listOf(
             getString(R.string.browse) to { model.openSource(source) },
             getString(R.string.rescan) to { model.scanFolders(listOf(source)) },
+            getString(R.string.rescan_full) to { model.scanFolders(listOf(source), forceMetadata = true) },
             getString(R.string.play_recursively) to { model.scanFolders(listOf(source), play = true) },
+            getString(R.string.restore_position) to {
+                model.restorePosition(PlaybackCollection(CollectionKind.FOLDER, source.uri)); Unit
+            },
             getString(R.string.save_folder_playlist) to {
                 newPlaylistDialog(folders = listOf(BrowserLocation(source.uri,
                     model.repository.documents.rootId(source.uri), sourceName(source))))
             },
+        ))
+        actions.addAll(listOf(
             getString(if (source.pinned) R.string.unpin_folder else R.string.pin_folder) to { model.togglePin(source); Unit },
             getString(R.string.remove_source) to {
                 AccentTheme.dialog(this).setTitle(R.string.remove_source)
@@ -2025,8 +2763,22 @@ class MainActivity : AppCompatActivity() {
                     .setPositiveButton(R.string.remove) { _, _ -> model.removeSource(source) }.show()
                 Unit
             },
-        ),
-    )
+        ))
+        choiceDialog(sourceName(source), actions)
+    }
+
+    private fun removeAllFoldersDialog() {
+        val sources = model.library.value.sources
+        val removable = sources.filterNot { it.pinned }.mapTo(hashSetOf()) { it.uri }
+        if (removable.isEmpty()) {
+            model.app.inform(getString(R.string.unpin_first))
+            return
+        }
+        AccentTheme.dialog(this).setTitle(R.string.remove_all_folders)
+            .setMessage(getString(R.string.remove_all_folders_body, removable.size, sources.size - removable.size))
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.remove) { _, _ -> model.removeSources(removable) }.show()
+    }
 
     private fun documentMenu(entry: DocumentEntry) {
         if (entry.isDirectory) {
@@ -2065,6 +2817,7 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.add_playlist) to { choosePlaylist(listOf(track)) },
             getString(R.string.details) to { detailsDialog(track) },
         )
+        if (BackupEdits.unavailable(track.uri)) actions.add(0, getString(R.string.reconnect_track) to { launchReconnectTrack(track) })
         if (playlistId != null) actions.add(getString(R.string.remove_playlist_song) to {
             model.removePlaylistTrack(playlistId, track.id); Unit
         })
@@ -2097,7 +2850,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun playlistMenu(playlist: LocalPlaylist) {
         val actions = mutableListOf(
-            getString(R.string.play_all) to { model.requestPlay(LibraryEdits.playlistTracks(model.library.value, playlist.id)) },
+            getString(R.string.play_all) to {
+                model.requestPlay(LibraryEdits.playlistTracks(model.library.value, playlist.id),
+                    collection = PlaybackCollection.playlist(playlist.id))
+            },
+            getString(R.string.restore_position) to { model.restorePosition(PlaybackCollection.playlist(playlist.id)); Unit },
             getString(R.string.add_songs) to { model.playlist(playlist.id); addSongsDialog() },
             getString(R.string.edit_playlist_songs) to { addSongsDialog(edit = playlist) },
             getString(R.string.edit_playlist_folders) to { saveFoldersDialog(playlist) },
@@ -2190,19 +2947,23 @@ class MainActivity : AppCompatActivity() {
     private fun saveFoldersDialog(playlist: LocalPlaylist? = null) {
         model.operation {
             val sources = model.library.value.sources.associateBy { it.uri }
-            val roots = sources.values.map { BrowserLocation(it.uri, model.repository.documents.rootId(it.uri), sourceName(it)) }
+            val roots = sources.values.filterNot { it.needsReconnect }
+                .map { BrowserLocation(it.uri, model.repository.documents.rootId(it.uri), sourceName(it)) }
             val current = model.browser.value.path.lastOrNull()
-            val choices = (playlist?.folders?.map { it.location() }.orEmpty() + listOfNotNull(current) + roots)
-                .distinctBy { it.sourceUri to it.documentId }
+            val candidates = playlist?.folders?.map { it.location() }.orEmpty() + listOfNotNull(current) + roots
+            val resolvedPaths = candidates.filter { it.documentId.isNotEmpty() }.distinctBy { it.key }.groupBy { it.pathKey }
+            val choices = candidates.map {
+                if (it.documentId.isEmpty()) resolvedPaths[it.pathKey]?.singleOrNull() ?: it else it
+            }.distinctBy { it.key }
             if (choices.isEmpty()) {
                 model.app.inform(getString(R.string.select_folders_first))
                 return@operation
             }
-            val existing = playlist?.folders?.mapTo(hashSetOf()) { it.key }.orEmpty()
+            val existing = BooleanArray(choices.size) { index -> playlist?.folders?.any { it.matches(choices[index]) } == true }
             val selected = BooleanArray(choices.size) { index ->
                 val location = choices[index]
                 when {
-                    playlist != null -> (location.sourceUri to location.documentId) in existing
+                    playlist != null -> existing[index]
                     current != null -> location == current
                     else -> sources[location.sourceUri]?.selectedForPlayback == true
                 }
@@ -2218,7 +2979,7 @@ class MainActivity : AppCompatActivity() {
                 .setMultiChoiceItems(labels.toTypedArray(), selected) { dialog, index, checked ->
                     val location = choices[index]
                     if (!checked && sources[location.sourceUri]?.pinned == true &&
-                        (location.sourceUri to location.documentId) in existing
+                        existing[index]
                     ) {
                         selected[index] = true
                         (dialog as AlertDialog).listView.setItemChecked(index, true)
@@ -2236,18 +2997,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun detailsDialog(track: Track) {
+        var displayed = track
         fun value(text: String) = text.ifBlank { getString(R.string.not_available) }
         fun details(location: String): String = getString(
-            R.string.song_details, value(track.title), value(track.artist), value(track.album),
-            if (track.durationMs > 0) TimeText.format(track.durationMs) else getString(R.string.not_available),
-            value(track.trackNumber), value(track.year), value(track.genre), value(track.fileName),
-            value(track.mimeType), location,
+            R.string.song_details, value(displayed.title), value(displayed.artist), value(displayed.album),
+            if (displayed.durationMs > 0) TimeText.format(displayed.durationMs) else getString(R.string.not_available),
+            value(displayed.trackNumber), value(displayed.year), value(displayed.genre), value(displayed.fileName),
+            value(displayed.mimeType), location,
         )
         val warning = if (track.uri == artworkUri) artworkWarning else null
         val dialog = AccentTheme.dialog(this).setTitle(R.string.details)
             .setMessage(details(getString(R.string.loading)))
             .setPositiveButton(R.string.close, null).show()
         val job = lifecycleScope.launch {
+            try {
+                val result = model.repository.metadataForDetails(track)
+                displayed = result.track
+                if (result.warning) model.app.inform(getString(R.string.metadata_warning))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: IOException) {
+                Log.w("SongDetails", "Cannot refresh indexed metadata", error)
+                model.app.report(getString(R.string.metadata_warning))
+            } catch (error: SecurityException) {
+                Log.w("SongDetails", "Metadata permission is unavailable", error)
+                model.app.report(getString(R.string.permission_lost))
+            } catch (error: IllegalArgumentException) {
+                Log.w("SongDetails", "Provider rejected metadata lookup", error)
+                model.app.report(getString(R.string.metadata_warning))
+            } catch (error: IllegalStateException) {
+                Log.w("SongDetails", "Provider is unavailable for metadata", error)
+                model.app.report(getString(R.string.metadata_warning))
+            }
             val location = withContext(Dispatchers.IO) {
                 val documents = model.repository.documents
                 try {
@@ -2336,6 +3117,7 @@ class MainActivity : AppCompatActivity() {
             .setSingleChoiceItems(labels.map(::getString).toTypedArray(), selected) { dialog, index ->
                 dialog.dismiss()
                 AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tags[index]))
+                model.app.applicationScope.launch(Dispatchers.Main.immediate) { model.app.homeWidgets.refresh() }
             }.setNegativeButton(R.string.cancel, null).show()
     }
 

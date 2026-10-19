@@ -142,7 +142,6 @@ class PlayerLayout @JvmOverloads constructor(context: Context, attrs: AttributeS
             marginStart = if (compactFooter) gap else 0
             topMargin = if (compactFooter) 0 else gap
         }
-        findViewById<View>(R.id.volumeLabel).isVisible = !compact
         for (id in intArrayOf(R.id.favorite, R.id.details)) {
             findViewById<MaterialButton>(id).apply {
                 text = if (compact) "" else contentDescription

@@ -30,16 +30,26 @@ import java.util.Set;
 // This standalone test-APK process deliberately depends only on the Android/Java runtime.
 public class FixtureDocumentsProvider extends DocumentsProvider {
     private static volatile Bundle controllerStatus = Bundle.EMPTY;
+    private static volatile Bundle widgetStatus = Bundle.EMPTY;
     private volatile boolean unavailable;
     private volatile String lyricsMode = "available";
     private volatile long lyricDelayMs;
     private final AtomicInteger activeLyricReads = new AtomicInteger();
     private final AtomicInteger lyricReads = new AtomicInteger();
+    private final AtomicInteger audioReads = new AtomicInteger();
+    private final AtomicInteger deleteRequests = new AtomicInteger();
+    private final AtomicInteger activeAudioReads = new AtomicInteger();
+    private volatile long audioDelayMs;
+    private volatile boolean unknownFileStamp;
+    private volatile long fileStampOffset;
     private File tone;
     private File lyrics;
     private File scrollableLyrics;
     private File plainLyrics;
     private File badLyrics;
+    private File alternateLyrics;
+    private File secondAlternateLyrics;
+    private File changedAlternateLyrics;
     private File picture;
     private File secondPicture;
     private static final String[] COLUMNS = {
@@ -47,7 +57,8 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
         DocumentsContract.Document.COLUMN_DISPLAY_NAME,
         DocumentsContract.Document.COLUMN_MIME_TYPE,
         DocumentsContract.Document.COLUMN_FLAGS,
-        DocumentsContract.Document.COLUMN_SIZE
+        DocumentsContract.Document.COLUMN_SIZE,
+        DocumentsContract.Document.COLUMN_LAST_MODIFIED
     };
 
     @Override public boolean onCreate() {
@@ -78,6 +89,9 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
         scrollableLyrics = fixture("scrollable.lrc", scrolling.toString());
         plainLyrics = fixture("synthetic.txt", "Nested text fixture\nSecond plain marker");
         badLyrics = fixture("invalid.txt", "<html>Simulated invalid lyric document</html>");
+        alternateLyrics = fixture("alternate.lrc", "[00:00]Synthetic local alternate\n[00:30]Alternate ending");
+        secondAlternateLyrics = fixture("second-alternate.lrc", "[00:00]Synthetic local third\n[00:30]Third ending");
+        changedAlternateLyrics = fixture("changed-alternate.lrc", "[00:00]Synthetic changed file\n[00:30]Changed ending");
         picture = new File(getContext().getFilesDir(), "synthetic-background.png");
         Bitmap bitmap = Bitmap.createBitmap(256, 128, Bitmap.Config.ARGB_8888);
         for (int y = 0; y < bitmap.getHeight(); y++) {
@@ -149,6 +163,10 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             documentRow(cursor, "music/one");
             documentRow(cursor, "music/ignored");
             if (!lyricsMode.equals("missing")) documentRow(cursor, "music/lyric-data");
+            if (lyricsMode.startsWith("versions")) {
+                documentRow(cursor, "music/lyric-alternate");
+                documentRow(cursor, "music/lyric-third");
+            }
         } else if (parent.equals("music/album")) {
             documentRow(cursor, "music/album/two");
             if (!lyricsMode.equals("missing")) documentRow(cursor, "music/album/lyric-data");
@@ -164,7 +182,16 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
         if (!mode.equals("r")) throw new FileNotFoundException(id);
         File selected;
         switch (id) {
-            case "music/one": case "music/album/two": selected = tone; break;
+            case "music/one": case "music/album/two":
+                audioReads.incrementAndGet();
+                activeAudioReads.incrementAndGet();
+                try {
+                    android.os.SystemClock.sleep(audioDelayMs);
+                } finally {
+                    activeAudioReads.decrementAndGet();
+                }
+                selected = tone;
+                break;
             case "music/lyric-data":
                 lyricReads.incrementAndGet();
                 activeLyricReads.incrementAndGet();
@@ -177,6 +204,12 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
                 selected = lyricsMode.equals("invalid") ? badLyrics : lyricsMode.equals("scrollable") ? scrollableLyrics : lyrics;
                 break;
             case "music/album/lyric-data": selected = plainLyrics; break;
+            case "music/lyric-alternate":
+                if (lyricsMode.equals("versions-unreadable")) throw new FileNotFoundException("Synthetic alternate failure");
+                if (lyricsMode.equals("versions-denied")) throw new SecurityException("Synthetic alternate access denied");
+                selected = lyricsMode.equals("versions-changed") ? changedAlternateLyrics : alternateLyrics;
+                break;
+            case "music/lyric-third": selected = secondAlternateLyrics; break;
             case "pictures/background": selected = picture; break;
             case "pictures/second": selected = secondPicture; break;
             case "pictures/invalid": selected = badLyrics; break;
@@ -189,7 +222,28 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
         return id.startsWith(parent + "/");
     }
 
+    @Override public void deleteDocument(String id) throws FileNotFoundException {
+        deleteRequests.incrementAndGet();
+        throw new FileNotFoundException("Music references must never delete the fixture files");
+    }
+
     @Override public Bundle call(String method, String arg, Bundle extras) {
+        if (method.equals("scanFixtureState")) {
+            if (extras != null) {
+                unknownFileStamp = extras.getBoolean("unknownStamp");
+                fileStampOffset = extras.getLong("stampOffset");
+                audioDelayMs = Math.max(0, Math.min(10000, extras.getLong("audioDelayMs")));
+                if (extras.getBoolean("resetReads")) {
+                    audioReads.set(0);
+                    deleteRequests.set(0);
+                }
+            }
+            Bundle result = new Bundle();
+            result.putInt("audioReads", audioReads.get());
+            result.putInt("activeAudioReads", activeAudioReads.get());
+            result.putInt("deleteRequests", deleteRequests.get());
+            return result;
+        }
         if (method.equals("fixtureExternalDirectory")) {
             File directory = getContext().getExternalFilesDir(null);
             if (directory == null) throw new IllegalStateException("Fixture storage unavailable");
@@ -199,7 +253,7 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
         }
         if (method.equals("seedIndexedMusic")) {
             try {
-                return seedIndexedMusic();
+                return seedIndexedMusic("benchmark".equals(arg));
             } catch (IOException error) {
                 throw new IllegalStateException("Could not create indexed audio fixtures", error);
             }
@@ -220,6 +274,11 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             return state;
         }
         if (method.equals("controllerStatus")) return new Bundle(controllerStatus);
+        if (method.equals("widgetStatus")) return new Bundle(widgetStatus);
+        if (method.equals("widgetCommand")) {
+            FixtureWidgetHostActivity.command(arg, extras == null ? "" : extras.getString("value", ""));
+            return Bundle.EMPTY;
+        }
         if (method.equals("resetControllerStatus")) {
             controllerStatus = Bundle.EMPTY;
             return Bundle.EMPTY;
@@ -240,12 +299,18 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
     }
 
     @SuppressWarnings("deprecation")
-    private Bundle seedIndexedMusic() throws IOException {
+    private Bundle seedIndexedMusic(boolean benchmark) throws IOException {
         clearIndexedMusic();
         String[] folders = {
             "Music/ManaPlayer_Compatibility/", "Music/ManaPlayer_Compatibility/Child/",
             "Music/ManaPlayer_Compatibility 2/", "Music/ManaPlayerXCompatibility/"
         };
+        if (benchmark) {
+            folders = new String[120];
+            for (int index = 0; index < folders.length; index++) {
+                folders[index] = "Music/ManaPlayer_ScanPerf/Group" + (index % 12) + "/";
+            }
+        }
         ArrayList<String> uris = new ArrayList<>();
         for (int index = 0; index < folders.length; index++) {
             ContentValues values = new ContentValues();
@@ -278,11 +343,17 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
                 int count;
                 while ((count = input.read(bytes)) != -1) output.write(bytes, 0, count);
             }
-            if (Build.VERSION.SDK_INT >= 29) {
-                values.clear();
-                values.put(MediaStore.Audio.Media.IS_PENDING, 0);
-                getContext().getContentResolver().update(uri, values, null, null);
-            }
+            values.clear();
+            values.put(MediaStore.Audio.Media.TITLE, "Indexed title " + index);
+            values.put(MediaStore.Audio.Media.ARTIST, "Synthetic artist");
+            values.put(MediaStore.Audio.Media.ALBUM, "Synthetic album");
+            values.put(MediaStore.Audio.Media.DURATION, 60_000);
+            values.put(MediaStore.Audio.Media.TRACK, 2000 + index + 1);
+            values.put(MediaStore.Audio.Media.YEAR, 2026);
+            values.put(MediaStore.Audio.Media.SIZE, tone.length());
+            values.put(MediaStore.Audio.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000);
+            if (Build.VERSION.SDK_INT >= 29) values.put(MediaStore.Audio.Media.IS_PENDING, 0);
+            getContext().getContentResolver().update(uri, values, null, null);
         }
         Bundle result = new Bundle();
         result.putStringArrayList("uris", uris);
@@ -297,6 +368,8 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             throw new IllegalStateException("Could not clear fixture ownership");
         }
     }
+
+    static void setWidgetStatus(Bundle status) { widgetStatus = new Bundle(status); }
 
     static void setControllerStatus(Bundle status) {
         controllerStatus = new Bundle(status);
@@ -316,6 +389,8 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             case "music/album/two": name = "02 - Nested.WAV"; break;
             case "music/ignored": name = "notes.txt"; break;
             case "music/lyric-data": name = "01 - Synthetic.LRC"; break;
+            case "music/lyric-alternate": name = "01 - Synthetic (Alternate).lrc"; break;
+            case "music/lyric-third": name = "01 - Synthetic - Third.lrc"; break;
             case "music/album/lyric-data": name = "02 - Nested.txt"; break;
             case "pictures/background": name = "Test background.png"; break;
             case "pictures/second": name = "Second background.png"; break;
@@ -323,6 +398,7 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             default: name = "Empty";
         }
         String mime = id.startsWith("pictures/") ? "image/png"
+            : id.equals("music/lyric-alternate") || id.equals("music/lyric-third") ? "text/plain"
             : id.equals("music/lyric-data") ? "audio/mpeg"
             : id.endsWith("lyric-data") ? "application/octet-stream"
             : folder ? DocumentsContract.Document.MIME_TYPE_DIR
@@ -336,6 +412,8 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             if (column.equals(DocumentsContract.Document.COLUMN_MIME_TYPE)) value = mime;
             if (column.equals(DocumentsContract.Document.COLUMN_FLAGS)) value = 0;
             if (column.equals(DocumentsContract.Document.COLUMN_SIZE)) value = folder ? 0L : tone.length();
+            if (column.equals(DocumentsContract.Document.COLUMN_LAST_MODIFIED))
+                value = unknownFileStamp ? null : tone.lastModified() + fileStampOffset;
             row.add(column, value);
         }
     }

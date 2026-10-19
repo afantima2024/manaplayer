@@ -5,6 +5,7 @@ import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.TeeAudioProcessor
+import com.macarmusic.app.model.SpectrumOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -29,6 +30,7 @@ class SpectrumSource(scope: CoroutineScope) {
     private val visibleClients = mutableSetOf<Any>()
     private var playing = false
     @Volatile private var capturing = false
+    @Volatile private var analysisIntervalNs = 1_000_000_000L / SpectrumOptions.DEFAULT_REFRESH_RATE
     private val mutableFrames = MutableStateFlow(SpectrumFrame())
     val frames = mutableFrames.asStateFlow()
 
@@ -55,6 +57,11 @@ class SpectrumSource(scope: CoroutineScope) {
     @Synchronized fun setPlaying(value: Boolean) {
         playing = value
         updateCapture()
+    }
+
+    fun setRefreshRate(rate: Int) {
+        require(rate in setOf(15, 30, 60))
+        analysisIntervalNs = 1_000_000_000L / rate
     }
 
     private fun updateCapture() {
@@ -112,7 +119,7 @@ class SpectrumSource(scope: CoroutineScope) {
                 filled = (filled + 1).coerceAtMost(SpectrumAnalyzer.SAMPLE_COUNT)
             }
             val now = System.nanoTime()
-            if (filled < SpectrumAnalyzer.SAMPLE_COUNT || now - lastSent < 33_333_333L) return
+            if (filled < SpectrumAnalyzer.SAMPLE_COUNT || now - lastSent < analysisIntervalNs) return
             val snapshot = Array(rings.size) { channel ->
                 FloatArray(SpectrumAnalyzer.SAMPLE_COUNT) { rings[channel][(cursor + it) % SpectrumAnalyzer.SAMPLE_COUNT] }
             }

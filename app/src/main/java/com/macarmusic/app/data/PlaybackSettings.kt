@@ -12,15 +12,22 @@ import kotlinx.coroutines.flow.asStateFlow
 class PlaybackSettings(context: Context) {
     private val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val mutableOptions = MutableStateFlow(PlaybackOptions(
-        loop = readEnum("loopMode", LoopMode.OFF, LoopMode.entries),
-        order = readEnum("playOrder", PlayOrder.SEQUENTIAL, PlayOrder.entries),
+        loop = readEnum("loopMode", LoopMode.FOLDER, LoopMode.entries),
+        order = readEnum("playOrder", PlayOrder.RANDOM, PlayOrder.entries),
     ))
     val options = mutableOptions.asStateFlow()
+    private val mutableMuted = MutableStateFlow(preferences.getBoolean("playerMuted", false))
+    val muted = mutableMuted.asStateFlow()
+
+    fun setMuted(value: Boolean) {
+        preferences.edit().putBoolean("playerMuted", value).apply()
+        mutableMuted.value = value
+    }
 
     fun migrate(snapshot: PlaybackSnapshot) {
         update(PlaybackOptions(
-            loop = if (preferences.contains("loopMode")) options.value.loop else LoopMode.fromRepeatMode(snapshot.repeat),
-            order = if (preferences.contains("playOrder")) options.value.order
+            loop = if (preferences.contains("loopMode") || snapshot.queue.isEmpty()) options.value.loop else LoopMode.fromRepeatMode(snapshot.repeat),
+            order = if (preferences.contains("playOrder") || snapshot.queue.isEmpty()) options.value.order
             else if (snapshot.shuffle) PlayOrder.RANDOM else PlayOrder.SEQUENTIAL,
         ))
     }
@@ -28,6 +35,8 @@ class PlaybackSettings(context: Context) {
     fun setLoop(mode: LoopMode) = update(options.value.copy(loop = mode))
 
     fun setOrder(order: PlayOrder) = update(options.value.copy(order = order))
+
+    internal fun publishRestored(value: PlaybackOptions) { mutableOptions.value = value }
 
     private fun update(value: PlaybackOptions) {
         preferences.edit()

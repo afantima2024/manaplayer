@@ -16,11 +16,14 @@ import com.macarmusic.app.model.DocumentEntry
 import com.macarmusic.app.model.FolderSource
 import com.macarmusic.app.model.Track
 import com.macarmusic.app.lyrics.LyricFiles
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.util.Locale
 
 class DocumentAccess(private val context: Context) {
     private val resolver = context.contentResolver
+    internal val grantMutex = Mutex()
     val deviceMusic by lazy { MediaStoreAccess(context) }
 
     fun displayName(source: FolderSource): String =
@@ -126,7 +129,10 @@ class DocumentAccess(private val context: Context) {
     fun describe(uri: Uri): DocumentEntry {
         requireContentUri(uri)
         val isDocument = DocumentsContract.isDocumentUri(context, uri)
-        val projection = if (isDocument) DOCUMENT_COLUMNS else arrayOf(OpenableColumns.DISPLAY_NAME)
+        val isIndexed = uri.authority == "media"
+        val projection = if (isDocument) DOCUMENT_COLUMNS else
+            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE) +
+                if (isIndexed) arrayOf(MediaStore.MediaColumns.DATE_MODIFIED) else emptyArray()
         val cursor = resolver.query(uri, projection, null, null, null)
             ?: throw IOException(context.getString(R.string.provider_no_response))
         return cursor.use {
@@ -143,6 +149,10 @@ class DocumentAccess(private val context: Context) {
                 mimeType = mime,
                 isDirectory = mime == DocumentsContract.Document.MIME_TYPE_DIR,
                 isVirtual = isDocument && it.flags() and FLAG_VIRTUAL_DOCUMENT != 0,
+                sizeBytes = it.positiveLong(OpenableColumns.SIZE),
+                modifiedMs = if (isDocument) it.positiveLong(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                    else if (isIndexed) it.positiveLong(MediaStore.MediaColumns.DATE_MODIFIED)
+                        ?.takeIf { seconds -> seconds <= Long.MAX_VALUE / 1000 }?.times(1000) else null,
             )
         }
     }
@@ -173,6 +183,8 @@ class DocumentAccess(private val context: Context) {
                         add(DocumentEntry(
                             id, DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(),
                             name, mime, folder, it.flags() and FLAG_VIRTUAL_DOCUMENT != 0,
+                            it.positiveLong(DocumentsContract.Document.COLUMN_SIZE),
+                            it.positiveLong(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
                         ))
                     }
                 }
@@ -186,11 +198,23 @@ class DocumentAccess(private val context: Context) {
             .thenBy { it.name.lowercase(Locale.ROOT) }.thenBy { it.id },
     )
 
-    fun releaseReadPermission(sourceUri: String) {
-        val uri = Uri.parse(sourceUri)
-        if (MediaStoreAccess.folder(uri) != null) return
-        if (resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }) {
-            resolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    suspend fun releaseReadPermission(sourceUri: String) {
+        releaseReadPermissions(setOf(sourceUri)).firstOrNull()?.let { throw it }
+    }
+
+    suspend fun releaseReadPermissions(sourceUris: Set<String>): List<SecurityException> = grantMutex.withLock {
+        buildList {
+            // Music sources only acquire read grants; writable grants may also belong to the portable lyric cache.
+            val grants = resolver.persistedUriPermissions.filter {
+                it.isReadPermission && !it.isWritePermission && it.uri.toString() in sourceUris
+            }
+            for (grant in grants) {
+                try {
+                    resolver.releasePersistableUriPermission(grant.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (error: SecurityException) {
+                    add(error)
+                }
+            }
         }
     }
 
@@ -214,6 +238,11 @@ class DocumentAccess(private val context: Context) {
         return if (index >= 0 && !isNull(index)) getInt(index) else 0
     }
 
+    private fun Cursor.positiveLong(column: String): Long? {
+        val index = getColumnIndex(column)
+        return if (index >= 0 && !isNull(index)) getLong(index).takeIf { it > 0 } else null
+    }
+
     private companion object {
         const val TAG = "DocumentAccess"
         @SuppressLint("InlinedApi") // Recognize provider flags without calling API 24-only virtual-document APIs.
@@ -223,6 +252,8 @@ class DocumentAccess(private val context: Context) {
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_FLAGS,
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
         )
     }
 }

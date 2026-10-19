@@ -5,6 +5,22 @@ import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import com.macarmusic.app.model.Track
+import com.macarmusic.app.model.PlaybackCollection
+import com.macarmusic.app.model.CollectionKind
+
+fun MediaItem.withCollection(collection: PlaybackCollection): MediaItem = buildUpon()
+    .setRequestMetadata(requestMetadata.buildUpon().setExtras(Bundle().apply {
+        putString("mana.collection.kind", collection.kind.name)
+        putString("mana.collection.id", collection.id)
+        putString("mana.collection.path", collection.relativePath)
+    }).build()).build()
+
+fun MediaItem.collection(): PlaybackCollection? {
+    val extras = requestMetadata.extras ?: return null
+    val kind = extras.getString("mana.collection.kind") ?: return null
+    return PlaybackCollection(CollectionKind.valueOf(kind), requireNotNull(extras.getString("mana.collection.id")),
+        extras.getString("mana.collection.path").orEmpty())
+}
 
 fun Track.toMediaItem(): MediaItem {
     val extras = Bundle().apply {

@@ -5,20 +5,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.SerializationException
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 import java.io.IOException
 import java.net.URL
@@ -31,22 +28,27 @@ fun interface LyricsTransport {
     suspend fun request(url: String, body: String?, referer: String?): String
 }
 
-class HttpsLyricsTransport(private val scope: CoroutineScope) : LyricsTransport {
+class HttpsLyricsTransport(
+    private val scope: CoroutineScope,
+    private val openConnection: (URL) -> HttpsURLConnection = { it.openConnection() as HttpsURLConnection },
+) : LyricsTransport {
     override suspend fun request(url: String, body: String?, referer: String?): String {
         val address = URL(url)
-        require(address.protocol == "https" && address.host in ALLOWED_HOSTS)
-        if (address.host == "songsearch.kugou.com") catalogRequests.await()
+        require(address.protocol == "https" && address.host in LyricProviderConfig.allowedHosts)
         return suspendCancellableCoroutine { continuation ->
-            val connection = address.openConnection() as HttpsURLConnection
+            val connection = openConnection(address)
             val worker = scope.launch(Dispatchers.IO) {
                 try {
                     ensureActive()
                     connection.apply {
-                        connectTimeout = 5_000
-                        readTimeout = 6_000
+                        connectTimeout = 8_000
+                        readTimeout = 8_000
                         instanceFollowRedirects = false
                         useCaches = false
-                        setRequestProperty("User-Agent", "Mozilla/5.0 ManaMusicPlayer/1.8.0")
+                        setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        setRequestProperty("Accept", "application/json, text/plain, */*")
+                        setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9")
                         if (referer != null) setRequestProperty("Referer", referer)
                         if (body != null) {
                             requestMethod = "POST"
@@ -77,186 +79,284 @@ class HttpsLyricsTransport(private val scope: CoroutineScope) : LyricsTransport 
             }
             continuation.invokeOnCancellation {
                 worker.cancel()
-                connection.disconnect()
+                // Cancellation can originate on the UI thread; closing TLS can perform network I/O.
+                Dispatchers.IO.asExecutor().execute { connection.disconnect() }
             }
         }
     }
 
     private companion object {
         const val MAX_RESPONSE = 1024 * 1024
-        val ALLOWED_HOSTS = setOf("songsearch.kugou.com", "lyrics.kugou.com", "music.163.com")
-        val catalogRequests = CatalogRequestPacer()
     }
 }
 
-internal class CatalogRequestPacer(
-    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
-    private val wait: suspend (Long) -> Unit = { delay(it) },
-) {
-    private val mutex = Mutex()
-    private var lastRequestMs: Long? = null
-
-    suspend fun await() = mutex.withLock {
-        // Closely spaced Kugou catalog requests can return status=1 with an empty list.
-        val remaining = lastRequestMs?.let { 10_000 - (nowMs() - it) } ?: 0
-        if (remaining > 0) wait(remaining)
-        lastRequestMs = nowMs()
-    }
+enum class LyricSearchRoute(val origin: LyricOrigin) {
+    KUGOU_DIRECT(LyricOrigin.KUGOU), KUGOU_MOBILE(LyricOrigin.KUGOU),
+    QQ(LyricOrigin.QQ), NETEASE(LyricOrigin.NETEASE), KUWO(LyricOrigin.KUWO),
 }
 
-data class OnlineLyric(val text: String, val origin: LyricOrigin)
+data class OnlineLyric(val text: String, val origin: LyricOrigin, val history: LyricSearchHistory = LyricSearchHistory())
 
 class OnlineLyricsClient(
     private val transport: LyricsTransport,
-    private val providerTimeoutMs: Long = 15_000,
+    private val providerTimeoutMs: Long = 33_000,
     private val reportFailure: (LyricOrigin, Exception) -> Unit,
 ) {
     init { require(providerTimeoutMs > 0) }
 
-    suspend fun find(query: LyricQuery, fileName: String = ""): OnlineLyric? {
-        val queries = LyricQueries.candidates(query, fileName)
-        var failure: IOException? = null
-        for (provider in PROVIDERS) {
+    suspend fun find(query: LyricQuery, fileName: String = "", alternatives: LyricAlternatives? = null): OnlineLyric? {
+        val identity = LyricQueries.candidates(query, fileName).firstOrNull() ?: return null
+        if (ROUTES.isEmpty()) throw IOException("No lyric providers are enabled in the project configuration")
+        val attempt = SearchAttempt(alternatives)
+        val start = ROUTES.indexOfFirst { it.origin == alternatives?.from }.coerceAtLeast(0)
+        for (route in ROUTES.drop(start)) {
+            currentCoroutineContext().ensureActive()
             try {
                 val found = withTimeout(providerTimeoutMs) {
-                    for (candidate in queries) {
-                        currentCoroutineContext().ensureActive()
-                        val result = if (provider == LyricOrigin.KUGOU) kugou(candidate) else netease(candidate)
-                        if (result != null && LyricsParser.parse(result) != null) {
-                            return@withTimeout OnlineLyric(result, provider)
-                        }
+                    when (route) {
+                        LyricSearchRoute.KUGOU_DIRECT -> kugouDirect(identity, attempt)
+                        LyricSearchRoute.KUGOU_MOBILE -> kugouMobile(identity, attempt)
+                        LyricSearchRoute.QQ -> qq(identity, attempt)
+                        LyricSearchRoute.NETEASE -> netease(identity, attempt)
+                        LyricSearchRoute.KUWO -> kuwo(identity, attempt)
                     }
-                    null
                 }
                 if (found != null) return found
             } catch (error: TimeoutCancellationException) {
                 currentCoroutineContext().ensureActive()
-                val timeout = IOException("$provider lyric search timed out", error)
-                reportFailure(provider, timeout)
-                failure = timeout
+                val timeout = IOException("$route lyric search timed out", error)
+                reportFailure(route.origin, timeout)
+                attempt.failure = timeout
             } catch (error: IOException) {
-                reportFailure(provider, error)
-                failure = error
-            } catch (error: SerializationException) {
-                reportFailure(provider, error)
-                failure = IOException("Invalid lyric response", error)
+                reportFailure(route.origin, error)
+                attempt.failure = error
             } catch (error: IllegalArgumentException) {
-                reportFailure(provider, error)
-                failure = IOException("Invalid lyric response", error)
+                reportFailure(route.origin, error)
+                attempt.failure = IOException("Invalid lyric response", error)
             }
         }
-        if (failure != null) throw failure
+        attempt.failure?.let { throw it }
         return null
     }
 
-    private suspend fun kugou(query: LyricQuery): String? {
-        val referer = "https://www.kugou.com/"
-        val keywords = listOf(listOf(query.title, LyricMatch.artistKeywords(query.artist))
-            .filter(String::isNotBlank).joinToString(" "), query.title).distinct()
-        val tried = mutableSetOf<String>()
-        for (keyword in keywords) {
-            val catalog = json(transport.request(
-                "https://songsearch.kugou.com/song_search_v2?keyword=${encode(keyword)}&page=1&pagesize=10&platform=WebFilter&filter=2",
-                null, referer,
-            ))
-            if (catalog.number("status") != 1L || catalog.number("error_code") != 0L) {
-                throw IOException("Kugou song search is unavailable")
-            }
-            val entries = (catalog["data"] as? JsonObject)?.get("lists") as? JsonArray
-                ?: throw IOException("Kugou song search returned no catalog")
-            val hashes = entries.take(10).mapNotNull { item ->
-                val song = item as? JsonObject ?: return@mapNotNull null
-                val duration = song.number("Duration").takeIf { it in 1L..86_400L }?.times(1_000) ?: 0
-                val score = LyricMatch.score(query, song.text("SongName"), song.text("SingerName"), duration)
-                    ?: return@mapNotNull null
-                val hash = song.text("FileHash").uppercase()
-                if (hash.matches(Regex("[A-F0-9]{32}"))) score to hash else null
-            }.sortedByDescending { it.first }.map { it.second }.distinct()
-            for (hash in hashes) {
-                if (tried.size >= 2) return null
-                if (!tried.add(hash)) continue
-                kugouLyrics(query, hash)?.let { return it }
-            }
-        }
-        return null
-    }
-
-    private suspend fun kugouLyrics(query: LyricQuery, hash: String): String? {
-        val referer = "https://www.kugou.com/"
+    private suspend fun kugouDirect(query: LyricQuery, attempt: SearchAttempt): OnlineLyric? {
+        val duration = if (query.durationMs > 0) (query.durationMs / 1_000).toString() else ""
         val response = json(transport.request(
-            "https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&hash=${encode(hash)}",
-            null, referer,
+            "https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=${encode(LyricQueries.keyword(query, true))}&duration=$duration",
+            null, null,
         ))
         if (response.number("status") != 200L) throw IOException("Kugou lyric search is unavailable")
-        val candidates = response.array("candidates").take(20).mapNotNull { item ->
-            val song = item as? JsonObject ?: return@mapNotNull null
-            // Song search reports seconds, but lyric candidates report milliseconds.
-            val score = LyricMatch.score(query, song.text("song"), song.text("singer"), song.number("duration"))
-                ?: return@mapNotNull null
+        return pick(LyricSearchRoute.KUGOU_DIRECT, attempt, response.requiredArray("candidates"), query,
+            "song", { it.text("singer") }, { it.text("id") },
+            // The current lyric endpoint reports milliseconds, unlike the reference's older seconds field.
+            duration = { it.number("duration").takeIf { value -> value in 1..86_400_000 } ?: 0 }, minimumScore = 10) { song ->
             val id = song.text("id")
             val key = song.text("accesskey")
-            if (id.isBlank() || key.isBlank()) null else Triple(score, id, key)
-        }.sortedByDescending { it.first }.take(2)
-        for ((_, id, key) in candidates) {
+            if (key.isBlank()) return@pick null
             val download = json(transport.request(
                 "https://lyrics.kugou.com/download?ver=1&client=pc&id=${encode(id)}&accesskey=${encode(key)}&fmt=lrc&charset=utf8",
-                null, referer,
+                null, null,
             ))
             if (download.number("status") != 200L) throw IOException("Kugou lyric download is unavailable")
-            val encoded = download.text("content")
-            if (encoded.isBlank()) continue
-            val bytes = decodeBase64(encoded)
-            val text = LyricsParser.decode(bytes)
-            if (LyricsParser.parse(text) != null) return text
+            val content = download.text("content")
+            if (content.isBlank()) null else fetched(decodeContent(content))
         }
-        return null
     }
 
-    private suspend fun netease(query: LyricQuery): String? {
-        val keyword = encode(listOf(query.title, LyricMatch.artistKeywords(query.artist)).filter(String::isNotBlank).joinToString(" "))
+    private suspend fun kugouMobile(query: LyricQuery, attempt: SearchAttempt): OnlineLyric? {
         val response = json(transport.request(
-            "https://music.163.com/api/search/get/web", "s=$keyword&type=1&limit=10&offset=0", "https://music.163.com/",
+            "https://mobilecdn.kugou.com/api/v3/search/song?keyword=${encode(LyricQueries.keyword(query, true))}&page=1&pagesize=10&showtype=1",
+            null, null,
+        ))
+        if (response.number("status") != 1L || response.number("error_code") != 0L) {
+            throw IOException("Kugou mobile search is unavailable")
+        }
+        val songs = (response["data"] as? JsonObject)?.requiredArray("info")
+            ?: throw IOException("Kugou mobile search returned no catalog")
+        return pick(LyricSearchRoute.KUGOU_MOBILE, attempt, songs, query,
+            "songname", { it.text("singername") }, { it.text("hash") },
+            selectable = { it.text("hash").isNotBlank() }) { song ->
+            val hash = encode(song.text("hash"))
+            val download = json(transport.request(
+                "https://lyrics.kugou.com/download?ver=1&client=pc&id=$hash&accesskey=$hash&fmt=lrc",
+                null, null,
+            ))
+            if (download.number("status") != 200L) throw IOException("Kugou mobile lyric download is unavailable")
+            val content = download.text("content")
+            if (content.isBlank()) null else fetched(decodeContent(content))
+        }
+    }
+
+    private suspend fun netease(query: LyricQuery, attempt: SearchAttempt): OnlineLyric? {
+        val referer = "https://music.163.com"
+        val response = json(transport.request(
+            "https://music.163.com/api/search/get/web?s=${encode(LyricQueries.keyword(query, false))}&type=1&offset=0&total=true&limit=10",
+            null, referer,
         ))
         if (response.number("code") != 200L) throw IOException("NetEase lyric search is unavailable")
         val result = response["result"] as? JsonObject ?: throw IOException("NetEase search returned no result")
         val songs = result["songs"] as? JsonArray ?: if ((result["songCount"] as? JsonPrimitive)?.longOrNull == 0L) {
             JsonArray(emptyList())
         } else throw IOException("NetEase search returned no catalog")
-        val candidates = songs.take(10).mapNotNull { item ->
-            val song = item as? JsonObject ?: return@mapNotNull null
-            val artists = song.array("artists").mapNotNull { (it as? JsonObject)?.text("name") }.joinToString("/")
-            val score = LyricMatch.score(query, song.text("name"), artists, song.number("duration"))
-                ?: return@mapNotNull null
+        return pick(LyricSearchRoute.NETEASE, attempt, songs, query, "name", { it.firstArtist("artists") },
+            { it.number("id").takeIf { id -> id > 0 }?.toString().orEmpty() }) { song ->
             val id = song.number("id")
-            if (id <= 0) null else score to id
-        }.sortedByDescending { it.first }.take(2)
-        for ((_, id) in candidates) {
             val download = json(transport.request(
-                "https://music.163.com/api/song/lyric?id=$id&lv=-1&kv=-1&tv=-1", null, "https://music.163.com/",
+                "https://music.163.com/api/song/lyric?id=$id&lv=1&kv=1&tv=-1", null, referer,
             ))
             if (download.number("code") != 200L) throw IOException("NetEase lyric download is unavailable")
-            for (field in listOf("lrc", "tlyric")) {
-                val text = (download[field] as? JsonObject)?.text("lyric").orEmpty()
-                if (LyricsParser.parse(text) != null) return text
+            val original = (download["lrc"] as? JsonObject) ?: return@pick null
+            val text = original.text("lyric")
+            text.takeUnless(::emptyLyrics) ?: (download["tlyric"] as? JsonObject)?.text("lyric")?.takeUnless(::emptyLyrics)
+        }
+    }
+
+    private suspend fun qq(query: LyricQuery, attempt: SearchAttempt): OnlineLyric? {
+        val referer = "https://y.qq.com/"
+        val response = json(transport.request(
+            "https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=${encode(LyricQueries.keyword(query, false))}&format=json&p=1&n=10",
+            null, referer,
+        ))
+        if ((response["code"] as? JsonPrimitive)?.longOrNull != 0L) throw IOException("QQ lyric search is unavailable")
+        val songs = ((response["data"] as? JsonObject)?.get("song") as? JsonObject)?.requiredArray("list")
+            ?: throw IOException("QQ search returned no catalog")
+        return pick(LyricSearchRoute.QQ, attempt, songs, query, "songname", { it.firstArtist("singer") },
+            { it.text("songmid") }) { song ->
+            val id = song.text("songmid")
+            val download = json(transport.request(
+                "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=${encode(id)}&g_tk=5381&format=json&nobase64=0",
+                null, referer,
+            ))
+            if ((download["code"] as? JsonPrimitive)?.longOrNull != 0L) throw IOException("QQ lyric download is unavailable")
+            val content = download.text("lyric")
+            if (content.isBlank()) return@pick null
+            val text = LyricResponse.decode(LyricsParser.decode(decodeBase64(content)))
+            if (!emptyLyrics(text)) return@pick text
+            val translated = download.text("trans")
+            if (translated.isBlank()) null
+                else LyricResponse.decode(LyricsParser.decode(decodeBase64(translated))).takeUnless(::emptyLyrics)
+        }
+    }
+
+    private suspend fun kuwo(query: LyricQuery, attempt: SearchAttempt): OnlineLyric? {
+        val referer = "https://www.kuwo.cn/"
+        val raw = transport.request(
+            "https://search.kuwo.cn/r.s?all=${encode(LyricQueries.keyword(query, true))}&ft=music&itemset=web_2013&client=kt&pn=0&rn=10&rformat=json&encoding=utf8",
+            null, null,
+        )
+        val response = LyricResponse.json(raw.substring(raw.indexOf('{').coerceAtLeast(0)), singleQuoted = true)
+        return pick(LyricSearchRoute.KUWO, attempt, response.requiredArray("abslist"), query, "SONGNAME",
+            { it.text("ARTIST").replace("&nbsp;", " ") },
+            { it.text("MUSICRID").removePrefix("MUSIC_") },
+            selectable = { it.text("MUSICRID").removePrefix("MUSIC_").isNotBlank() }) { song ->
+            val id = song.text("MUSICRID").removePrefix("MUSIC_")
+            val download = json(transport.request(
+                "https://www.kuwo.cn/openapi/v1/www/lyric/getlyric?musicId=${encode(id)}", null, referer,
+            ))
+            val lines = (download["data"] as? JsonObject)?.requiredArray("lrclist")
+                ?: throw IOException("Kuwo returned no lyric data")
+            if (lines.size > 4_000) throw IOException("Too many lyric lines")
+            val text = buildString {
+                for (item in lines) {
+                    val line = item as? JsonObject ?: throw IOException("Invalid Kuwo lyric line")
+                    val words = line.text("lineLyric")
+                    if (words.isEmpty()) continue
+                    val seconds = (line["time"] as? JsonPrimitive)?.doubleOrNull?.toFloat()
+                    if (seconds == null || !seconds.isFinite() || seconds !in 0f..<86_400f) {
+                        reportFailure(LyricOrigin.KUWO, IOException("Invalid Kuwo lyric timestamp"))
+                        continue
+                    }
+                    val minute = (seconds / 60).toInt()
+                    val second = (seconds % 60).toInt()
+                    val fraction = ((seconds - seconds.toInt()) * 100).toInt()
+                    append('[').append(minute.toString().padStart(2, '0')).append(':')
+                        .append(second.toString().padStart(2, '0')).append('.')
+                        .append(fraction.toString().padStart(2, '0')).append(']').append(words).append('\n')
+                }
+            }
+            fetched(LyricResponse.decode(text))
+        }
+    }
+
+    private data class Match(val song: JsonObject, val score: Int)
+
+    private class SearchAttempt(alternatives: LyricAlternatives?) {
+        val next = alternatives != null
+        val candidates = alternatives?.history?.candidates?.toMutableSet() ?: linkedSetOf()
+        val contents = alternatives?.history?.contents?.toMutableSet() ?: linkedSetOf()
+        var failure: IOException? = null
+
+        init { alternatives?.history?.validate() }
+        fun history() = LyricSearchHistory(candidates.toList(), contents.toList()).also { it.validate() }
+    }
+
+    private suspend fun pick(
+        route: LyricSearchRoute,
+        attempt: SearchAttempt,
+        songs: JsonArray,
+        query: LyricQuery,
+        titleField: String,
+        artist: (JsonObject) -> String,
+        identifier: (JsonObject) -> String,
+        duration: (JsonObject) -> Long = { 0 },
+        selectable: (JsonObject) -> Boolean = { true },
+        minimumScore: Int = Int.MIN_VALUE,
+        download: suspend (JsonObject) -> String?,
+    ): OnlineLyric? {
+        val ranked = songs.mapIndexedNotNull { index, item ->
+            val song = item as? JsonObject ?: throw IOException("Invalid lyric search candidate")
+            val title = song.text(titleField).replace("&nbsp;", " ")
+            val score = LyricMatch.score(query, title, artist(song), duration(song), index)
+            if (selectable(song) && score >= minimumScore) Match(song, score) else null
+        }.sortedByDescending { it.score }.take(if (attempt.next) MAX_CANDIDATES else 1)
+        for (match in ranked) {
+            currentCoroutineContext().ensureActive()
+            val candidate = LyricCandidateId(route, identifier(match.song))
+            if (!candidate.valid() || candidate in attempt.candidates) continue
+            try {
+                val text = download(match.song)
+                val lyrics = text?.let { LyricsParser.parse(it) }
+                attempt.candidates.add(candidate)
+                if (text == null || lyrics == null) continue
+                if (!attempt.contents.add(LyricSearchHistory.fingerprint(lyrics))) continue
+                return OnlineLyric(text, route.origin, attempt.history())
+            } catch (error: IOException) {
+                if (!attempt.next) throw error
+                reportFailure(route.origin, error)
+                attempt.failure = error
             }
         }
         return null
     }
 
-    private fun json(text: String): JsonObject = Json.parseToJsonElement(text) as? JsonObject
-        ?: throw IOException("Expected a lyric JSON object")
+    private fun fetched(text: String): String? = text.takeIf {
+        it.lineSequence().map(String::trim).filter(TIMED_LINE::matches).take(8).count() >= 8
+    }
+
+    private fun decodeContent(value: String): String {
+        val text = LyricResponse.decode(value)
+        return if ('[' in text) text else LyricResponse.decode(LyricsParser.decode(decodeBase64(text)))
+    }
+
+    private fun emptyLyrics(text: String): Boolean = text.isBlank() || text.trim() == "[]"
+    private fun json(text: String): JsonObject = LyricResponse.json(text)
 
     private fun JsonObject.text(key: String): String = (get(key) as? JsonPrimitive)?.contentOrNull.orEmpty()
     private fun JsonObject.number(key: String): Long = (get(key) as? JsonPrimitive)?.longOrNull ?: 0
     private fun JsonObject.array(key: String): JsonArray = get(key) as? JsonArray ?: JsonArray(emptyList())
+    private fun JsonObject.firstArtist(key: String): String = (array(key).firstOrNull() as? JsonObject)?.text("name").orEmpty()
+    private fun JsonObject.requiredArray(key: String): JsonArray = get(key) as? JsonArray
+        ?: throw IOException("Lyric response is missing $key")
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8")
 
     // java.util.Base64 requires API 26; this small strict decoder also keeps provider tests JVM-only.
     internal fun decodeBase64(value: String): ByteArray {
-        val compact = value.filterNot(Char::isWhitespace)
-        if (compact.length > LyricsParser.MAX_BYTES * 4 / 3 + 4 || compact.length % 4 != 0) {
+        val unpadded = value.filterNot(Char::isWhitespace)
+        if (unpadded.length > LyricsParser.MAX_BYTES * 4 / 3 + 4 || unpadded.length % 4 == 1 ||
+            ('=' in unpadded && unpadded.length % 4 != 0)) {
             throw IOException("Invalid lyric encoding")
         }
+        val compact = unpadded.padEnd((unpadded.length + 3) / 4 * 4, '=')
         val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
         val output = java.io.ByteArrayOutputStream()
         for (offset in compact.indices step 4) {
@@ -277,6 +377,10 @@ class OnlineLyricsClient(
     }
 
     companion object {
-        val PROVIDERS: List<LyricOrigin> = listOf(LyricOrigin.KUGOU, LyricOrigin.NETEASE)
+        const val TOTAL_TIMEOUT_MS = 166_000L
+        val ROUTES: List<LyricSearchRoute> = LyricProviderConfig.routes
+        val PROVIDERS: List<LyricOrigin> = LyricSearchRoute.entries.map { it.origin }.distinct()
+        private const val MAX_CANDIDATES = 10
+        private val TIMED_LINE = Regex("^\\[\\d{1,2}:\\d{2}(?:\\.\\d{1,3})?].*$")
     }
 }

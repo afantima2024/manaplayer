@@ -15,7 +15,10 @@ object LibraryCodec {
     fun encode(library: Library): String = json.encodeToString(library)
 
     fun decodeLibrary(text: String): Library {
-        val library = json.decodeFromString<Library>(text)
+        return validateLibrary(json.decodeFromString<Library>(text))
+    }
+
+    fun validateLibrary(library: Library): Library {
         require(library.version == 1) { "Unsupported library version" }
         require(library.tracks.map { it.id }.distinct().size == library.tracks.size) { "Duplicate track IDs" }
         require(library.sources.map { it.uri }.distinct().size == library.sources.size) { "Duplicate source IDs" }

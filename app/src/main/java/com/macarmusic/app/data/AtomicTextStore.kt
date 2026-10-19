@@ -4,11 +4,16 @@ import android.util.AtomicFile
 import java.io.File
 import java.io.IOException
 
-class AtomicTextStore(file: File) {
+interface TextStore {
+    fun read(): String?
+    fun write(text: String)
+}
+
+class AtomicTextStore(file: File) : TextStore {
     private val atomic = AtomicFile(file)
 
     @Synchronized
-    fun read(): String? {
+    override fun read(): String? {
         if (!atomic.baseFile.exists() && !File(atomic.baseFile.path + ".bak").exists()) return null
         return atomic.openRead().use { input ->
             if (input.channel.size() > MAX_BYTES) throw IOException("Saved data exceeds the safe size limit")
@@ -17,7 +22,7 @@ class AtomicTextStore(file: File) {
     }
 
     @Synchronized
-    fun write(text: String) {
+    override fun write(text: String) {
         val bytes = text.toByteArray(Charsets.UTF_8)
         if (bytes.size > MAX_BYTES) throw IOException("Saved data exceeds the safe size limit")
         val output = atomic.startWrite()

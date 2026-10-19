@@ -1,9 +1,15 @@
 package com.macarmusic.app.model
 
 object PlaybackEdits {
+    fun seekPosition(positionMs: Long, durationMs: Long, deltaMs: Long): Long? {
+        if (durationMs <= 0) return null
+        val position = positionMs.coerceIn(0, durationMs - 1)
+        return position + deltaMs.coerceIn(-position, durationMs - 1 - position)
+    }
+
     fun normalized(snapshot: PlaybackSnapshot): PlaybackSnapshot {
         require(snapshot.version == 1) { "Unsupported playback version" }
-        if (snapshot.queue.isEmpty()) return snapshot.copy(index = 0, positionMs = 0, repeat = validRepeat(snapshot.repeat))
+        if (snapshot.queue.isEmpty()) return snapshot.copy(index = 0, positionMs = 0, repeat = validRepeat(snapshot.repeat), collection = null)
         val index = snapshot.index.coerceIn(snapshot.queue.indices)
         val duration = snapshot.queue[index].durationMs
         val position = snapshot.positionMs.coerceAtLeast(0).let {

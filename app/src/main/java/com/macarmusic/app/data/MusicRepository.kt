@@ -8,6 +8,8 @@ import com.macarmusic.app.model.BrowserLocation
 import com.macarmusic.app.model.FolderSource
 import com.macarmusic.app.model.Library
 import com.macarmusic.app.model.LibraryEdits
+import com.macarmusic.app.model.LibraryScan
+import com.macarmusic.app.model.MetadataReuse
 import com.macarmusic.app.model.ScanProgress
 import com.macarmusic.app.model.ScanResult
 import com.macarmusic.app.model.Track
@@ -77,29 +79,34 @@ class MusicRepository(
     suspend fun addSource(uri: Uri, flags: Int): FolderSource = addSources(listOf(uri), flags).single()
 
     suspend fun addSources(uris: List<Uri>, flags: Int): List<FolderSource> = withContext(Dispatchers.IO) {
-        require(uris.isNotEmpty()) { context.getString(R.string.select_folders_first) }
-        val sources = uris.distinct().map { documents.source(it, flags) }
-        update { library ->
-            val refreshed = sources.map { source ->
-                val existing = library.sources.firstOrNull { it.uri == source.uri }
-                source.copy(
-                    lastScanMs = existing?.lastScanMs ?: 0,
-                    lastScanCount = existing?.lastScanCount ?: 0,
-                    selectedForPlayback = existing?.selectedForPlayback ?: true,
-                    pinned = existing?.pinned ?: false,
-                )
+        documents.grantMutex.withLock {
+            require(uris.isNotEmpty()) { context.getString(R.string.select_folders_first) }
+            val sources = uris.distinct().map { documents.source(it, flags) }
+            update { library ->
+                val refreshed = sources.map { source ->
+                    val existing = library.sources.firstOrNull { it.uri == source.uri }
+                    source.copy(
+                        lastScanMs = existing?.lastScanMs ?: 0,
+                        lastScanCount = existing?.lastScanCount ?: 0,
+                        selectedForPlayback = existing?.selectedForPlayback ?: true,
+                        pinned = existing?.pinned ?: false,
+                        restoredFrom = existing?.restoredFrom.orEmpty(),
+                    )
+                }
+                val keys = sources.mapTo(hashSetOf()) { it.uri }
+                library.copy(sources = library.sources.filterNot { it.uri in keys } + refreshed)
             }
-            val keys = sources.mapTo(hashSetOf()) { it.uri }
-            library.copy(sources = library.sources.filterNot { it.uri in keys } + refreshed)
+            sources
         }
-        sources
     }
 
     suspend fun openDocument(uri: Uri, flags: Int): MetadataResult = withContext(Dispatchers.IO) {
-        val persisted = documents.retainReadPermission(uri, flags)
-        val result = metadata.read(documents.describe(uri), standalonePersisted = persisted)
-        update { LibraryEdits.upsertTracks(it, listOf(result.track)) }
-        result
+        documents.grantMutex.withLock {
+            val persisted = documents.retainReadPermission(uri, flags)
+            val result = metadata.read(documents.describe(uri), standalonePersisted = persisted)
+            update { LibraryEdits.upsertTracks(it, listOf(result.track)) }
+            result
+        }
     }
 
     suspend fun browserTrack(uri: String, sourceUri: String, parentId: String,
@@ -112,11 +119,35 @@ class MusicRepository(
         result
     }
 
+    suspend fun resolveLocation(source: FolderSource, relativePath: String): BrowserLocation = withContext(Dispatchers.IO) {
+        require(com.macarmusic.app.model.PlaybackCollection.validPath(relativePath))
+        if (source.needsReconnect) throw IOException(context.getString(R.string.reconnect_folder_first))
+        var id = documents.rootId(source.uri)
+        var name = source.name
+        if (relativePath.isNotEmpty()) for (part in relativePath.split('/')) {
+            val folder = documents.children(source.uri, id).singleOrNull { it.isDirectory && it.name == part }
+                ?: throw IOException(context.getString(R.string.document_unavailable))
+            id = folder.id
+            name = folder.name
+        }
+        BrowserLocation(source.uri, id, name, relativePath)
+    }
+
     suspend fun scan(
         source: FolderSource,
         location: BrowserLocation?,
+        forceMetadata: Boolean = false,
         onProgress: (ScanProgress) -> Unit,
     ): ScanResult = withContext(Dispatchers.IO) {
+        if (MediaStoreAccess.folder(Uri.parse(source.uri)) != null) {
+            return@withContext scanIndexed(listOf(source to location), forceMetadata, onProgress).single()
+        }
+        ready.await()
+        if (loadFailed) throw IOException(context.getString(R.string.library_read_only))
+        val saved = mutableLibrary.value
+        val known = saved.tracks.associateBy { it.id }
+        val reuseMetadata = !forceMetadata && !source.unavailable &&
+            saved.sources.firstOrNull { it.uri == source.uri }?.unavailable == false
         val rootId = documents.rootId(source.uri)
         val startingId = location?.documentId ?: rootId
         val fullSource = startingId == rootId
@@ -152,9 +183,15 @@ class MusicRepository(
         }
         val tracks = ArrayList<Track>(entries.size)
         var warnings = 0
+        var reused = 0
         for ((index, entry) in entries.values.withIndex()) {
             currentCoroutineContext().ensureActive()
-            val result = metadata.read(entry, source.uri)
+            val previous = if (reuseMetadata) known[documents.identity(Uri.parse(entry.uri))] else null
+            val result = if (MetadataReuse.unchanged(previous, entry)) {
+                reused++
+                MetadataResult(checkNotNull(previous).copy(uri = entry.uri,
+                    sourceUris = mapOf(source.uri to entry.uri), missing = false), warning = false)
+            } else metadata.read(entry, source.uri)
             tracks.add(result.track.copy(sourceParents = mapOf(source.uri to parents.getValue(entry.id)),
                 sourcePaths = mapOf(source.uri to paths.getValue(entry.id))))
             if (result.warning) warnings++
@@ -168,12 +205,110 @@ class MusicRepository(
                 throw IOException(context.getString(R.string.source_removed))
             }
             if (fullSource) {
-                missing = library.tracks.count { source.uri in it.sourceUris && it.id !in ids }
+                val merged = LibraryEdits.applyScan(library, source.uri, tracks, System.currentTimeMillis(), null)
+                missing = merged.tracks.count { source.uri in it.sourceUris && it.id !in ids }
                 val issue = if (missing > 0) context.getString(R.string.scan_missing, missing) else null
-                LibraryEdits.applyScan(library, source.uri, tracks, System.currentTimeMillis(), issue)
+                merged.copy(sources = merged.sources.map { if (it.uri == source.uri) it.copy(lastIssue = issue) else it })
             } else LibraryEdits.upsertTracks(library, tracks)
         }
-        ScanResult(tracks, warnings, missing)
+        ScanResult(tracks, warnings, missing, reused)
+    }
+
+    suspend fun scanIndexed(
+        requests: List<Pair<FolderSource, BrowserLocation?>>,
+        forceMetadata: Boolean = false,
+        onProgress: (ScanProgress) -> Unit,
+    ): List<ScanResult> = withContext(Dispatchers.IO) {
+        ready.await()
+        if (loadFailed) throw IOException(context.getString(R.string.library_read_only))
+        if (requests.isEmpty()) return@withContext emptyList()
+        val roots = requests.map { (source, location) ->
+            val folder = requireNotNull(MediaStoreAccess.folder(Uri.parse(source.uri)))
+            val path = location?.documentId ?: folder.path
+            require(MediaStoreAccess.contains(folder.path, path)) { "Scan outside selected source" }
+            folder.copy(path = path)
+        }
+        onProgress(ScanProgress(context.getString(R.string.device_music_loading)))
+        val catalog = documents.deviceMusic.scanCatalog(roots)
+        val saved = library.value
+        val known = saved.tracks.associateBy { it.id }
+        val available = saved.sources.filterNot { it.unavailable }.mapTo(hashSetOf()) { it.uri }
+        val extracted = hashMapOf<String, MetadataResult>()
+        val scans = mutableListOf<LibraryScan>()
+        val results = requests.mapIndexed { index, (source, location) ->
+            val root = roots[index]
+            val full = root.path == documents.rootId(source.uri)
+            val startPath = if (full) "" else location?.relativePath?.ifBlank { location.name }.orEmpty()
+            var reused = 0
+            var indexed = 0
+            var warnings = 0
+            val tracks = catalog.getValue(root).mapIndexed { songIndex, song ->
+                currentCoroutineContext().ensureActive()
+                val entry = song.entry
+                val previous = known[entry.uri]
+                val canReuse = !forceMetadata && !source.unavailable && source.uri in available &&
+                    MetadataReuse.unchanged(previous, entry)
+                val result = when {
+                    canReuse -> {
+                        reused++
+                        MetadataResult(checkNotNull(previous), warning = false)
+                    }
+                    !forceMetadata && song.tags != null && song.tags.durationMs > 0 -> {
+                        indexed++
+                        MetadataResult(song.tags.toTrack(entry), warning = false)
+                    }
+                    else -> extracted.getOrPut(entry.uri) { metadata.read(entry, source.uri) }
+                }
+                if (result.warning) warnings++
+                if (songIndex % 32 == 0) onProgress(ScanProgress(documents.displayName(source), songIndex + 1))
+                result.track.copy(
+                    uri = entry.uri, missing = false, standaloneUri = null, standalonePersisted = false,
+                    sourceUris = mapOf(source.uri to entry.uri),
+                    sourceParents = mapOf(source.uri to song.folder.path),
+                    sourcePaths = mapOf(source.uri to listOf(startPath,
+                        song.folder.path.removePrefix(root.path).removeSuffix("/"), entry.name)
+                        .filter(String::isNotEmpty).joinToString("/")),
+                )
+            }
+            scans.add(LibraryScan(source.uri, tracks, full))
+            ScanResult(tracks, warnings, 0, reused, indexed)
+        }
+        currentCoroutineContext().ensureActive()
+        if (!documents.deviceMusic.hasPermission()) throw SecurityException(context.getString(R.string.music_permission_denied))
+        val missing = IntArray(requests.size)
+        update { current ->
+            val sources = current.sources.mapTo(hashSetOf()) { it.uri }
+            if (requests.any { it.first.uri !in sources }) throw IOException(context.getString(R.string.source_removed))
+            val merged = LibraryEdits.applyScans(current, scans, System.currentTimeMillis()) {
+                context.getString(R.string.scan_missing, it)
+            }
+            scans.forEachIndexed { index, scan ->
+                if (scan.fullSource) {
+                    val ids = scan.tracks.mapTo(hashSetOf()) { it.id }
+                    missing[index] = merged.tracks.count { scan.sourceUri in it.sourceUris && it.id !in ids }
+                }
+            }
+            merged
+        }
+        results.mapIndexed { index, result -> result.copy(missingCount = missing[index]) }
+    }
+
+    suspend fun metadataForDetails(track: Track): MetadataResult = withContext(Dispatchers.IO) {
+        if (!track.metadataFromIndex) return@withContext MetadataResult(track, warning = false)
+        val entry = documents.describe(Uri.parse(track.uri))
+        val result = metadata.read(entry).let { read ->
+            if (read.warning) return@withContext MetadataResult(track, warning = true)
+            read.copy(track = read.track.copy(
+                sourceUris = track.sourceUris, sourceParents = track.sourceParents, sourcePaths = track.sourcePaths,
+                standaloneUri = track.standaloneUri, standalonePersisted = track.standalonePersisted,
+                restoredIds = track.restoredIds,
+            ))
+        }
+        if (!result.warning) update { current ->
+            if (current.tracks.firstOrNull { it.id == track.id } != track) current
+            else LibraryEdits.upsertTracks(current, listOf(result.track))
+        }
+        result
     }
 
     suspend fun markSourceError(uri: String, message: String) {
