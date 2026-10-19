@@ -4,6 +4,9 @@
     <item name="lyricsVersionChoose" type="id" />
     <item name="lyricsVersionBest" type="id" />
     <item name="lyricsVersionSource" type="id" />
+    <item name="lyricsVersionActivate" type="id" />
+    <item name="lyricsVersionToggleBest" type="id" />
+    <item name="lyricsVersionDelete" type="id" />
     <item name="lyricsTimingValue" type="id" />
     <item name="lyricsEarlierFine" type="id" />
     <item name="lyricsLaterFine" type="id" />

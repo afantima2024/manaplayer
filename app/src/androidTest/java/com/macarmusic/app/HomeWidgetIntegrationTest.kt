@@ -228,6 +228,49 @@ class HomeWidgetIntegrationTest {
         } finally { runBlocking { app.lyrics.cache.clear() } }
     }
 
+    @Test fun removingSavedVersionsSwitchesThenClearsBothWidgetRowsForTheCurrentVisit() {
+        runBlocking { app.lyrics.cache.useInternal(); app.lyrics.cache.clear() }
+        startHost()
+        onMain { controller.prepare() }
+        await { onMain { controller.playbackState == Player.STATE_READY } }
+        onMain { controller.seekTo(12_000) }
+        app.contentResolver.call(root, "setLyricsMode", "missing", null)
+        try {
+            val current = runBlocking {
+                app.lyrics.saveTiming(tracks.first(), CachedLyric(
+                    "[00:00]Synthetic saved first\n[00:20]First next marker", LyricOrigin.QQ, offlineSelected = true), 0)
+                app.lyrics.saveTiming(tracks.first(), CachedLyric(
+                    "[00:00]Synthetic saved second\n[00:20]Second next marker", LyricOrigin.QQ, offlineSelected = true), 0)
+            }
+            await { status().getString("lyric2") == "Synthetic saved second" }
+            val replacement = runBlocking {
+                val inventory = app.lyrics.available(tracks.first(), current)
+                app.lyrics.remove(tracks.first(), inventory.choices.single { it.key == inventory.currentKey },
+                    current, inventory.generation)
+            }
+            await { status().getString("lyric2") == "Synthetic saved first" &&
+                status().getString("lyricNext2") == "First next marker" }
+            runBlocking {
+                app.lyrics.remove(tracks.first(), replacement.choices.choices.single(), replacement.result,
+                    replacement.choices.generation)
+            }
+            await { status().getString("lyric2") == app.text(R.string.widget_no_lyrics) &&
+                status().getString("lyricNext2") == "" && !status().getBoolean("lyricNextVisible2") }
+            app.contentResolver.call(root, "setLyricsMode", "available", null)
+            onMain { app.displaySettings.update { it.copy(onlineLyrics = true) } }
+            awaitNoPeriodicUpdates()
+            assertEquals(app.text(R.string.widget_no_lyrics), status().getString("lyric2"))
+            assertEquals("", status().getString("lyricNext2"))
+            assertEquals(0L, runBlocking { app.lyrics.cache.inspect() }.files)
+            assertEquals(12_000L, onMain { controller.currentPosition })
+            assertFalse(onMain { controller.playWhenReady })
+            screenshot("widgets-removed-lyrics.png")
+        } finally {
+            app.contentResolver.call(root, "setLyricsMode", "available", null)
+            runBlocking { app.lyrics.cache.clear() }
+        }
+    }
+
     @Test fun compactFootprintsKeepEveryControlProgressAndArtworkVisible() {
         startHost()
         val density = app.resources.displayMetrics.density

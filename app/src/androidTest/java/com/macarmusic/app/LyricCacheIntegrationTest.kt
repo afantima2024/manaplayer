@@ -18,6 +18,7 @@ import com.macarmusic.app.lyrics.LyricCache
 import com.macarmusic.app.lyrics.LyricCacheFiles
 import com.macarmusic.app.lyrics.LyricOrigin
 import com.macarmusic.app.lyrics.LyricIssue
+import com.macarmusic.app.lyrics.LyricRemovalFailure
 import com.macarmusic.app.lyrics.LocalLyricsLoader
 import com.macarmusic.app.lyrics.LyricsRepository
 import com.macarmusic.app.lyrics.OnlineLyricsClient
@@ -706,6 +707,8 @@ class LyricCacheIntegrationTest {
         assertEquals(original.document!!.text, LocalLyricsLoader(context, app.repository).load(track).document!!.text)
         val list = repository.available(track, marked)
         assertEquals("A cached copy and its unchanged original must be one version", 3, list.choices.size)
+        assertEquals(inventory.choices.map { it.key },
+            repository.available(track, marked, inventory).choices.map { it.key })
         assertTrue(calls.isEmpty())
         cache.clear()
         assertEquals(original.lyrics, repository.load(track, online = false).lyrics)
@@ -850,6 +853,256 @@ class LyricCacheIntegrationTest {
         val requests = calls.size
         repository.load(track, online = true, allowNetwork = false, publishResult = false)
         assertEquals(requests, calls.size)
+    }
+
+    @Test fun removingCurrentUsesBestThenOtherSavedLyricsAndFinallyClearsWithoutNetwork() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val calls = mutableListOf<String>()
+        val repository = selectionRepository(track, calls)
+        cache = repository.cache
+        val first = repository.saveTiming(track, lyric(1), 100)
+        val second = repository.saveTiming(track, lyric(2), -200)
+        val third = repository.saveTiming(track, lyric(3), 300)
+        val inventory = repository.available(track, third)
+        val preferred = inventory.choices.single { it.key == first.document!!.version().id }
+        val marked = requireNotNull(repository.best(track, preferred, third, inventory.generation))
+        var choices = repository.available(track, marked)
+        var removal = repository.remove(track, choices.choices.single { it.key == choices.currentKey }, marked, choices.generation)
+        assertEquals(first.lyrics, removal.result.lyrics)
+        assertEquals(preferred.key, removal.choices.bestKey)
+        assertEquals(first.document!!.savedAtMs, removal.result.document!!.savedAtMs)
+        assertEquals(first.lyrics, selectionRepository(track, calls).load(track, online = false).lyrics)
+        choices = removal.choices
+        removal = repository.remove(track, choices.choices.single { it.key == choices.currentKey }, removal.result, choices.generation)
+        assertEquals(second.lyrics, removal.result.lyrics)
+        assertNull(removal.choices.bestKey)
+        choices = removal.choices
+        removal = repository.remove(track, choices.choices.single(), removal.result, choices.generation)
+        assertNull(removal.result.lyrics)
+        assertNull(removal.result.document)
+        assertNull(removal.choices.currentKey)
+        assertTrue(removal.choices.choices.isEmpty())
+        assertEquals(removal.result, repository.latest.value.result)
+        assertTrue(repository.latest.value.userEdited)
+        assertEquals(0L, cache.inspect().files)
+        assertNull(selectionRepository(track, calls).load(track, online = true, allowNetwork = false).lyrics)
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun removingNoncurrentBestKeepsTheDisplayedVersionAndStaleSnapshotsCannotResurrectIt() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val calls = mutableListOf<String>()
+        val repository = selectionRepository(track, calls)
+        cache = repository.cache
+        val first = repository.saveTiming(track, lyric(1), 100)
+        repository.saveTiming(track, lyric(2), 200)
+        val third = repository.saveTiming(track, lyric(3), 300)
+        val inventory = repository.available(track, third)
+        val target = inventory.choices.single { it.key == first.document!!.version().id }
+        val marked = requireNotNull(repository.best(track, target, third, inventory.generation))
+        val removal = repository.remove(track, target, marked, cache.generation)
+        assertEquals(third.lyrics, removal.result.lyrics)
+        assertNull(removal.choices.bestKey)
+        assertEquals(2, removal.choices.choices.size)
+        assertFalse(removal.result.document!!.versions.any { it.id == target.key })
+        val adjusted = repository.saveTiming(track, marked.document!!, 500)
+        assertEquals(500L, adjusted.document!!.offsetMs)
+        assertFalse(repository.available(track, adjusted).choices.any { it.key == target.key })
+        val other = removal.choices.choices.single { it.key != removal.choices.currentKey }
+        repository.best(track, other, marked, cache.generation)
+        assertFalse(repository.available(track, repository.latest.value.result).choices.any { it.key == target.key })
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun deletingTheOnlySavedLocalCopyKeepsOriginalFileAndRestoresItsUnadjustedTiming() = runBlocking(Dispatchers.IO) {
+        app.contentResolver.call(music, "setLyricsMode", "available", null)
+        val source = app.repository.addSource(music, 0)
+        val track = app.repository.scan(source, null) {}.tracks.first()
+        val calls = mutableListOf<String>()
+        val repository = selectionRepository(track, calls)
+        cache = repository.cache
+        val original = repository.load(track, online = false)
+        val saved = repository.saveTiming(track, original.document!!, 750)
+        val inventory = repository.available(track, saved)
+        val removal = repository.remove(track, inventory.choices.single(), saved, inventory.generation)
+        assertEquals(original.lyrics, removal.result.lyrics)
+        assertEquals(0L, removal.result.document!!.offsetMs)
+        assertFalse(removal.result.cached)
+        assertFalse(removal.choices.choices.single().cached)
+        assertEquals(0L, cache.inspect().files)
+        assertEquals(original.document.text, LocalLyricsLoader(context, app.repository).load(track).document!!.text)
+        fails { repository.remove(track, removal.choices.choices.single(), removal.result, removal.choices.generation) }
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun deletingCurrentSavedLocalCopyPrefersAnotherLocalVersionWithoutSavingItAgain() = runBlocking(Dispatchers.IO) {
+        app.contentResolver.call(music, "setLyricsMode", "versions", null)
+        val source = app.repository.addSource(music, 0)
+        val track = app.repository.scan(source, null) {}.tracks.first()
+        val calls = mutableListOf<String>()
+        val repository = selectionRepository(track, calls)
+        cache = repository.cache
+        val original = repository.load(track, online = false)
+        val saved = repository.saveTiming(track, original.document!!, 500)
+        val inventory = repository.available(track, saved)
+        val current = inventory.choices.single { it.key == inventory.currentKey }
+        val removal = repository.remove(track, current, saved, inventory.generation)
+        assertNotEquals(current.key, removal.choices.currentKey)
+        assertEquals(LyricOrigin.LOCAL_FILE, removal.result.origin)
+        assertFalse(removal.result.cached)
+        assertEquals(3, removal.choices.choices.size)
+        assertTrue(removal.choices.choices.none { it.cached })
+        assertEquals(0L, cache.inspect().files)
+        assertEquals(original.lyrics, LocalLyricsLoader(context, app.repository).load(track).lyrics)
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun perVersionRemovalPersistsInBothStoresAndInvalidatesOlderWrites() = runBlocking(Dispatchers.IO) {
+        val second = lyric(2).copy(offsetMs = 500, savedAtMs = now - 1000)
+        val third = lyric(3)
+        val record = lyric(1).copy(versions = listOf(second.version(), third.version()), bestVersionId = third.version().id)
+        repeat(2) { location ->
+            cache.useInternal()
+            internal.clear()
+            internal.write(key(1), record)
+            seed(9)
+            if (location == 1) cache.moveInternalTo(root, FLAGS)
+            val generation = cache.generation
+            val remaining = requireNotNull(cache.removeVersion(key(1), second.version().id, generation))
+            assertEquals(record.copy(versions = listOf(third.version())), remaining)
+            assertEquals(remaining, newCache().read(key(1)).value)
+            assertFalse(cache.write(key(1), record, generation))
+            fails { cache.removeVersion(key(1), third.version().id, generation) }
+            assertNull(cache.removeVersion(key(1), third.version().id, cache.generation)!!.bestVersionId)
+            assertNull(cache.removeVersion(key(1), record.version().id, cache.generation))
+            assertNull(newCache().read(key(1)).value)
+            assertEquals(lyric(9), cache.read(key(9)).value)
+            assertEquals(1L, cache.inspect().files)
+            if (location == 1) assertTrue(internal.keys().isEmpty())
+        }
+    }
+
+    @Test fun deletingLastInternalVersionAlsoRemovesOnlyItsAtomicArtifacts() = runBlocking(Dispatchers.IO) {
+        seed(1); seed(2)
+        File(directory, "${key(1)}.json.bak").writeBytes(LyricCacheFiles.encode(lyric(1)))
+        File(directory, "${key(1)}.json.new").writeText("unfinished")
+        val original = File(directory, "keep.lrc").apply { writeText("Synthetic original") }
+        assertNull(cache.removeVersion(key(1), lyric(1).version().id, cache.generation))
+        assertTrue(directory.listFiles()!!.none { LyricCacheFiles.localKey(it.name) == key(1) })
+        assertEquals(lyric(2), cache.read(key(2)).value)
+        assertEquals("Synthetic original", original.readText())
+    }
+
+    @Test fun portableLastVersionRemovalDeletesOlderRevisionsFirstAndCanRecoverAfterPartialFailure() = runBlocking(Dispatchers.IO) {
+        seed(1); seed(9)
+        cache.moveInternalTo(root, FLAGS)
+        val folder = Uri.parse(cache.info.value.folder!!.documentUri)
+        val bucket = child(folder, key(1).take(2))
+        create(bucket, "${key(1)}-2.json", LyricCacheFiles.encode(lyric(1).copy(offsetMs = 1000)).toString(Charsets.UTF_8))
+        create(bucket, "${key(1)}-3.json", LyricCacheFiles.encode(lyric(1).copy(offsetMs = 2000)).toString(Charsets.UTF_8))
+        faults { putInt("failAfterDeletes", 1); putBoolean("resetCounters", true) }
+        fails { cache.removeVersion(key(1), lyric(1).version().id, cache.generation) }
+        assertTrue(cache.info.value.unavailable)
+        assertEquals(2000L, newCache().read(key(1)).value!!.offsetMs)
+        assertEquals(lyric(9), cache.read(key(9)).value)
+        faults()
+        assertNull(cache.removeVersion(key(1), lyric(1).version().id, cache.generation))
+        assertNull(newCache().read(key(1)).value)
+        assertEquals(1L, cache.inspect().files)
+        assertTrue(internal.keys().isEmpty())
+    }
+
+    @Test fun failedPortableRemovalPreservesSelectionAndNeverFallsBackToInternalStorage() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val calls = mutableListOf<String>()
+        val repository = selectionRepository(track, calls)
+        cache = repository.cache
+        repository.saveTiming(track, lyric(1), 100)
+        val current = repository.saveTiming(track, lyric(2), 200)
+        cache.moveInternalTo(root, FLAGS)
+        var inventory = repository.available(track, current)
+        faults { putInt("failAfterWrites", 0); putBoolean("resetCounters", true) }
+        fails { repository.remove(track, inventory.choices.first(), current, inventory.generation) }
+        assertEquals(current.lyrics, repository.latest.value.result!!.lyrics)
+        faults()
+        inventory = repository.available(track, current)
+        assertEquals(2, inventory.choices.size)
+        faults { putBoolean("unavailable", true) }
+        fails { repository.remove(track, inventory.choices.first(), current, inventory.generation) }
+        assertEquals(current.lyrics, repository.latest.value.result!!.lyrics)
+        assertFalse(cache.info.value.internal)
+        assertTrue(internal.keys().isEmpty())
+        assertTrue(problems.isNotEmpty())
+        assertTrue(calls.isEmpty())
+        faults()
+        assertEquals(current.document,
+            selectionRepository(track, calls).load(track, online = true, allowNetwork = false).document)
+    }
+
+    @Test fun partialPortableRemovalReportsFailureAndReconcilesActualVersionsWithoutResurrectingThem() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val calls = mutableListOf<String>()
+        val repository = selectionRepository(track, calls)
+        cache = repository.cache
+        val first = repository.saveTiming(track, lyric(1), 100)
+        val current = repository.saveTiming(track, lyric(2), 200)
+        cache.moveInternalTo(root, FLAGS)
+        val inventory = repository.available(track, current)
+        faults { putBoolean("denyDelete", true) }
+        val failure = try {
+            repository.remove(track, inventory.choices.single { it.key == inventory.currentKey }, current, inventory.generation)
+            throw AssertionError("A verified new revision with failed old-copy cleanup is not complete success")
+        } catch (expected: LyricRemovalFailure) { expected }
+        assertEquals(first.lyrics, failure.removal.result.lyrics)
+        assertEquals(1, failure.removal.choices.choices.size)
+        assertFalse(failure.removal.choices.choices.any { it.key == current.document!!.version().id })
+        assertEquals(failure.removal.result, repository.latest.value.result)
+        assertFalse(cache.info.value.internal)
+        assertTrue(internal.keys().isEmpty())
+        faults()
+        val adjusted = repository.saveTiming(track, failure.removal.result.document!!, 400)
+        assertEquals(1, repository.available(track, adjusted).choices.size)
+        assertEquals(2, faults().getInt("records"))
+        assertTrue(calls.isEmpty())
+    }
+
+    @Test fun deletingLastVersionDefeatsOlderInFlightLookupOnDiskAndInDisplayedResult() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val entered = CompletableDeferred<Unit>()
+        val released = CompletableDeferred<Unit>()
+        val calls = mutableListOf<String>()
+        val repository = selectionRepository(track, calls) { url ->
+            if ("client_search_cp" in url) { entered.complete(Unit); released.await() }
+        }
+        cache = repository.cache
+        val current = repository.saveTiming(track, lyric(1), 100)
+        val pending = async { repository.load(track, online = true, refresh = true) }
+        try {
+            withTimeout(5000) { entered.await() }
+            val count = calls.size
+            val inventory = repository.available(track, current)
+            val removal = repository.remove(track, inventory.choices.single(), current, inventory.generation)
+            assertNull(removal.result.lyrics)
+            assertEquals(count, calls.size)
+            released.complete(Unit)
+            assertNull(pending.await().lyrics)
+            assertEquals(removal.result, repository.latest.value.result)
+            assertEquals(0L, cache.inspect().files)
+            assertTrue(repository.latest.value.userEdited)
+        } finally { released.complete(Unit); pending.cancel() }
+    }
+
+    @Test fun inventoryNeverLabelsAnExpiredOrClearedCurrentSnapshotAsASavedCopy() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val repository = selectionRepository(track, mutableListOf())
+        cache = repository.cache
+        val current = repository.saveTiming(track, lyric(1), 100)
+        cache.clear()
+        val inventory = repository.available(track, current)
+        assertEquals(current.document!!.version().id, inventory.currentKey)
+        assertFalse(inventory.choices.single().cached)
+        fails { repository.remove(track, inventory.choices.single(), current, inventory.generation) }
+        assertEquals(0L, cache.inspect().files)
     }
 
     private fun selectionRepository(track: Track, calls: MutableList<String>, before: suspend (String) -> Unit = {}) =

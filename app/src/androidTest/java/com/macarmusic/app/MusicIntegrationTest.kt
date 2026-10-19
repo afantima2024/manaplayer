@@ -68,6 +68,8 @@ import androidx.test.espresso.Espresso.onData
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.espresso.ViewInteraction
 import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.action.ViewActions.longClick
+import androidx.test.espresso.action.ViewActions.pressKey
 import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.action.ViewActions.closeSoftKeyboard
 import androidx.test.espresso.action.ViewActions.scrollTo
@@ -76,6 +78,8 @@ import androidx.test.espresso.action.Press
 import androidx.test.espresso.action.Swipe
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.isEnabled
+import androidx.test.espresso.matcher.ViewMatchers.isRoot
 import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withHint
@@ -84,6 +88,7 @@ import androidx.test.espresso.matcher.ViewMatchers.withSpinnerText
 import androidx.test.espresso.matcher.ViewMatchers.withTagValue
 import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
 import androidx.test.espresso.matcher.RootMatchers.isDialog
+import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -3508,9 +3513,9 @@ class MusicIntegrationTest {
                 assertEquals(6000L, state().result!!.lyrics!!.lines.first().timeMs)
                 assertEquals(1L, runBlocking { app.lyrics.cache.inspect() }.files)
                 scenario.recreate()
-                await { state().result?.document?.offsetMs == -1000L }
+                await { !state().loading && state().result?.document?.offsetMs == -1000L }
                 rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
-                await { state().result?.document?.offsetMs == -1000L }
+                await { !state().loading && state().result?.document?.offsetMs == -1000L }
                 screenshot("lyrics-inline-portrait")
                 onView(withId(R.id.lyricsTiming)).perform(click())
                 onView(withId(R.id.lyricsTimingReset)).inRoot(isDialog()).perform(click())
@@ -3593,6 +3598,294 @@ class MusicIntegrationTest {
         }
     }
 
+    private fun withDownloadedLyricVersions(
+        action: (MusicViewModel, MediaController, List<CachedLyric>, ActivityScenario<MainActivity>) -> Unit,
+    ) {
+        lyricMode("missing")
+        val tracks = fixtureTracks()
+        val versions = (1..3).map { number ->
+            CachedLyric("[00:01]Shared opening words\n[00:02]Synthetic downloaded body $number",
+                LyricOrigin.QQ, System.currentTimeMillis(), offlineSelected = true)
+        }
+        runBlocking {
+            app.lyrics.cache.useInternal()
+            app.lyrics.cache.clear()
+            versions.forEach { app.lyrics.saveTiming(tracks[0], it, 0) }
+        }
+        onMain { app.displaySettings.update { it.copy(lyricsEnabled = true, onlineLyrics = false) } }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+            val controller = future.get(20, TimeUnit.SECONDS)
+            try {
+                onMain { controller.setMediaItems(tracks.map(Track::toMediaItem), 0, 12_000); controller.prepare() }
+                val model = onMainResult { ViewModelProvider(resumedActivity())[MusicViewModel::class.java] }
+                await { model.lyrics.value.result?.document?.text == versions.last().text && !model.lyrics.value.loading }
+                action(model, controller, versions, scenario)
+            } finally {
+                onMain { controller.pause(); MediaController.releaseFuture(future) }
+                runBlocking { app.lyrics.cache.clear() }
+            }
+        }
+    }
+
+    private fun lyricChoiceButton(model: MusicViewModel, key: String): ViewInteraction {
+        val choices = requireNotNull(model.lyricChoices.value).choices
+        val index = choices.indexOfFirst { it.key == key }
+        assertTrue("The chosen version must still exist", index >= 0)
+        val name = choices[index].name.ifBlank { app.text(R.string.lyrics_version_number, index + 1) }
+        return onView(withContentDescription(app.text(R.string.lyrics_version_use, name))).inRoot(isDialog())
+    }
+
+    private fun lyricAction(model: MusicViewModel, key: String, action: Int) {
+        lyricChoiceButton(model, key).perform(longClick())
+        screenshot("lyrics-menu-${app.resources.getResourceEntryName(action)}")
+        onView(withText(app.text(action))).inRoot(isPlatformPopup()).perform(click())
+    }
+
+    private fun assertLyricPickerRows(model: MusicViewModel, checkLayout: Boolean = false) {
+        onView(withId(R.id.lyricsVersionsList)).inRoot(isDialog()).check { view, missing ->
+            if (missing != null) throw missing
+            val list = view as RecyclerView
+            val state = requireNotNull(model.lyricChoices.value)
+            assertEquals(state.choices.size, list.childCount)
+            for (row in list.children) {
+                val choice = state.choices[list.getChildAdapterPosition(row)]
+                val choose = row.findViewById<MaterialButton>(R.id.lyricsVersionChoose)
+                val best = row.findViewById<MaterialButton>(R.id.lyricsVersionBest)
+                val source = row.findViewById<TextView>(R.id.lyricsVersionSource)
+                val selected = state.currentKey == choice.key
+                assertEquals(selected, choose.isSelected)
+                assertEquals(selected, row.isActivated)
+                assertEquals(state.bestKey == choice.key, best.isSelected)
+                val background = requireNotNull(choose.backgroundTintList).defaultColor
+                if (selected) {
+                    assertEquals(255, Color.alpha(background))
+                    assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(choose.currentTextColor, background) >= 4.5)
+                } else assertEquals(0, Color.alpha(background))
+                if (checkLayout) {
+                    val header = choose.text.toString().substringBefore('\n')
+                    assertTrue(header.contains(choose.context.getString(R.string.lyrics_version_saved)))
+                    if (selected) assertTrue(header.contains(choose.context.getString(R.string.lyrics_version_current)))
+                    assertEquals("The version and status must share the first rendered line", 0,
+                        choose.layout.getLineForOffset(header.length - 1))
+                    val density = choose.resources.displayMetrics.density
+                    assertEquals((4 * density).roundToInt(), source.left - best.right)
+                    assertTrue("Short source names must not reserve the old fixed-width column", source.width < 68 * density)
+                    assertTrue(choose.width >= list.width - 140 * density)
+                }
+            }
+        }
+    }
+
+    @Test fun downloadedBestKeepsTheSameVisibleRowAndVersionNumber() = withDownloadedLyricVersions { model, _, _, _ ->
+        onView(withId(R.id.lyricVersions)).perform(click())
+        await { model.lyricChoices.value?.loading == false }
+        val before = model.lyricChoices.value!!
+        val target = before.choices.last()
+        val name = app.text(R.string.lyrics_version_number, before.choices.size)
+        onView(withContentDescription(app.text(R.string.lyrics_best_mark, name))).inRoot(isDialog()).perform(click())
+        try {
+            await { model.lyricChoices.value?.bestKey == target.key && model.lyricChoices.value?.busy == false }
+        } catch (error: AssertionError) {
+            screenshot("lyrics-version-best-failure")
+            throw AssertionError("Expected Best ${target.key}; picker=${model.lyricChoices.value}; " +
+                "lyrics=${model.lyrics.value}; notice=${app.notice.value}", error)
+        }
+        assertEquals("Marking Best must not move or renumber downloaded lyrics",
+            before.choices.map { it.key }, model.lyricChoices.value!!.choices.map { it.key })
+        onView(withContentDescription(app.text(R.string.lyrics_best_remove, name))).inRoot(isDialog())
+            .check(matches(isDisplayed()))
+        assertEquals(before.currentKey, model.lyricChoices.value!!.currentKey)
+        assertLyricPickerRows(model)
+        for (next in before.choices.dropLast(1)) {
+            val number = before.choices.indexOf(next) + 1
+            onView(withContentDescription(app.text(R.string.lyrics_best_mark,
+                app.text(R.string.lyrics_version_number, number)))).inRoot(isDialog()).perform(click())
+            await { model.lyricChoices.value?.bestKey == next.key && model.lyricChoices.value?.busy == false }
+            assertEquals(before.choices.map { it.key }, model.lyricChoices.value!!.choices.map { it.key })
+            assertLyricPickerRows(model)
+        }
+    }
+
+    @Test fun downloadedLyricActivationChangesDisplayedWordsAndCurrentChoice() = withDownloadedLyricVersions { model, controller, versions, _ ->
+        onView(withId(R.id.lyricVersions)).perform(click())
+        await { model.lyricChoices.value?.loading == false }
+        val first = model.lyricChoices.value!!
+        val best = first.choices.last()
+        onView(withContentDescription(app.text(R.string.lyrics_best_mark,
+            app.text(R.string.lyrics_version_number, first.choices.size)))).inRoot(isDialog()).perform(click())
+        await { model.lyricChoices.value?.bestKey == best.key && model.lyricChoices.value?.busy == false }
+        val choices = model.lyricChoices.value!!.choices
+        val target = choices.single { it.version?.text == versions[1].text }
+        val name = app.text(R.string.lyrics_version_number, choices.indexOf(target) + 1)
+        onView(withContentDescription(app.text(R.string.lyrics_version_use, name))).inRoot(isDialog()).perform(click())
+        await { model.lyricChoices.value == null && !model.lyrics.value.loading &&
+            model.lyrics.value.result?.document?.text == versions[1].text }
+        onMain {
+            val displayed = resumedActivity().findViewById<RecyclerView>(R.id.lyricsList).adapter as LyricsAdapter
+            assertEquals(versions[1].result().lyrics, displayed.lyrics)
+            assertFalse(controller.playWhenReady)
+            assertEquals(12_000L, controller.currentPosition)
+        }
+        onView(withId(R.id.lyricVersions)).perform(click())
+        await { model.lyricChoices.value?.loading == false }
+        assertEquals(target.key, model.lyricChoices.value!!.currentKey)
+        assertEquals(best.key, model.lyricChoices.value!!.bestKey)
+        assertLyricPickerRows(model)
+    }
+
+    @Test fun lyricPickerActivationDuringUiRestartKeepsTheSongIdentity() = withDownloadedLyricVersions { model, controller, versions, _ ->
+        onView(withId(R.id.lyricVersions)).perform(click())
+        await { model.lyricChoices.value?.loading == false }
+        val choices = model.lyricChoices.value!!.choices
+        val target = choices.single { it.version?.text == versions[0].text }
+        val name = app.text(R.string.lyrics_version_number, choices.indexOf(target) + 1)
+        onMain { model.setLyricsActive(false) }
+        assertNull(model.lyrics.value.trackId)
+        onView(withContentDescription(app.text(R.string.lyrics_version_use, name))).inRoot(isDialog()).perform(click())
+        await { model.lyricChoices.value == null && !model.lyrics.value.loading &&
+            model.lyrics.value.result?.document?.text == versions[0].text }
+        assertEquals("An explicit lyric choice must keep the song identity while the UI restarts",
+            onMainResult { controller.currentMediaItem?.mediaId }, model.lyrics.value.trackId)
+        onMain {
+            val displayed = resumedActivity().findViewById<RecyclerView>(R.id.lyricsList).adapter as LyricsAdapter
+            assertEquals(versions[0].result().lyrics, displayed.lyrics)
+            model.setLyricsActive(true)
+        }
+    }
+
+    @Test fun activeLyricHighlightAndCompactRowsWorkInBothOrientationsAndLanguages() =
+        withDownloadedLyricVersions { model, _, versions, scenario ->
+            for (step in 0..3) {
+                if (step == 1) rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+                if (step == 2) {
+                    val previous = onMainResult { resumedActivity() }
+                    onMain {
+                        if (Build.VERSION.SDK_INT >= 33) {
+                            app.getSystemService(android.app.LocaleManager::class.java).applicationLocales =
+                                android.os.LocaleList.forLanguageTags("zh-CN")
+                        } else AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh-CN"))
+                    }
+                    await {
+                        ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                            .filterIsInstance<MainActivity>().any {
+                                it !== previous && it.hasWindowFocus() &&
+                                    androidx.core.os.ConfigurationCompat.getLocales(it.resources.configuration)[0]?.language == "zh"
+                            }
+                    }
+                }
+                if (step == 3) {
+                    rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+                    val previous = onMainResult { resumedActivity() }
+                    onMain { app.themeMode = AppCompatDelegate.MODE_NIGHT_NO }
+                    await {
+                        ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                            .filterIsInstance<MainActivity>().any { it !== previous && it.hasWindowFocus() }
+                    }
+                }
+                awaitPlayerFrame()
+                await { !model.lyrics.value.loading && model.lyrics.value.result?.document?.text == versions.last().text }
+                onView(withId(R.id.lyricVersions)).perform(click())
+                await { model.lyricChoices.value?.loading == false }
+                assertLyricPickerRows(model, checkLayout = true)
+                screenshot("lyrics-picker-layout-$step")
+                onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click())
+            }
+        }
+
+    @Test fun lyricContextMenuActivatesMarksBestAndConfirmsNoncurrentRemoval() =
+        withDownloadedLyricVersions { model, controller, versions, _ ->
+            onView(withId(R.id.lyricVersions)).perform(click())
+            await { model.lyricChoices.value?.loading == false }
+            val best = model.lyricChoices.value!!.choices.single { it.version?.text == versions[0].text }
+            lyricAction(model, best.key, R.string.lyrics_version_mark_best)
+            await { model.lyricChoices.value?.bestKey == best.key && model.lyricChoices.value?.busy == false }
+            val selected = model.lyricChoices.value!!.choices.single { it.version?.text == versions[1].text }
+            lyricAction(model, selected.key, R.string.lyrics_version_activate)
+            await { model.lyricChoices.value == null && model.lyrics.value.result?.document?.text == versions[1].text }
+            onView(withId(R.id.lyricVersions)).perform(click())
+            await { model.lyricChoices.value?.loading == false }
+            lyricAction(model, best.key, R.string.lyrics_version_delete)
+            onView(withText(app.text(R.string.cancel))).inRoot(isDialog()).perform(click())
+            assertEquals(3, model.lyricChoices.value!!.choices.size)
+            assertEquals(best.key, model.lyricChoices.value!!.bestKey)
+            lyricAction(model, best.key, R.string.lyrics_version_delete)
+            screenshot("lyrics-version-delete-confirm")
+            onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+            await { model.lyricChoices.value?.choices?.size == 2 && model.lyricChoices.value?.busy == false }
+            assertNull(model.lyricChoices.value!!.bestKey)
+            assertFalse(model.lyricChoices.value!!.choices.any { it.key == best.key })
+            assertEquals(selected.key, model.lyricChoices.value!!.currentKey)
+            assertEquals(versions[1].text, model.lyrics.value.result!!.document!!.text)
+            assertLyricPickerRows(model)
+            onMain {
+                assertFalse(controller.playWhenReady)
+                assertEquals(12_000L, controller.currentPosition)
+            }
+        }
+
+    @Test fun deletingCurrentBestAndLastLyricsKeepsMusicPlayingAndEmptySelectionSurvivesRecreation() =
+        withDownloadedLyricVersions { model, controller, versions, scenario ->
+            val trackId = onMainResult { controller.currentMediaItem!!.mediaId }
+            onMain { controller.play() }
+            await { onMainResult { controller.isPlaying } }
+            onView(withId(R.id.lyricVersions)).perform(click())
+            await { model.lyricChoices.value?.loading == false }
+            val best = model.lyricChoices.value!!.choices.single { it.version?.text == versions[0].text }
+            lyricAction(model, best.key, R.string.lyrics_version_mark_best)
+            await { model.lyricChoices.value?.bestKey == best.key && model.lyricChoices.value?.busy == false }
+            for (remaining in 2 downTo 0) {
+                val current = requireNotNull(model.lyricChoices.value!!.currentKey)
+                lyricAction(model, current, R.string.lyrics_version_delete)
+                onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+                await { model.lyricChoices.value?.choices?.size == remaining && model.lyricChoices.value?.busy == false }
+                if (remaining == 2) assertEquals(best.key, model.lyricChoices.value!!.currentKey)
+                if (remaining == 1) {
+                    assertNull(model.lyricChoices.value!!.bestKey)
+                    assertEquals(versions[1].text, model.lyrics.value.result!!.document!!.text)
+                }
+                assertTrue(onMainResult { controller.isPlaying })
+                assertEquals(trackId, onMainResult { controller.currentMediaItem!!.mediaId })
+            }
+            assertNull(model.lyrics.value.result!!.lyrics)
+            assertEquals(0L, runBlocking { app.lyrics.cache.inspect() }.files)
+            screenshot("lyrics-versions-empty-after-removal")
+            onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click())
+            onView(withId(R.id.action_settings)).perform(click())
+            onView(withId(R.id.nav_player)).perform(click())
+            scenario.recreate()
+            awaitPlayerFrame()
+            await { model.lyrics.value.trackId == trackId && !model.lyrics.value.loading }
+            assertNull(model.lyrics.value.result!!.lyrics)
+            onMain {
+                assertNull((resumedActivity().findViewById<RecyclerView>(R.id.lyricsList).adapter as LyricsAdapter).lyrics)
+                assertTrue(controller.isPlaying)
+                assertTrue(controller.currentPosition >= 12_000)
+            }
+        }
+
+    @Test fun lyricRemovalFinishesAcrossRecreationWithoutStartingACompetingLookup() =
+        withDownloadedLyricVersions { model, controller, versions, scenario ->
+            lyricMode("versions")
+            onView(withId(R.id.lyricVersions)).perform(click())
+            await { model.lyricChoices.value?.loading == false }
+            val current = requireNotNull(model.lyricChoices.value!!.currentKey)
+            app.contentResolver.call(root, "setLyricReadDelay", "3000", null)
+            try {
+                onMain { model.removeLyricVersion(current) }
+                await { app.contentResolver.call(root, "lyricReadState", null, null)!!.getInt("active") > 0 }
+                scenario.recreate()
+                app.contentResolver.call(root, "setLyricReadDelay", "0", null)
+                awaitPlayerFrame()
+                await { model.lyricChoices.value?.busy == false && !model.lyrics.value.loading }
+                assertEquals(versions[1].text, model.lyrics.value.result!!.document!!.text)
+                assertEquals(onMainResult { controller.currentMediaItem!!.mediaId }, model.lyrics.value.trackId)
+                assertFalse(model.lyricChoices.value!!.choices.any { it.key == current })
+                assertEquals(12_000L, onMainResult { controller.currentPosition })
+                assertFalse(onMainResult { controller.playWhenReady })
+            } finally { app.contentResolver.call(root, "setLyricReadDelay", "0", null) }
+        }
+
     @Test fun offlineLyricPickerSeparatesBestFromCurrentAndSurvivesSettingsAndRotation() {
         lyricMode("versions")
         val tracks = fixtureTracks()
@@ -3637,6 +3930,17 @@ class MusicIntegrationTest {
                         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(choose.currentTextColor, surface) >= 4.5)
                     }
                 }
+                val unsaved = model.lyricChoices.value!!.choices.first()
+                lyricChoiceButton(model, unsaved.key).perform(longClick())
+                onView(withText(app.text(R.string.lyrics_version_delete))).inRoot(isPlatformPopup()).check { view, missing ->
+                    if (missing != null) throw missing
+                    val item = generateSequence(view) { it.parent as? View }
+                        .first { it.parent is android.widget.AdapterView<*> }
+                    assertFalse("The menu item, rather than its title label, must disable deletion of an original", item.isEnabled)
+                }
+                onView(withText(app.text(R.string.lyrics_version_activate))).inRoot(isPlatformPopup()).check(matches(isEnabled()))
+                screenshot("lyrics-original-actions")
+                onView(isRoot()).inRoot(isPlatformPopup()).perform(pressKey(KeyEvent.KEYCODE_BACK))
                 val alternate = model.lyricChoices.value!!.choices.single { "Alternate" in it.name }
                 onView(withContentDescription(app.text(R.string.lyrics_best_mark, alternate.name))).inRoot(isDialog()).perform(click())
                 await { model.lyricChoices.value?.bestKey == alternate.key && model.lyricChoices.value?.busy == false }

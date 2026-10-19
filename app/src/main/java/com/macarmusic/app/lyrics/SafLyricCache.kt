@@ -123,6 +123,11 @@ internal class SafLyricCache(
         old.forEach { delete(it.first) }
     }
 
+    override fun remove(key: String) {
+        // Keep the newest revision until older copies can no longer resurrect a deleted song record.
+        versions(key).asReversed().forEach { delete(it.first) }
+    }
+
     override fun size(): LyricCacheSize {
         var count = 0L
         var bytes = 0L

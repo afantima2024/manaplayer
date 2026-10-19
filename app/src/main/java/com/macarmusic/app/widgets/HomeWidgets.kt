@@ -249,7 +249,7 @@ class HomeWidgets(private val app: MaCarMusicApp) {
         lyricKey = key
         lyricJob = scope.launch {
             val latest = app.lyrics.latest.value
-            val ready = latest.result?.takeIf { latest.trackId == track.id && it.lyrics != null &&
+            val ready = latest.result?.takeIf { latest.trackId == track.id && (it.lyrics != null || latest.userEdited) &&
                 (online || it.availableOffline) }
             lyricResult = ready
             publishDynamic()
@@ -262,7 +262,8 @@ class HomeWidgets(private val app: MaCarMusicApp) {
                 if (lyricKey == key && state.track?.id == track.id) {
                     val updated = app.lyrics.latest.value
                     val selection = updated.result?.takeIf { updated !== latest && updated.trackId == track.id &&
-                        it.lyrics != null && (online || it.availableOffline) }
+                        (it.lyrics != null || updated.userEdited) &&
+                        (online || it.availableOffline) }
                     if (selection != null) lyricResult = selection
                     else if (result.lyrics != null || lyricResult?.lyrics == null) lyricResult = result
                     publishDynamic()

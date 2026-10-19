@@ -40,6 +40,7 @@ import com.macarmusic.app.lyrics.LyricIssue
 import com.macarmusic.app.lyrics.LyricTiming
 import com.macarmusic.app.lyrics.CachedLyric
 import com.macarmusic.app.lyrics.LyricChoices
+import com.macarmusic.app.lyrics.LyricRemovalFailure
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -114,6 +115,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     private var lyricJob: Job? = null
     private var lyricPreviewJob: Job? = null
     private var lyricChoicesJob: Job? = null
+    private var lyricEditTrackId: String? = null
     private var manualLyrics: LyricState? = null
     private var manualCacheGeneration = 0L
     private var manualPlaybackGeneration = 0L
@@ -169,6 +171,11 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         if (!request.enabled || track == null) {
             if (!settings.lyricsEnabled || track == null) closeLyricVersions()
             mutableLyrics.value = LyricState()
+            return
+        }
+        if (lyricEditTrackId == track.id) {
+            mutableLyrics.value = LyricState(track.id, loading = true,
+                result = app.lyrics.latest.value.takeIf { it.trackId == track.id }?.result)
             return
         }
         manualLyrics?.takeIf { !refresh && it.trackId == track.id &&
@@ -301,8 +308,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     }
 
     private fun lyricEditFailure(previous: LyricState, message: Int, error: Exception) {
-        Log.w(TAG, "Could not change lyrics; keeping the previous selection", error)
-        mutableLyrics.value = previous
+        Log.w(TAG, "Could not complete the lyric change", error)
+        if (lyricTrack?.id == previous.trackId) mutableLyrics.value = previous
         app.report(app.text(message))
     }
 
@@ -318,7 +325,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             app.inform(app.text(R.string.lyrics_not_found))
             return
         }
-        if (lyricChoices.value?.busy == true || lyricCacheBusy.value || backupBusy.value) {
+        if (lyricEditTrackId != null || lyricChoices.value?.busy == true || lyricCacheBusy.value || backupBusy.value) {
             app.inform(app.text(R.string.lyrics_cache_busy))
             return
         }
@@ -337,18 +344,25 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     }
 
     fun closeLyricVersions() {
-        lyricChoicesJob?.cancel()
+        if (lyricEditTrackId == null) lyricChoicesJob?.cancel()
         mutableLyricChoices.value = null
     }
 
-    fun chooseLyricVersion(key: String, best: Boolean = false) {
+    private enum class LyricEdit { USE, BEST, REMOVE }
+
+    fun chooseLyricVersion(key: String, best: Boolean = false) =
+        editLyricVersion(key, if (best) LyricEdit.BEST else LyricEdit.USE)
+
+    fun removeLyricVersion(key: String) = editLyricVersion(key, LyricEdit.REMOVE)
+
+    private fun editLyricVersion(key: String, edit: LyricEdit) {
         val track = lyricTrack
         val picker = lyricChoices.value
         if (track == null || picker == null || picker.trackId != track.id) {
             app.inform(app.text(R.string.lyrics_song_changed))
             return
         }
-        if (picker.loading || picker.busy || lyricCacheBusy.value || backupBusy.value) {
+        if (lyricEditTrackId != null || picker.loading || picker.busy || lyricCacheBusy.value || backupBusy.value) {
             app.inform(app.text(R.string.lyrics_cache_busy))
             return
         }
@@ -360,19 +374,30 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         lyricJob?.cancel()
         lyricPreviewJob?.cancel()
         lyricChoicesJob?.cancel()
-        val previous = lyrics.value.copy(loading = false)
+        val previous = (lyrics.value.takeIf { it.trackId == track.id }
+            ?: app.lyrics.latest.value.takeIf { it.trackId == track.id }
+            ?: LyricState(track.id)).copy(loading = false)
         mutableLyrics.value = previous.copy(loading = true)
         mutableLyricChoices.value = picker.copy(busy = true)
+        lyricEditTrackId = track.id
         lyricChoicesJob = viewModelScope.launch {
             try {
-                val result = if (best) app.lyrics.best(track,
-                    choice.takeUnless { it.key == picker.bestKey }, previous.result, picker.generation)
-                else app.lyrics.select(track, choice, picker.generation)
+                val removal = if (edit == LyricEdit.REMOVE)
+                    app.lyrics.remove(track, choice, previous.result, picker.generation) else null
+                val result = when (edit) {
+                    LyricEdit.BEST -> app.lyrics.best(track,
+                        choice.takeUnless { it.key == picker.bestKey }, previous.result, picker.generation)
+                    LyricEdit.USE -> app.lyrics.select(track, choice, picker.generation)
+                    LyricEdit.REMOVE -> checkNotNull(removal).result
+                }
                 currentCoroutineContext().ensureActive()
                 if (lyricTrack?.id != track.id) return@launch
-                mutableLyrics.value = previous.copy(result = result ?: previous.result)
+                mutableLyrics.value = LyricState(track.id, result = result ?: previous.result)
                 if (result != null) rememberLyrics(track.id, result)
-                if (best) {
+                if (removal != null) {
+                    mutableLyricChoices.value = removal.choices
+                    app.inform(app.text(R.string.lyrics_version_removed))
+                } else if (edit == LyricEdit.BEST) {
                     mutableLyricChoices.value = app.lyrics.available(track, result ?: previous.result, picker)
                     app.inform(app.text(if (picker.bestKey == key) R.string.lyrics_best_removed else R.string.lyrics_best_saved))
                 } else {
@@ -381,12 +406,23 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             } catch (error: CancellationException) {
                 if (lyricTrack?.id == track.id && lyrics.value.loading) mutableLyrics.value = previous
                 throw error
+            } catch (error: LyricRemovalFailure) {
+                val removal = error.removal
+                lyricEditFailure(LyricState(track.id, result = removal.result), R.string.lyrics_version_delete_failed, error)
+                if (lyricTrack?.id == track.id) {
+                    rememberLyrics(track.id, removal.result)
+                    mutableLyricChoices.value = removal.choices
+                }
             } catch (error: IOException) {
-                lyricEditFailure(previous, R.string.lyrics_versions_failed, error)
-                mutableLyricChoices.value = picker.copy(busy = false)
+                lyricEditFailure(previous, if (edit == LyricEdit.REMOVE) R.string.lyrics_version_delete_failed
+                    else R.string.lyrics_versions_failed, error)
+                if (lyricTrack?.id == track.id) mutableLyricChoices.value = picker.copy(busy = false)
             } catch (error: SecurityException) {
-                lyricEditFailure(previous, R.string.lyrics_versions_failed, error)
-                mutableLyricChoices.value = picker.copy(busy = false)
+                lyricEditFailure(previous, if (edit == LyricEdit.REMOVE) R.string.lyrics_version_delete_failed
+                    else R.string.lyrics_versions_failed, error)
+                if (lyricTrack?.id == track.id) mutableLyricChoices.value = picker.copy(busy = false)
+            } finally {
+                lyricEditTrackId = null
             }
         }
     }

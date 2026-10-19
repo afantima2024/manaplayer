@@ -129,6 +129,28 @@ class LyricCache internal constructor(
             }
         }
 
+    internal suspend fun removeVersion(key: String, versionId: String, expectedGeneration: Long): CachedLyric? =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                if (expectedGeneration != generation) throw IOException("The lyric cache changed; reopen the version picker")
+                try {
+                    val active = store()
+                    val previous = active.read(key) ?: throw IOException("The saved lyrics are no longer available")
+                    val remaining = LyricVersions.remove(previous, versionId)
+                    currentCoroutineContext().ensureActive()
+                    // Invalidate older reads even if a provider only completes part of the removal.
+                    epoch.incrementAndGet()
+                    if (remaining == null) active.remove(key) else active.write(key, remaining)
+                    healthy()
+                    mutableInfo.value = info.value.copy(size = null)
+                    remaining
+                } catch (error: IOException) { unavailable(error); throw error }
+                catch (error: SecurityException) { unavailable(error); throw error }
+                catch (error: IllegalArgumentException) { unavailable(error); throw IOException(error) }
+                catch (error: UnsupportedOperationException) { unavailable(error); throw IOException(error) }
+            }
+        }
+
     suspend fun inspect(): LyricCacheSize = withContext(Dispatchers.IO) {
         mutex.withLock {
             try {

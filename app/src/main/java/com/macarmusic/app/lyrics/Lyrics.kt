@@ -280,4 +280,9 @@ data class LyricResult(
         origin == LyricOrigin.EMBEDDED || document?.offlineSelected == true || document?.bestVersionId != null
 }
 
-data class LyricState(val trackId: String? = null, val loading: Boolean = false, val result: LyricResult? = null)
+data class LyricState(
+    val trackId: String? = null,
+    val loading: Boolean = false,
+    val result: LyricResult? = null,
+    val userEdited: Boolean = false,
+)

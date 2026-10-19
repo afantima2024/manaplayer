@@ -120,6 +120,7 @@ internal object LyricCacheFiles {
 internal interface LyricCacheStore {
     fun read(key: String): CachedLyric?
     fun write(key: String, value: CachedLyric)
+    fun remove(key: String)
     fun clear(): LyricCacheSize
     fun size(): LyricCacheSize
     fun pruneExpired(checkActive: () -> Unit = {})
@@ -181,9 +182,9 @@ internal class InternalLyricCache(
         }
     }
 
-    fun remove(key: String) {
+    override fun remove(key: String) {
         LyricCacheFiles.requireKey(key)
-        for (suffix in listOf(".json", ".json.bak", ".json.new")) {
+        for (suffix in listOf(".json.new", ".json.bak", ".json")) {
             val file = File(directory, key + suffix)
             if (file.exists() && !file.delete()) throw IOException("Cannot remove an internal lyric cache record")
         }

@@ -2170,7 +2170,8 @@ class MainActivity : AppCompatActivity() {
         val dialog = lyricVersionsDialog ?: LyricVersionsDialog(this,
             { model.app.displaySettings.options.value },
             { model.chooseLyricVersion(it) },
-            { model.chooseLyricVersion(it, best = true) }) {
+            { model.chooseLyricVersion(it, best = true) },
+            { model.removeLyricVersion(it) }) {
                 lyricVersionsDialog = null
                 if (!isChangingConfigurations) model.closeLyricVersions()
             }.also {

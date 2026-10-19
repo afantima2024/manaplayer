@@ -50,6 +50,11 @@ data class LyricChoices(
     val generation: Long = 0,
 )
 
+data class LyricRemoval(val result: LyricResult, val choices: LyricChoices)
+
+class LyricRemovalFailure(val removal: LyricRemoval, cause: Exception) :
+    IOException("Could not completely remove the saved lyric copy", cause)
+
 internal object LyricVersions {
     const val MAX_VERSIONS = LyricSearchHistory.MAX_CHOICES
 
@@ -60,8 +65,10 @@ internal object LyricVersions {
         preserveVersionId: String? = null,
     ): CachedLyric {
         val active = value.version()
-        val versions = (value.versions + listOfNotNull(previous?.version()) + previous?.versions.orEmpty())
-            .distinctBy { it.id }.filter { it.id != active.id }.toMutableList()
+        val updates = value.versions.distinctBy { it.id }.associateBy { it.id }
+        val versions = (listOfNotNull(previous?.version()) + previous?.versions.orEmpty() + value.versions)
+            .distinctBy { it.id }.filter { it.id != active.id }
+            .map { updates[it.id] ?: it }.toMutableList()
         val history = LyricSearchHistory(
             (previous?.history?.candidates.orEmpty() + value.history.candidates).distinct().takeLast(MAX_VERSIONS),
             (previous?.history?.contents.orEmpty() + value.history.contents).distinct().takeLast(MAX_VERSIONS),
@@ -75,6 +82,22 @@ internal object LyricVersions {
             result = result.copy(versions = versions.toList())
         }
         return result
+    }
+
+    fun remove(value: CachedLyric, versionId: String): CachedLyric? {
+        val all = listOf(value.version()) + value.versions
+        if (all.none { it.id == versionId }) throw IOException("This saved lyric version is no longer available")
+        val kept = all.filterNot { it.id == versionId }
+        if (kept.isEmpty()) return null
+        val best = value.bestVersionId?.takeUnless { it == versionId }
+        if (value.version().id != versionId) {
+            return value.copy(versions = kept.drop(1), bestVersionId = best)
+        }
+        val primary = kept.firstOrNull { it.id == best } ?: kept.first()
+        return primary.document().copy(
+            history = value.history, versions = kept.filterNot { it.id == primary.id }, bestVersionId = best,
+            offlineSelected = true, automatic = value.automatic,
+        )
     }
 
     fun expire(value: CachedLyric, expiry: LyricCacheExpiry, nowMs: Long): CachedLyric? {

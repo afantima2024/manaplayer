@@ -784,6 +784,9 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
 
     private void verifyAvailableLyricVersions(Uri music, Uri audio, File recordFile) throws Exception {
         org.json.JSONObject record = new org.json.JSONObject(fileText(recordFile));
+        String originalName = record.getString("name");
+        String originalUri = record.getString("sourceUri");
+        String originalText = documentText(Uri.parse(originalUri));
         org.json.JSONArray versions = new org.json.JSONArray();
         versions.put(new org.json.JSONObject().put("text", "[00:00]Synthetic saved QQ\n[00:30]QQ ending")
             .put("origin", "QQ").put("name", "Downloaded QQ").put("savedAtMs", System.currentTimeMillis()));
@@ -797,6 +800,16 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         tap(() -> activity.findViewById(id("lyricVersions")));
         await(() -> dialogWith("lyricsVersionsList") != null &&
             !dialogWith("lyricsVersionsList").findViewById(id("lyricsVersionsStatus")).isShown());
+        revealLyricVersion(originalName);
+        onMain(() -> {
+            TextView current = lyricVersionRow(originalName).findViewById(id("lyricsVersionChoose"));
+            check(current.isSelected() && android.graphics.Color.alpha(current.getBackgroundTintList().getDefaultColor()) != 0,
+                "Current lyrics need a visible selected highlight");
+            String heading = current.getText().toString().split("\n", 2)[0];
+            check(heading.contains(activity.getString(resource("lyrics_version_current", "string"))) &&
+                heading.contains(activity.getString(resource("lyrics_version_saved", "string"))),
+                "Current and saved labels must follow the name in the same heading");
+        });
         String alternate = "01 - Synthetic (Alternate).lrc";
         revealLyricVersion(alternate);
         onMain(() -> {
@@ -818,17 +831,29 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         String best = preferred.getString("bestVersionId");
         check(best.length() == 64, "Best must be persisted");
         check(preferred.getString("text").equals(record.getString("text")), "Marking Best must not change current/default text");
+        check("Downloaded QQ".equals(preferred.getJSONArray("versions").getJSONObject(0).getString("name")) &&
+            "Downloaded Kuwo".equals(preferred.getJSONArray("versions").getJSONObject(1).getString("name")),
+            "Marking Best must not move retained versions");
+        onMain(() -> check(lyricVersionRow(alternate).findViewById(id("lyricsVersionBest")).isSelected() &&
+            !lyricVersionRow(alternate).findViewById(id("lyricsVersionChoose")).isSelected(),
+            "The Best heart must stay separate from the current highlight"));
         saveScreenshot("lyric-versions-release-local.png");
         revealLyricVersion("Downloaded Kuwo");
         onMain(() -> check("Kuwo".contentEquals(((TextView) lyricVersionRow("Downloaded Kuwo")
             .findViewById(id("lyricsVersionSource"))).getText()), "Downloaded Kuwo source missing"));
         revealLyricVersion("Downloaded QQ");
-        onMain(() -> check("QQ".contentEquals(((TextView) lyricVersionRow("Downloaded QQ")
-            .findViewById(id("lyricsVersionSource"))).getText()), "Downloaded QQ source missing"));
+        onMain(() -> {
+            ViewGroup row = lyricVersionRow("Downloaded QQ");
+            TextView source = row.findViewById(id("lyricsVersionSource"));
+            check("QQ".contentEquals(source.getText()), "Downloaded QQ source missing");
+            check(source.getLeft() - row.findViewById(id("lyricsVersionBest")).getRight() <=
+                5 * activity.getResources().getDisplayMetrics().density, "Heart must sit next to the source");
+        });
         saveScreenshot("lyric-versions-release-downloaded.png");
         tap(() -> lyricVersionRow("Downloaded QQ").findViewById(id("lyricsVersionChoose")));
         await(() -> dialogWith("lyricsVersionsList") == null &&
-            ((TextView) activity.findViewById(id("lyricsStatus"))).getText().toString().contains("QQ"));
+            ((TextView) activity.findViewById(id("lyricsStatus"))).getText().toString().contains("QQ") &&
+            textView(activity.findViewById(id("lyricsList")), "Synthetic saved QQ") != null);
         check(best.equals(new org.json.JSONObject(fileText(recordFile)).getString("bestVersionId")),
             "Temporary selection must not replace Best");
         check(pausedAt(12_000), "Choosing lyrics changed playback");
@@ -837,6 +862,13 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         await(() -> activity != previous && activity.hasWindowFocus() &&
             ((TextView) activity.findViewById(id("lyricsStatus"))).getText().toString().contains("QQ"));
         check(pausedAt(12_000), "Recreation changed playback");
+        tap(() -> activity.findViewById(id("lyricVersions")));
+        await(() -> dialogWith("lyricsVersionsList") != null &&
+            !dialogWith("lyricsVersionsList").findViewById(id("lyricsVersionsStatus")).isShown());
+        revealLyricVersion("Downloaded QQ");
+        onMain(() -> check(lyricVersionRow("Downloaded QQ").findViewById(id("lyricsVersionChoose")).isSelected(),
+            "Reopened picker must highlight the actual downloaded selection"));
+        clickDialogAction("close");
         Uri second = DocumentsContract.buildDocumentUriUsingTree(music, "music/album/two");
         getTargetContext().startActivity(new Intent(Intent.ACTION_VIEW).setClassName(PACKAGE, PACKAGE + ".ui.MainActivity")
             .setDataAndType(second, "audio/wav").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION));
@@ -853,6 +885,73 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         check(!getTargetContext().getSharedPreferences("settings", 0).getBoolean("onlineLyrics", true),
             "The picker must work with online lookup disabled");
         saveScreenshot("lyric-versions-release-best-restored.png");
+
+        tap(() -> activity.findViewById(id("lyricVersions")));
+        await(() -> dialogWith("lyricsVersionsList") != null &&
+            !dialogWith("lyricsVersionsList").findViewById(id("lyricsVersionsStatus")).isShown());
+        lyricVersionAction("Downloaded QQ", "lyrics_version_delete");
+        confirmLyricRemoval();
+        await(() -> !savedVersionNamed(recordFile, "Downloaded QQ"));
+        revealLyricVersion(alternate);
+        onMain(() -> check(lyricVersionRow(alternate).findViewById(id("lyricsVersionChoose")).isSelected(),
+            "Deleting another version must not change the current lyrics"));
+        lyricVersionAction(alternate, "lyrics_version_delete");
+        confirmLyricRemoval();
+        await(() -> !savedVersionNamed(recordFile, alternate));
+        check(!new org.json.JSONObject(fileText(recordFile)).has("bestVersionId"), "Deleting Best must clear its preference");
+        revealLyricVersion(originalName);
+        onMain(() -> check(lyricVersionRow(originalName).findViewById(id("lyricsVersionChoose")).isSelected(),
+            "Deleting the current Best must activate the remaining saved version"));
+        lyricVersionAction("Downloaded Kuwo", "lyrics_version_delete");
+        confirmLyricRemoval();
+        await(() -> !savedVersionNamed(recordFile, "Downloaded Kuwo"));
+        lyricVersionAction(originalName, "lyrics_version_delete");
+        saveScreenshot("lyric-version-release-delete-confirm.png");
+        confirmLyricRemoval();
+        await(() -> lyricRecords().length == 0);
+        check(originalText.equals(documentText(Uri.parse(originalUri))), "Deleting saved copies changed the original lyric file");
+        check(pausedAt(12_000), "Removing lyrics changed playback");
+        saveScreenshot("lyric-versions-release-removed.png");
+        lyricVersionAction(originalName, "lyrics_version_activate");
+        await(() -> dialogWith("lyricsVersionsList") == null && recordFile.isFile() &&
+            activity.findViewById(id("lyricsTiming")).isEnabled());
+        tap(() -> activity.findViewById(id("lyricsTiming")));
+        tap(() -> dialogWith("lyricsTimingValue").findViewById(id("lyricsEarlierCoarse")));
+        clickDialogAction("save");
+        await(() -> activity.findViewById(id("lyricsTiming")).isEnabled());
+        check(new org.json.JSONObject(fileText(recordFile)).getLong("offsetMs") == 1000,
+            "A newly activated original must still support saved timing");
+    }
+
+    private void lyricVersionAction(String name, String action) {
+        revealLyricVersion(name);
+        onMain(() -> check(lyricVersionRow(name).findViewById(id("lyricsVersionChoose")).performLongClick(),
+            "Lyric rows must expose long-press actions"));
+        tap(() -> windowText(activity.getString(resource(action, "string"))));
+    }
+
+    private void confirmLyricRemoval() {
+        String remove = activity.getString(resource("remove", "string"));
+        await(() -> dialogButton(remove) != null);
+        onMain(() -> check(dialogButton(remove).performClick(), "Removal must require confirmation"));
+        waitForIdleSync();
+        await(() -> dialogWith("lyricsVersionsList") != null &&
+            dialogWith("lyricsVersionsList").hasWindowFocus() &&
+            dialogWith("lyricsVersionsList").findViewById(android.R.id.button2).isEnabled());
+    }
+
+    private boolean savedVersionNamed(File file, String name) {
+        if (new File(file.getPath() + ".bak").exists() || new File(file.getPath() + ".new").exists()) return true;
+        if (!file.exists()) return false;
+        try {
+            org.json.JSONObject document = new org.json.JSONObject(fileText(file));
+            if (name.equals(document.optString("name"))) return true;
+            org.json.JSONArray versions = document.optJSONArray("versions");
+            if (versions != null) for (int index = 0; index < versions.length(); index++) {
+                if (name.equals(versions.getJSONObject(index).optString("name"))) return true;
+            }
+            return false;
+        } catch (org.json.JSONException error) { throw new AssertionError("Invalid saved lyric versions", error); }
     }
 
     private void revealLyricVersion(String name) {
@@ -882,7 +981,8 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         for (int index = 0; index < list.getChildCount(); index++) {
             ViewGroup row = (ViewGroup) list.getChildAt(index);
             TextView choose = row.findViewById(id("lyricsVersionChoose"));
-            if (choose != null && choose.getText().toString().startsWith(name + "\n")) return row;
+            if (choose != null && activity.getString(resource("lyrics_version_use", "string"), name)
+                .contentEquals(choose.getContentDescription())) return row;
         }
         return null;
     }

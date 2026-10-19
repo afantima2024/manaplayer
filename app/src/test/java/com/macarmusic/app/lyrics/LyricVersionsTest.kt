@@ -50,6 +50,70 @@ class LyricVersionsTest {
         assertNull(selected.bestVersionId)
     }
 
+    @Test fun markingAnExistingBestKeepsVersionOrderAndUpdatesItsTiming() {
+        val second = lyric(2)
+        val third = lyric(3)
+        val previous = lyric(1).copy(versions = listOf(second.version(), third.version()))
+        val changed = previous.copy(versions = listOf(third.copy(offsetMs = 700).version()) + previous.versions)
+        val saved = LyricVersions.merge(changed, previous, third.version().id)
+        assertEquals(listOf(second.version().id, third.version().id), saved.versions.map { it.id })
+        assertEquals(700L, saved.preferred().offsetMs)
+        assertEquals(previous.text, saved.text)
+    }
+
+    @Test fun removingAnAlternativePreservesCurrentBestTimingAgeAndOrder() {
+        val second = lyric(2).copy(offsetMs = 800, savedAtMs = now - 1000)
+        val third = lyric(3)
+        val fourth = lyric(4)
+        val value = lyric(1).copy(offsetMs = -300, selected = true,
+            versions = listOf(second.version(), third.version(), fourth.version()), bestVersionId = second.version().id)
+        val removed = requireNotNull(LyricVersions.remove(value, third.version().id))
+        assertEquals(value.copy(versions = listOf(second.version(), fourth.version())), removed)
+        assertEquals(second.savedAtMs, removed.preferred().savedAtMs)
+        assertEquals(800L, removed.preferred().offsetMs)
+        assertEquals(removed, LyricCacheFiles.decode(LyricCacheFiles.encode(removed)))
+    }
+
+    @Test fun removingBestClearsOnlyItsPreferenceAndKeepsOtherVersions() {
+        val second = lyric(2)
+        val third = lyric(3)
+        val value = lyric(1).copy(versions = listOf(second.version(), third.version()), bestVersionId = second.version().id)
+        assertEquals(value.copy(versions = listOf(third.version()), bestVersionId = null),
+            LyricVersions.remove(value, second.version().id))
+    }
+
+    @Test fun removingPrimaryPromotesRemainingBestWithoutRenewingAgeOrLosingHistory() {
+        val second = lyric(2).copy(offsetMs = -900, savedAtMs = now - 10_000)
+        val third = lyric(3)
+        val history = LyricSearchHistory(contents = listOf("a".repeat(64)))
+        val value = lyric(1).copy(versions = listOf(third.version(), second.version()),
+            bestVersionId = second.version().id, history = history)
+        val removed = requireNotNull(LyricVersions.remove(value, value.version().id))
+        assertEquals(second.version(), removed.version())
+        assertEquals(second.version().id, removed.bestVersionId)
+        assertEquals(listOf(third.version()), removed.versions)
+        assertEquals(history, removed.history)
+        assertEquals(removed, LyricCacheFiles.decode(LyricCacheFiles.encode(removed)))
+    }
+
+    @Test fun removingPrimaryBestPromotesFirstRemainingAndClearsPreference() {
+        val second = lyric(2, LyricOrigin.LOCAL_FILE).copy(name = "Synthetic.lrc", sourceUri = "content://fixture/lyrics")
+        val value = lyric(1).let { it.copy(versions = listOf(second.version()), bestVersionId = it.version().id, automatic = false) }
+        val removed = requireNotNull(LyricVersions.remove(value, value.version().id))
+        assertEquals(second.version(), removed.version())
+        assertNull(removed.bestVersionId)
+        assertTrue(removed.versions.isEmpty())
+        assertFalse(removed.automatic)
+        assertTrue(removed.offlineSelected)
+        assertEquals(removed, LyricCacheFiles.decode(LyricCacheFiles.encode(removed)))
+    }
+
+    @Test fun removingLastVersionDeletesTheRecordButMissingIdsAreNotSuccess() {
+        val value = lyric(1).let { it.copy(bestVersionId = it.version().id) }
+        assertNull(LyricVersions.remove(value, value.version().id))
+        assertThrows(IOException::class.java) { LyricVersions.remove(value, lyric(2).version().id) }
+    }
+
     @Test fun byteBudgetDropsOldAlternativesButProtectsCurrentAndBest() {
         fun large(number: Int) = lyric(number).copy(
             text = (0 until 150).joinToString("\n") { "[00:01]Synthetic $number ${"x".repeat(1400)}" },

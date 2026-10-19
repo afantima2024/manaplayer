@@ -60,8 +60,9 @@ class LyricsRepository(
         }
     }
 
-    private fun publish(trackId: String, result: LyricResult) {
-        if (!tracksPlayback || playbackTrackId == trackId) mutableLatest.value = LyricState(trackId, result = result)
+    private fun publish(trackId: String, result: LyricResult, userEdited: Boolean = false) {
+        if (!tracksPlayback || playbackTrackId == trackId)
+            mutableLatest.value = LyricState(trackId, result = result, userEdited = userEdited)
     }
 
     suspend fun load(
@@ -72,20 +73,23 @@ class LyricsRepository(
         publishResult: Boolean = true,
     ): LyricResult = withContext(Dispatchers.IO) {
         val previous = latest.value
-        val result = lookup(track, online, refresh, allowNetwork)
+        val generation = cache.generation
+        val result = lookup(track, online, refresh, allowNetwork, generation)
         currentCoroutineContext().ensureActive()
         val current = latest.value
         if (current !== previous && current.trackId == track.id &&
-            (current.result?.document?.selected == true || current.result?.document?.offlineSelected == true ||
+            (current.userEdited || generation != cache.generation ||
+                current.result?.document?.selected == true || current.result?.document?.offlineSelected == true ||
                 current.result?.document?.bestVersionId != null)) {
-            return@withContext current.result
+            current.result?.let { return@withContext it }
         }
         if (publishResult) publish(track.id, result)
         result
     }
 
-    private suspend fun lookup(track: Track, online: Boolean, refresh: Boolean, allowNetwork: Boolean): LyricResult {
-        val generation = cache.generation
+    private suspend fun lookup(
+        track: Track, online: Boolean, refresh: Boolean, allowNetwork: Boolean, generation: Long,
+    ): LyricResult {
         val query = LyricQuery.from(track)
         val key = key(query, track.fileName)
         val initial = cache.read(key)
@@ -173,7 +177,7 @@ class LyricsRepository(
         withContext(Dispatchers.IO) {
             LyricTiming.requireOffset(offsetMs)
             if (LyricsParser.parse(document.text)?.timed != true) throw IOException("Lyrics have no synchronized timestamps")
-            val selected = document.copy(offsetMs = offsetMs, selected = true,
+            val selected = document.copy(offsetMs = offsetMs, selected = true, versions = emptyList(),
                 savedAtMs = document.savedAtMs.takeIf { it > 0 } ?: nowMs().coerceAtLeast(0))
             persistSelection(track, selected, cache.generation)
         }
@@ -184,7 +188,7 @@ class LyricsRepository(
             ?: throw IOException("The lyric selection could not be saved in the active cache")
         currentCoroutineContext().ensureActive()
         return saved.result(cached = true).also {
-            publish(track.id, it)
+            publish(track.id, it, userEdited = true)
         }
     }
 
@@ -210,11 +214,12 @@ class LyricsRepository(
             (listOf(document.version()) + document.versions).forEach { add(it, true) }
         }
         val currentVersion = current?.document?.version()
-        currentVersion?.let { if (it.id !in choices) add(it, current.cached) }
+        currentVersion?.let { if (it.id !in choices) add(it, false) }
         localChoices.choices.forEach { choice ->
             if (choice.key !in choices) choices[choice.key] = choice
         }
-        LyricChoices(track.id, choices.values.toList(), currentVersion?.id, saved.value?.bestVersionId,
+        val ordered = known?.choices.orEmpty().mapNotNull { choices.remove(it.key) } + choices.values
+        LyricChoices(track.id, ordered, currentVersion?.id, saved.value?.bestVersionId,
             loading = false, issue = if (cacheIssue) LyricIssue.CACHE_UNAVAILABLE else localChoices.issue,
             generation = generation)
     }
@@ -243,7 +248,7 @@ class LyricsRepository(
             ?: throw IOException("The lyric selection could not be saved in the active cache")
         currentCoroutineContext().ensureActive()
         withStoredVersions(selected, saved).result(cached = true).also {
-            publish(track.id, it)
+            publish(track.id, it, userEdited = true)
         }
     }
 
@@ -261,19 +266,74 @@ class LyricsRepository(
         val value = active.copy(offlineSelected = true,
             automatic = active.automatic && (current?.document != null || previous != null),
             savedAtMs = active.savedAtMs.takeIf { it > 0 } ?: nowMs().coerceAtLeast(0),
-            versions = listOfNotNull(preferred?.version()) + active.versions)
+            versions = listOfNotNull(preferred?.version()))
         val saved = cache.retain(key, value, generation, preferred?.version()?.id, changeBest = true, preserveActive = true)
             ?: throw IOException("The preferred lyric version could not be saved")
         currentCoroutineContext().ensureActive()
         current?.document?.let {
-            withStoredVersions(it, saved).result(cached = true).also { result -> publish(track.id, result) }
+            withStoredVersions(it, saved).result(cached = true).also { result -> publish(track.id, result, userEdited = true) }
         }
     }
 
-    private fun withStoredVersions(document: CachedLyric, saved: CachedLyric): CachedLyric {
+    suspend fun remove(
+        track: Track, choice: LyricChoice, current: LyricResult?, generation: Long,
+    ): LyricRemoval = withContext(Dispatchers.IO) {
+        if (!choice.cached) throw IOException("Only saved lyric copies can be removed")
+        val key = key(LyricQuery.from(track), track.fileName)
+        var failure: Exception? = null
+        val remaining = try {
+            cache.removeVersion(key, choice.key, generation)
+        } catch (error: IOException) {
+            failure = error
+            cache.read(key).value
+        } catch (error: SecurityException) {
+            failure = error
+            cache.read(key).value
+        }
+        val inventory = available(track, null)
+        currentCoroutineContext().ensureActive()
+        val previous = current?.document?.takeIf { document ->
+            document.version().id != choice.key || failure != null &&
+                (inventory.issue == LyricIssue.CACHE_UNAVAILABLE || inventory.choices.any { it.key == choice.key && it.cached })
+        }
+        val result = if (previous != null) {
+            withStoredVersions(previous, remaining).result(
+                cached = inventory.choices.any { it.key == previous.version().id && it.cached },
+                issue = current?.issue,
+            )
+        } else {
+            var replacement: LyricResult? = null
+            var issue = inventory.issue
+            val candidates = inventory.choices.sortedWith(compareBy<LyricChoice> { it.key != inventory.bestKey }
+                .thenBy { it.key == choice.key })
+            for (candidate in candidates) {
+                try {
+                    val document = resolve(track, candidate, inventory.generation)
+                    replacement = withStoredVersions(document, remaining).copy(offlineSelected = true)
+                        .result(cached = candidate.cached, issue = issue)
+                    break
+                } catch (error: IOException) {
+                    Log.w(TAG, "Cannot load a remaining lyric version", error)
+                    issue = if (candidate.cached) LyricIssue.CACHE_UNAVAILABLE else LyricIssue.LOCAL_UNREADABLE
+                } catch (error: SecurityException) {
+                    Log.w(TAG, "Cannot access a remaining lyric version", error)
+                    issue = if (candidate.cached) LyricIssue.CACHE_UNAVAILABLE else LyricIssue.LOCAL_UNREADABLE
+                }
+            }
+            replacement ?: LyricResult(issue = issue)
+        }
+        val choices = available(track, result, inventory)
+        currentCoroutineContext().ensureActive()
+        publish(track.id, result, userEdited = true)
+        val removal = LyricRemoval(result, choices)
+        failure?.let { throw LyricRemovalFailure(removal, it) }
+        removal
+    }
+
+    private fun withStoredVersions(document: CachedLyric, saved: CachedLyric?): CachedLyric {
         val id = document.version().id
-        return document.copy(history = saved.history, bestVersionId = saved.bestVersionId,
-            versions = (listOf(saved.version()) + saved.versions).filterNot { it.id == id })
+        return document.copy(history = saved?.history ?: document.history, bestVersionId = saved?.bestVersionId,
+            versions = (listOfNotNull(saved?.version()) + saved?.versions.orEmpty()).filterNot { it.id == id })
     }
 
     private fun failed(key: String, local: LyricResult, error: Exception, generation: Long): LyricResult {
