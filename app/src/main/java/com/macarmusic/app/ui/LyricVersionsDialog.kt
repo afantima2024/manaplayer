@@ -13,9 +13,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
-import androidx.appcompat.widget.TooltipCompat
-import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.app.AlertDialog
 import androidx.core.view.ViewCompat
 import androidx.core.view.isVisible
@@ -39,7 +38,7 @@ internal class LyricVersionsDialog(
     dismissed: () -> Unit,
 ) {
     private var state = LyricChoices("")
-    private var menu: PopupMenu? = null
+    private var menu: AlertDialog? = null
     private var confirmation: AlertDialog? = null
     private val status = TextView(context).apply {
         id = R.id.lyricsVersionsStatus
@@ -100,24 +99,40 @@ internal class LyricVersionsDialog(
         adapter.notifyDataSetChanged()
     }
 
-    private fun actions(anchor: View, choice: LyricChoice, name: String) {
+    private fun actions(choice: LyricChoice, name: String) {
         menu?.dismiss()
-        menu = PopupMenu(context, anchor).apply {
-            menu.add(0, R.id.lyricsVersionActivate, 0, R.string.lyrics_version_activate)
-            menu.add(0, R.id.lyricsVersionToggleBest, 1,
-                if (state.bestKey == choice.key) R.string.lyrics_version_unmark_best else R.string.lyrics_version_mark_best)
-            menu.add(0, R.id.lyricsVersionDelete, 2, R.string.lyrics_version_delete).isEnabled = choice.cached
-            setOnMenuItemClickListener {
-                when (it.itemId) {
-                    R.id.lyricsVersionActivate -> select(choice.key)
-                    R.id.lyricsVersionToggleBest -> best(choice.key)
-                    R.id.lyricsVersionDelete -> confirmRemoval(choice, name)
-                }
-                true
-            }
-            setOnDismissListener { this@LyricVersionsDialog.menu = null }
-            show()
+        val content = LinearLayout(context).apply {
+            id = R.id.lyricsVersionActions
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), 0, dp(16), dp(8))
         }
+        fun addAction(viewId: Int, label: Int, enabled: Boolean = true, action: () -> Unit) {
+            content.addView(MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                id = viewId
+                setText(label)
+                isAllCaps = false
+                minHeight = dp(48)
+                isEnabled = enabled
+                setOnClickListener { menu?.dismiss(); action() }
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        }
+        addAction(R.id.lyricsVersionActivate, R.string.lyrics_version_activate) { select(choice.key) }
+        addAction(R.id.lyricsVersionToggleBest,
+            if (state.bestKey == choice.key) R.string.lyrics_version_unmark_best else R.string.lyrics_version_mark_best) {
+            best(choice.key)
+        }
+        addAction(R.id.lyricsVersionDelete, R.string.lyrics_version_delete, choice.cached) { confirmRemoval(choice, name) }
+        AccentTheme.tintControls(content)
+        val options = display()
+        BlockButtonStyler(content).apply(options.controlBlocks, options.blockOutline)
+        val actionsDialog = AccentTheme.dialog(context).setTitle(name)
+            .setView(ScrollView(context).apply { addView(content) })
+            .setNegativeButton(R.string.cancel, null).create()
+        actionsDialog.setOnDismissListener {
+            if (menu === actionsDialog) menu = null
+        }
+        menu = actionsDialog
+        actionsDialog.show()
     }
 
     private fun confirmRemoval(choice: LyricChoice, name: String) {
@@ -145,15 +160,10 @@ internal class LyricVersionsDialog(
             textSize = 14f
             setPadding(dp(8), dp(4), dp(8), dp(4))
         }
-        val best = MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
-            id = R.id.lyricsVersionBest
-            minWidth = dp(48)
-            minHeight = dp(48)
-            iconSize = dp(24)
-            iconPadding = 0
-            iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
-            setPadding(dp(12), 0, dp(12), 0)
+        val more = iconButton(R.id.lyricsVersionMore).apply {
+            setIconResource(R.drawable.ic_more)
         }
+        val best = iconButton(R.id.lyricsVersionBest)
         val source = TextView(context).apply {
             id = R.id.lyricsVersionSource
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
@@ -170,6 +180,7 @@ internal class LyricVersionsDialog(
             row.orientation = LinearLayout.HORIZONTAL
             row.gravity = Gravity.CENTER_VERTICAL
             row.addView(choose, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(more, LinearLayout.LayoutParams(dp(48), dp(56)).apply { marginStart = dp(4) })
             row.addView(best, LinearLayout.LayoutParams(dp(48), dp(56)).apply { marginStart = dp(4) })
             row.addView(source, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(4) })
             AccentTheme.tintControls(row)
@@ -196,14 +207,23 @@ internal class LyricVersionsDialog(
             row.isActivated = active
             choose.isEnabled = !state.loading && !state.busy
             choose.setOnClickListener { select(choice.key) }
-            choose.setOnLongClickListener { actions(it, choice, name); true }
+            val hold = View.OnLongClickListener { actions(choice, name); true }
+            choose.setOnLongClickListener(hold)
+            row.isEnabled = choose.isEnabled
+            row.setOnLongClickListener(hold)
+            more.isEnabled = choose.isEnabled
+            more.contentDescription = context.getString(R.string.options_for, name)
+            more.setOnClickListener { actions(choice, name) }
+            more.setOnLongClickListener(hold)
             best.setIconResource(if (state.bestKey == choice.key) R.drawable.ic_favorite else R.drawable.ic_favorite_border)
             best.isSelected = state.bestKey == choice.key
             best.contentDescription = context.getString(
                 if (state.bestKey == choice.key) R.string.lyrics_best_remove else R.string.lyrics_best_mark, name)
-            TooltipCompat.setTooltipText(best, best.contentDescription)
             best.isEnabled = choose.isEnabled
             best.setOnClickListener { best(choice.key) }
+            best.setOnLongClickListener(hold)
+            source.isEnabled = choose.isEnabled
+            source.setOnLongClickListener(hold)
             source.setText(when (choice.origin) {
                 LyricOrigin.LOCAL_FILE -> R.string.lyrics_source_local
                 LyricOrigin.EMBEDDED -> R.string.lyrics_source_embedded
@@ -233,6 +253,17 @@ internal class LyricVersionsDialog(
         override fun getItemCount() = state.choices.size
         override fun onBindViewHolder(holder: Holder, position: Int) = holder.bind(state.choices[position], position)
     }
+
+    private fun iconButton(viewId: Int) =
+        MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            id = viewId
+            minWidth = dp(48)
+            minHeight = dp(48)
+            iconSize = dp(24)
+            iconPadding = 0
+            iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+            setPadding(dp(12), 0, dp(12), 0)
+        }
 
     private fun dp(value: Int) = (value * context.resources.displayMetrics.density + 0.5f).toInt()
 }

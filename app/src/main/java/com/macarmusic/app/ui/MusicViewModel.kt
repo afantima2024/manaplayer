@@ -41,6 +41,10 @@ import com.macarmusic.app.lyrics.LyricTiming
 import com.macarmusic.app.lyrics.CachedLyric
 import com.macarmusic.app.lyrics.LyricChoices
 import com.macarmusic.app.lyrics.LyricRemovalFailure
+import com.macarmusic.app.lyrics.LyricCandidateId
+import com.macarmusic.app.lyrics.OnlineLyricSearch
+import com.macarmusic.app.lyrics.OnlineLyricIssue
+import com.macarmusic.app.lyrics.OnlineLyricsClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -115,6 +119,9 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     private var lyricJob: Job? = null
     private var lyricPreviewJob: Job? = null
     private var lyricChoicesJob: Job? = null
+    private var onlineSearchJob: Job? = null
+    private var onlineSelectionJob: Job? = null
+    private var onlineSearchToken = 0L
     private var lyricEditTrackId: String? = null
     private var manualLyrics: LyricState? = null
     private var manualCacheGeneration = 0L
@@ -128,6 +135,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     val lyrics = mutableLyrics.asStateFlow()
     private val mutableLyricChoices = MutableStateFlow<LyricChoices?>(null)
     val lyricChoices = mutableLyricChoices.asStateFlow()
+    private val mutableOnlineLyrics = MutableStateFlow<OnlineLyricSearch?>(null)
+    val onlineLyrics = mutableOnlineLyrics.asStateFlow()
     private val mutableImportingBackground = MutableStateFlow(false)
     val importingBackground = mutableImportingBackground.asStateFlow()
     private val mutableLyricCacheBusy = MutableStateFlow(false)
@@ -160,9 +169,11 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         if (track?.id != lyricTrack?.id) {
             manualLyrics = null
             closeLyricVersions()
+            closeOnlineLyrics()
         }
         lyricTrack = track
         val settings = app.displaySettings.options.value
+        if (!settings.lyricsEnabled || !settings.onlineLyrics || settings.lightMode) closeOnlineLyrics()
         val request = LyricRequest(track, lyricsActive && settings.lyricsEnabled, settings.onlineLyrics, !settings.lightMode)
         if (!refresh && lyricRequest == request) return
         lyricRequest = request
@@ -207,43 +218,121 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         mutableLyrics.value = LyricState(track.id, result = LyricResult(issue = LyricIssue.LOOKUP_FAILED))
     }
 
-    fun nextLyrics() {
+    fun showOnlineLyrics() {
         val track = lyricTrack
-        val previous = lyrics.value
         val display = app.displaySettings.options.value
         if (!display.onlineLyrics || display.lightMode) {
             app.inform(app.text(R.string.lyrics_next_disabled))
             return
         }
-        if (track == null || previous.trackId != track.id || previous.result?.lyrics == null) {
+        if (track == null || !display.lyricsEnabled) {
             app.inform(app.text(R.string.lyrics_not_found))
             return
         }
-        if (previous.loading || lyricCacheBusy.value || backupBusy.value) {
+        if (lyricEditTrackId != null || lyricCacheBusy.value || backupBusy.value) {
             app.inform(app.text(R.string.lyrics_cache_busy))
+            return
+        }
+        closeLyricVersions()
+        closeOnlineLyrics()
+        val token = onlineSearchToken
+        mutableOnlineLyrics.value = OnlineLyricSearch(track.id, track.title, app.lyrics.cache.generation)
+        onlineSearchJob = viewModelScope.launch {
+            try {
+                app.lyrics.searchOnline(track).collect { catalog ->
+                    if (onlineSearchToken == token && lyricTrack?.id == track.id) {
+                        mutableOnlineLyrics.value = onlineLyrics.value?.append(catalog)
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: IOException) {
+                onlineSearchFailure(token, error)
+            } catch (error: SecurityException) {
+                onlineSearchFailure(token, error)
+            }
+        }
+    }
+
+    private fun onlineSearchFailure(token: Long, error: Exception) {
+        Log.w(TAG, "Could not search online lyric catalogs", error)
+        if (onlineSearchToken == token) mutableOnlineLyrics.value = onlineLyrics.value?.copy(
+            completed = OnlineLyricsClient.ROUTES.toSet(), failed = OnlineLyricsClient.ROUTES.toSet(),
+            issue = OnlineLyricIssue.SEARCH_FAILED)
+    }
+
+    fun closeOnlineLyrics() {
+        onlineSearchToken++
+        mutableOnlineLyrics.value = null
+        onlineSearchJob?.cancel()
+        onlineSelectionJob?.cancel()
+    }
+
+    fun chooseOnlineLyric(key: LyricCandidateId) {
+        val track = lyricTrack
+        val search = onlineLyrics.value
+        if (track == null || search == null || search.trackId != track.id) {
+            app.inform(app.text(R.string.lyrics_song_changed))
+            return
+        }
+        val display = app.displaySettings.options.value
+        if (!display.lyricsEnabled || !display.onlineLyrics || display.lightMode) {
+            closeOnlineLyrics()
+            app.inform(app.text(R.string.lyrics_next_disabled))
+            return
+        }
+        if (lyricEditTrackId != null || search.busyKey != null || lyricCacheBusy.value || backupBusy.value) {
+            app.inform(app.text(R.string.lyrics_cache_busy))
+            return
+        }
+        val candidate = search.candidates.firstOrNull { it.key == key }
+        if (candidate == null) {
+            app.report(app.text(R.string.lyrics_online_download_failed))
             return
         }
         lyricJob?.cancel()
         lyricPreviewJob?.cancel()
-        mutableLyrics.value = previous.copy(loading = true)
-        lyricJob = viewModelScope.launch {
+        val previous = (lyrics.value.takeIf { it.trackId == track.id }
+            ?: app.lyrics.latest.value.takeIf { it.trackId == track.id }
+            ?: LyricState(track.id)).copy(loading = false)
+        val token = onlineSearchToken
+        mutableOnlineLyrics.value = search.copy(busyKey = key, issue = null)
+        lyricEditTrackId = track.id
+        onlineSelectionJob = viewModelScope.launch {
             try {
-                val result = app.lyrics.next(track, previous.result)
+                val result = app.lyrics.selectOnline(track, candidate, search.generation)
                 currentCoroutineContext().ensureActive()
-                mutableLyrics.value = previous.copy(result = result ?: previous.result)
-                if (result != null) rememberLyrics(track.id, result)
-                app.inform(app.text(if (result == null) R.string.lyrics_no_more_matches else R.string.lyrics_match_saved))
+                if (onlineSearchToken != token || lyricTrack?.id != track.id) return@launch
+                if (result == null) {
+                    mutableOnlineLyrics.value = onlineLyrics.value?.copy(busyKey = null, issue = OnlineLyricIssue.NO_LYRICS)
+                } else {
+                    mutableLyrics.value = LyricState(track.id, result = result)
+                    rememberLyrics(track.id, result)
+                    mutableOnlineLyrics.value = null
+                    onlineSearchToken++
+                    onlineSearchJob?.cancel()
+                    app.inform(app.text(R.string.lyrics_match_saved))
+                }
             } catch (error: TimeoutCancellationException) {
                 currentCoroutineContext().ensureActive()
-                lyricEditFailure(previous, R.string.lyrics_next_failed, error)
+                onlineSelectionFailure(token, error)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: IOException) {
-                lyricEditFailure(previous, R.string.lyrics_next_failed, error)
+                onlineSelectionFailure(token, error)
             } catch (error: SecurityException) {
-                lyricEditFailure(previous, R.string.lyrics_next_failed, error)
+                onlineSelectionFailure(token, error)
+            } finally {
+                lyricEditTrackId = null
+                if (lyricTrack?.id == track.id && lyrics.value.loading) mutableLyrics.value = previous
             }
         }
+    }
+
+    private fun onlineSelectionFailure(token: Long, error: Exception) {
+        Log.w(TAG, "Could not load the selected online lyric; current lyrics are unchanged", error)
+        if (onlineSearchToken == token) mutableOnlineLyrics.value = onlineLyrics.value?.copy(
+            busyKey = null, issue = OnlineLyricIssue.DOWNLOAD_FAILED)
     }
 
     fun previewLyricTiming(trackId: String, original: LyricResult, offsetMs: Long) {
@@ -329,6 +418,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             app.inform(app.text(R.string.lyrics_cache_busy))
             return
         }
+        closeOnlineLyrics()
         lyricChoicesJob?.cancel()
         mutableLyricChoices.value = LyricChoices(track.id)
         lyricChoicesJob = viewModelScope.launch {

@@ -22,6 +22,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.macarmusic.app.model.Library
 import com.macarmusic.app.model.LoopMode
+import com.macarmusic.app.model.LyricAppearance
+import com.macarmusic.app.model.ThemeAccent
 import com.macarmusic.app.model.PlayOrder
 import com.macarmusic.app.model.Track
 import com.macarmusic.app.model.WidgetPlayback
@@ -77,7 +79,9 @@ class HomeWidgetIntegrationTest {
             app.playbackSettings.setLoop(LoopMode.OFF)
             app.playbackSettings.setOrder(PlayOrder.SEQUENTIAL)
             app.playbackSettings.setMuted(false)
-            app.displaySettings.update { it.copy(lyricsEnabled = false, onlineLyrics = false, widgetTransparency = 50) }
+            app.displaySettings.update { it.copy(lyricsEnabled = false, onlineLyrics = false, widgetTransparency = 50,
+                lyricAppearance = LyricAppearance(), themeAccent = ThemeAccent.DEFAULT, customAccentColor = null) }
+            app.themeMode = androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
         }
         tracks = runBlocking(Dispatchers.IO) {
             app.repository.update { Library() }
@@ -355,6 +359,10 @@ class HomeWidgetIntegrationTest {
             assertEquals("Synthetic start", data.getString("lyric2"))
             assertEquals("Synthetic middle", data.getString("lyricNext2"))
             assertEquals(1, data.getInt("lyricNextMaxLines2"))
+            for (row in listOf("lyric", "lyricNext")) {
+                assertTrue("The $row text must fit at ${height}dp",
+                    data.getInt("${row}Height2") >= data.getInt("${row}LayoutHeight2"))
+            }
             if (height != 180) screenshot("widgets-two-lines-$height.png")
         }
         onMain { controller.prepare() }
@@ -367,6 +375,48 @@ class HomeWidgetIntegrationTest {
             status().getString("lyricNext2") == "" && !status().getBoolean("lyricNextVisible2") }
         onMain { controller.seekTo(0) }
         await { status().getString("lyricNext2") == "Synthetic middle" }
+    }
+
+    @Test fun lyricWidgetUsesLiveLyricFontsAndColorsWithoutResizingButtonsOrPolling() {
+        startHost()
+        command("resize", "2:320x180")
+        val density = app.resources.displayMetrics.density
+        await { status().getInt("height2") == (180 * density).roundToInt() }
+        val original = status()
+        for (appearance in listOf(
+            LyricAppearance(activeSizeSp = 32, otherSizeSp = 26, activeColor = 0xffd166, otherColor = 0x61cfff),
+            LyricAppearance(activeSizeSp = 48, otherSizeSp = 48, activeColor = 0x95f5a3, otherColor = 0xffa4cd),
+            LyricAppearance(),
+        )) {
+            onMain { app.displaySettings.update { it.copy(lyricAppearance = appearance) } }
+            await { status().getFloat("lyricSizeSp2") == appearance.activeSizeSp.toFloat() &&
+                status().getFloat("lyricNextSizeSp2") == appearance.otherSizeSp.toFloat() }
+            val data = status()
+            appearance.activeColor?.let { assertEquals(it or android.graphics.Color.BLACK, data.getInt("lyricColor2")) }
+            appearance.otherColor?.let { assertEquals(it or android.graphics.Color.BLACK, data.getInt("lyricNextColor2")) }
+            for (row in listOf("lyric", "lyricNext")) {
+                assertTrue(data.getBoolean("${row}Visible2"))
+                assertTrue("$row needs ${data.getInt("${row}LayoutHeight2")}px but has ${data.getInt("${row}Height2")}px",
+                    data.getInt("${row}Height2") >= data.getInt("${row}LayoutHeight2"))
+            }
+            for (field in listOf("width", "height", "playTop", "playWidth", "playHeight")) {
+                assertEquals("Styling must not resize $field", original.getInt("${field}2"), data.getInt("${field}2"))
+            }
+            if (appearance.activeSizeSp == 32) screenshot("widgets-custom-lyric-appearance.png")
+        }
+        onMain { app.displaySettings.update { it.copy(customAccentColor = 0x61cfff) } }
+        await { status().getInt("lyricColor2") == 0xff61cfff.toInt() }
+        val darkOther = status().getInt("lyricNextColor2")
+        onMain { app.themeMode = androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO }
+        await { status().getInt("lyricNextColor2") != darkOther }
+        assertEquals(191, android.graphics.Color.alpha(status().getInt("lyricNextColor2")))
+        assertEquals(24f, status().getFloat("lyricSizeSp2"), 0.01f)
+        assertEquals(20f, status().getFloat("lyricNextSizeSp2"), 0.01f)
+        awaitNoPeriodicUpdates()
+        val count = status().getInt("updates")
+        SystemClock.sleep(1_500)
+        assertEquals(count, status().getInt("updates"))
+        assertFalse(onMain { controller.playWhenReady })
     }
 
     private fun screenshot(name: String) {

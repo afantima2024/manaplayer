@@ -1,4 +1,5 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/widget_root"
     android:layout_width="match_parent" android:layout_height="match_parent"
     android:background="@android:color/transparent">
@@ -7,9 +8,9 @@
         android:layout_width="match_parent" android:layout_height="match_parent"
         android:src="@drawable/widget_background" android:scaleType="fitXY"
         android:importantForAccessibility="no" android:contentDescription="@null" />
-    <LinearLayout
+    <RelativeLayout
         android:layout_width="match_parent" android:layout_height="match_parent"
-        android:orientation="vertical" android:padding="4dp">
+        android:padding="2dp">
         <TextView
             android:id="@+id/widget_title"
             android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -17,23 +18,31 @@
             android:text="@string/widget_select_music" android:textColor="#FFFFFFFF" android:textSize="14sp"
             android:textStyle="bold" android:maxLines="1" android:ellipsize="end" android:includeFontPadding="false"
             android:shadowColor="#FF000000" android:shadowRadius="2" />
-        <include layout="@layout/widget_transport" android:layout_width="match_parent" android:layout_height="52dp" />
+        <include android:id="@+id/widget_lyric_controls" layout="@layout/widget_transport"
+            android:layout_width="match_parent" android:layout_height="52dp" android:layout_alignParentTop="true" />
         <LinearLayout
-            android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+            android:id="@+id/widget_lyric_area"
+            android:layout_width="match_parent" android:layout_height="match_parent"
+            android:layout_below="@id/widget_lyric_controls" android:layout_alignParentBottom="true"
             android:orientation="vertical">
+            <!-- Measure both requested font sizes before sharing spare height; equal 0dp rows clip the larger font. -->
             <TextView
                 android:id="@+id/widget_lyric"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_weight="1"
+                tools:ignore="InefficientWeight"
+                android:gravity="center"
                 android:maxLines="1" android:ellipsize="end" android:includeFontPadding="false"
                 android:shadowColor="#FF000000" android:shadowRadius="2"
-                android:text="@string/widget_no_lyrics" android:textColor="#FF80E5D0" android:textSize="14sp" />
+                android:text="@string/widget_no_lyrics" android:textColor="#FF80E5D0" android:textSize="24sp" />
             <TextView
                 android:id="@+id/widget_lyric_next"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_weight="1"
+                tools:ignore="InefficientWeight"
+                android:gravity="center"
                 android:visibility="gone"
                 android:maxLines="1" android:ellipsize="end" android:includeFontPadding="false"
                 android:shadowColor="#FF000000" android:shadowRadius="2"
-                android:textColor="#FFD1DFE8" android:textSize="14sp" />
+                android:textColor="#FFD1DFE8" android:textSize="20sp" />
         </LinearLayout>
-    </LinearLayout>
+    </RelativeLayout>
 </FrameLayout>

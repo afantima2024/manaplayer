@@ -88,7 +88,6 @@ import androidx.test.espresso.matcher.ViewMatchers.withSpinnerText
 import androidx.test.espresso.matcher.ViewMatchers.withTagValue
 import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
 import androidx.test.espresso.matcher.RootMatchers.isDialog
-import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -498,16 +497,133 @@ class MusicIntegrationTest {
 
     @Test fun polishLegacyAppearanceStateRestoresIntoGeneral() {
         onMain {
-            val saved = SavedStateHandle(mapOf("settingsCategory" to SettingsCategory.APPEARANCE))
-            val model = MusicViewModel(app, saved)
-            val store = ViewModelStore().apply { put("settings", model) }
+            for (legacy in listOf(SettingsCategory.APPEARANCE, SettingsCategory.BACKGROUNDS)) {
+                val saved = SavedStateHandle(mapOf("settingsCategory" to legacy))
+                val model = MusicViewModel(app, saved)
+                val store = ViewModelStore().apply { put("settings", model) }
+                try {
+                    assertEquals(SettingsCategory.GENERAL, model.settingsCategory.value)
+                    assertEquals(SettingsCategory.GENERAL, saved.get<SettingsCategory>("settingsCategory"))
+                    assertEquals(6, SettingsCategory.pages.size)
+                    model.settingsCategory(legacy)
+                    assertEquals(SettingsCategory.GENERAL, model.settingsCategory.value)
+                } finally { store.clear() }
+            }
+        }
+    }
+
+    @Test fun customBackgroundControlsLiveOnlyInGeneralAndRetainTheirSettingsWhenHidden() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            onView(withId(R.id.action_settings)).perform(click())
+            for (appearance in listOf(R.string.theme_custom, R.string.theme_day, R.string.theme_night, R.string.theme_custom)) {
+                chooseSetting(R.id.settingsTheme, appearance)
+                awaitPlayerFrame()
+                onMain {
+                    val activity = resumedActivity()
+                    val background = activity.findViewById<View>(R.id.settingsBackgroundPanel)
+                    assertSame(activity.findViewById<View>(R.id.settingsGeneralPanel), background.parent)
+                    assertEquals(appearance == R.string.theme_custom, background.visibility == View.VISIBLE)
+                    assertEquals(0, activity.resources.getIdentifier("categoryBackgrounds", "id", activity.packageName))
+                }
+                if (appearance == R.string.theme_custom) onMain {
+                    app.displaySettings.update { it.copy(blur = 7) }
+                }
+                assertEquals(7, app.displaySettings.options.value.blur)
+            }
+            scenario.recreate()
+            awaitPlayerFrame()
+            onMain {
+                assertTrue(resumedActivity().findViewById<View>(R.id.settingsBackgroundPanel).isShown)
+                assertEquals(7, app.displaySettings.options.value.blur)
+                val theme = resumedActivity().findViewById<TextView>(R.id.settingsTheme)
+                assertEquals(android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL, theme.gravity)
+            }
+            screenshot("settings-general-custom-backgrounds")
+        }
+    }
+
+    @Test fun selectedMainControlsGrowOnlyTheirContentAndPreserveButtonBounds() {
+        val tracks = fixtureTracks()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+            val controller = future.get(20, TimeUnit.SECONDS)
             try {
-                assertEquals(SettingsCategory.GENERAL, model.settingsCategory.value)
-                assertEquals(SettingsCategory.GENERAL, saved.get<SettingsCategory>("settingsCategory"))
-                assertEquals(7, SettingsCategory.pages.size)
-                model.settingsCategory(SettingsCategory.APPEARANCE)
-                assertEquals(SettingsCategory.GENERAL, model.settingsCategory.value)
-            } finally { store.clear() }
+                onMain { controller.pause(); controller.setMediaItems(tracks.map(Track::toMediaItem)); controller.prepare() }
+                await { onMainResult { controller.playbackState == Player.STATE_READY } }
+                for (orientation in listOf(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)) {
+                    rotate(scenario, orientation)
+                    val ids = listOf(R.id.shuffle, R.id.repeat, R.id.volumeMute, R.id.favorite, R.id.details)
+                    val before = onMainResult { ids.associateWith { bounds(resumedActivity().findViewById(it)) } }
+                    val content = onMainResult {
+                        val favorite = resumedActivity().findViewById<MaterialButton>(R.id.favorite)
+                        favorite.textSize to favorite.iconSize
+                    }
+                    val detailsSize = onMainResult { resumedActivity().findViewById<MaterialButton>(R.id.details).textSize }
+                    onMain {
+                        app.playbackSettings.setOrder(PlayOrder.RANDOM)
+                        app.playbackSettings.setLoop(LoopMode.FOLDER)
+                        app.playbackSettings.setMuted(true)
+                    }
+                    onView(withId(R.id.favorite)).perform(click())
+                    await { onMainResult { ids.filterNot { it == R.id.details }.all {
+                        resumedActivity().findViewById<View>(it).isSelected
+                    } } }
+                    awaitPlayerFrame()
+                    onMain {
+                        val activity = resumedActivity()
+                        for (id in ids) {
+                            val target = activity.findViewById<View>(id)
+                            assertEquals("Selection must not change button width", before[id]!!.width(), target.width)
+                            assertEquals("Selection must not change button height", before[id]!!.height(), target.height)
+                        }
+                        val favorite = activity.findViewById<MaterialButton>(R.id.favorite)
+                        assertEquals(content.first * 1.5f, favorite.textSize, 0.01f)
+                        assertEquals((content.second * 1.5f).roundToInt(), favorite.iconSize)
+                        assertEquals(detailsSize, activity.findViewById<MaterialButton>(R.id.details).textSize, 0.01f)
+                        for (id in listOf(R.id.favorite, R.id.details)) {
+                            val button = activity.findViewById<MaterialButton>(id)
+                            assertEquals(android.view.Gravity.CENTER, button.gravity)
+                            assertEquals(MaterialButton.ICON_GRAVITY_TEXT_START, button.iconGravity)
+                        }
+                    }
+                    screenshot("selected-controls-$orientation")
+                    onView(withId(R.id.favorite)).perform(click())
+                    onMain {
+                        app.playbackSettings.setOrder(PlayOrder.SEQUENTIAL)
+                        app.playbackSettings.setLoop(LoopMode.OFF)
+                        app.playbackSettings.setMuted(false)
+                    }
+                    await { onMainResult { ids.all { !resumedActivity().findViewById<View>(it).isSelected } } }
+                }
+                onMain {
+                    val button = com.macarmusic.app.ui.PlayerIconButton(resumedActivity()).apply {
+                        background = null
+                        scaleType = ImageView.ScaleType.CENTER
+                        setImageDrawable(android.graphics.drawable.GradientDrawable().apply {
+                            setColor(Color.MAGENTA); setSize(20, 20)
+                        })
+                        measure(View.MeasureSpec.makeMeasureSpec(60, View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(60, View.MeasureSpec.EXACTLY))
+                        layout(0, 0, 60, 60)
+                    }
+                    for (selected in listOf(false, true, false)) {
+                        button.isSelected = selected
+                        val bitmap = Bitmap.createBitmap(60, 60, Bitmap.Config.ARGB_8888)
+                        try {
+                            button.draw(Canvas(bitmap))
+                            val pixels = Rect()
+                            for (y in 0 until 60) for (x in 0 until 60) if (Color.alpha(bitmap.getPixel(x, y)) > 0)
+                                pixels.union(x, y, x + 1, y + 1)
+                            assertEquals(if (selected) 30 else 20, pixels.width())
+                            assertEquals(if (selected) 30 else 20, pixels.height())
+                            assertEquals(30f, pixels.exactCenterX(), 0f)
+                            assertEquals(30f, pixels.exactCenterY(), 0f)
+                            assertEquals(60, button.width)
+                            assertEquals(60, button.height)
+                        } finally { bitmap.recycle() }
+                    }
+                }
+            } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
         }
     }
 
@@ -656,7 +772,7 @@ class MusicIntegrationTest {
                         assertTrue(bounds(mini).contains(controls.first()))
                         assertTrue(bounds(mini).contains(controls.last()))
                         val categories = activity.findViewById<LinearLayout>(R.id.settingsCategories)
-                        assertEquals(13, categories.childCount)
+                        assertEquals(SettingsCategory.pages.size * 2 - 1, categories.childCount)
                         SettingsCategory.pages.forEach { category ->
                             val button = activity.findViewById<MaterialButton>(category.buttonId)
                             assertEquals(View.TEXT_ALIGNMENT_CENTER, button.textAlignment)
@@ -664,7 +780,7 @@ class MusicIntegrationTest {
                         }
                         assertTrue(activity.findViewById<View>(R.id.settingsTheme).parent ===
                             activity.findViewById<View>(R.id.settingsLanguage).parent)
-                        assertEquals(6, categories.children.count {
+                        assertEquals(SettingsCategory.pages.size - 1, categories.children.count {
                             it.id == R.id.settingsCategoryDivider && it.background is PlayerBlockDrawable
                         })
                     }
@@ -1270,6 +1386,10 @@ class MusicIntegrationTest {
                 onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
                 setting(R.id.lyricActiveSize).perform(scrollTo(), GeneralSwipeAction(Swipe.SLOW,
                     { seekCoordinates(it, 0.1f) }, { seekCoordinates(it, 0.5f) }, Press.FINGER))
+                // Tap inside the step: Android 6 truncates touch-derived progress instead of rounding it.
+                setting(R.id.lyricActiveSize).perform(androidx.test.espresso.action.GeneralClickAction(
+                    androidx.test.espresso.action.Tap.SINGLE,
+                    { seekCoordinates(it, 0.5f + 0.25f / (it as SeekBar).max) }, Press.FINGER))
                 assertEquals(30, app.displaySettings.options.value.lyricAppearance.activeSizeSp)
                 setting(R.id.lyricsCacheLocation).check(matches(withText(containsString(File(app.cacheDir, "lyrics").absolutePath))))
                 onView(withId(R.id.nav_player)).perform(click())
@@ -1363,6 +1483,221 @@ class MusicIntegrationTest {
         }
     }
 
+    @Test fun queueSelectionAndNextKeepTheScrolledAnchorAndCompactOptionsWork() {
+        val tracks = fixtureTracks()
+        ActivityScenario.launch(MainActivity::class.java).use {
+            val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+            val controller = future.get(20, TimeUnit.SECONDS)
+            fun list() = resumedActivity().findViewById<RecyclerView>(R.id.queueList)
+            fun manager() = list().layoutManager as androidx.recyclerview.widget.LinearLayoutManager
+            fun anchor() = onMainResult {
+                val position = manager().findFirstVisibleItemPosition()
+                position to checkNotNull(manager().findViewByPosition(position)).top
+            }
+            fun rows() = onMainResult { (list().adapter as com.macarmusic.app.ui.MusicRowAdapter).currentList }
+            try {
+                onMain {
+                    controller.setMediaItems(List(100) { tracks[it % tracks.size].toMediaItem() }, 76, 20_000)
+                    controller.prepare()
+                    controller.pause()
+                }
+                await { controller.playbackState == Player.STATE_READY }
+                onView(withId(R.id.nav_queue)).perform(click())
+                await { rows().size == 100 && anchor().first == 76 }
+                onMain { manager().scrollToPositionWithOffset(24, -11) }
+                await { anchor() == (24 to -11) }
+                val before = anchor()
+                val keys = rows().map { row -> row.key }
+                onView(withId(R.id.queueList)).perform(androidx.test.espresso.action.GeneralClickAction(
+                    androidx.test.espresso.action.Tap.SINGLE, { view ->
+                        val row = checkNotNull((view as RecyclerView).findViewHolderForAdapterPosition(26)).itemView
+                        val rect = bounds(row)
+                        floatArrayOf(rect.left + rect.width() * 0.3f, rect.exactCenterY())
+                    }, Press.FINGER))
+                await { controller.currentMediaItemIndex == 26 && controller.isPlaying && rows()[26].active }
+                instrumentation.waitForIdleSync()
+                assertEquals("Selecting a song must preserve the first visible row and its pixel offset", before, anchor())
+                assertEquals(keys, rows().map { row -> row.key })
+                assertEquals(1, rows().count { row -> row.active })
+                screenshot("queue-selected-without-scrolling")
+                onView(withId(R.id.miniNext)).perform(click())
+                await { controller.currentMediaItemIndex == 27 && rows()[27].active }
+                instrumentation.waitForIdleSync()
+                assertEquals("Playback transitions must not move a browsed Queue", before, anchor())
+                onView(withId(R.id.nav_library)).perform(click())
+                onView(withId(R.id.nav_queue)).perform(click())
+                await { anchor() == (27 to 0) }
+                onView(withId(R.id.queueList)).perform(androidx.test.espresso.action.GeneralClickAction(
+                    androidx.test.espresso.action.Tap.SINGLE, { view ->
+                        val row = checkNotNull((view as RecyclerView).findViewHolderForAdapterPosition(27)).itemView
+                        val rect = bounds(row.findViewById(R.id.more))
+                        floatArrayOf(rect.exactCenterX(), rect.exactCenterY())
+                    }, Press.FINGER))
+                onView(withText(R.string.remove_queue)).inRoot(isDialog()).perform(click())
+                await { controller.mediaItemCount == 99 && rows().size == 99 }
+                assertEquals(2, app.repository.library.value.tracks.size)
+            } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
+        }
+    }
+
+    @Test fun compactQueueRowsKeepInlineTypographyColorsAndOtherListsUnchanged() {
+        onMain { app.displaySettings.update { it.copy(customAccentColor = 0xff9800) } }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                fun paintAt(view: TextView, offset: Int): android.text.TextPaint {
+                    val paint = android.text.TextPaint(view.paint).apply { color = view.currentTextColor }
+                    (view.text as? android.text.Spanned)?.getSpans(offset, offset + 1,
+                        android.text.style.CharacterStyle::class.java)?.forEach { it.updateDrawState(paint) }
+                    return paint
+                }
+                val samples = listOf(
+                    com.macarmusic.app.ui.MusicRow("active", "测试歌曲 - Sample", "Fixture artist · Fixture album", "4:24", active = true),
+                    com.macarmusic.app.ui.MusicRow("long", "A long song title ".repeat(12), "Artist ".repeat(20), "4:24"),
+                    com.macarmusic.app.ui.MusicRow("empty", "Song without tags", "", "4:24"),
+                )
+                for (night in listOf(Configuration.UI_MODE_NIGHT_YES, Configuration.UI_MODE_NIGHT_NO)) {
+                    for (scale in listOf(1f, 2f)) {
+                        val configuration = Configuration(activity.resources.configuration).apply {
+                            fontScale = scale
+                            uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or night
+                        }
+                        val context = ContextThemeWrapper(activity.createConfigurationContext(configuration), R.style.Theme_ManaPlayer)
+                        val parent = android.widget.FrameLayout(context)
+                        val queue = com.macarmusic.app.ui.MusicRowAdapter({}, {}, compact = true)
+                        val ordinary = com.macarmusic.app.ui.MusicRowAdapter({}, {})
+                        queue.submitList(samples.map { it.copy(inlineSubtitle = true) })
+                        ordinary.submitList(samples)
+                        val dense = queue.createViewHolder(parent, queue.getItemViewType(0))
+                        val original = ordinary.createViewHolder(parent, 0)
+                        val density = context.resources.displayMetrics.density
+                        for (outline in listOf(BlockOutline(), BlockOutline(BlockStyle.DASHED_ARC, "*", 18, true),
+                            BlockOutline(BlockStyle.CHARACTERS, "+"))) {
+                            queue.configureBlocks(true, outline)
+                            for (index in samples.indices) {
+                                queue.onBindViewHolder(dense, index)
+                                ordinary.onBindViewHolder(original, index)
+                                val sample = samples[index]
+                                val expected = sample.title + if (sample.subtitle.isEmpty()) "" else "  " + sample.subtitle
+                                assertEquals(expected, dense.binding.title.text.toString())
+                                assertEquals(View.GONE, dense.binding.subtitle.visibility)
+                                assertEquals(sample.title, original.binding.title.text.toString())
+                                assertEquals(if (sample.subtitle.isEmpty()) View.GONE else View.VISIBLE, original.binding.subtitle.visibility)
+                                val title = paintAt(dense.binding.title, 0)
+                                assertEquals(original.binding.title.textSize, title.textSize, 0.01f)
+                                assertEquals(original.binding.title.currentTextColor, title.color)
+                                assertTrue(title.typeface.isBold)
+                                if (sample.subtitle.isNotEmpty()) {
+                                    val subtitle = paintAt(dense.binding.title, sample.title.length + 2)
+                                    assertEquals(original.binding.subtitle.textSize, subtitle.textSize, 0.01f)
+                                    assertEquals(original.binding.subtitle.currentTextColor, subtitle.color)
+                                    assertEquals(original.binding.subtitle.typeface.style, subtitle.typeface.style)
+                                }
+                                for (widthDp in listOf(280, 600, 1000)) {
+                                    val width = (widthDp * density).roundToInt()
+                                    dense.itemView.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+                                    dense.itemView.layout(0, 0, width, dense.itemView.measuredHeight)
+                                    assertEquals(1, dense.binding.title.lineCount)
+                                    val touch = (48 * density).toInt()
+                                    assertEquals(touch, dense.itemView.minimumHeight)
+                                    if (scale == 1f) assertEquals(touch, dense.itemView.height)
+                                    else assertTrue(dense.itemView.height >= touch)
+                                    assertTrue(dense.binding.title.height >= dense.binding.title.layout.getLineBottom(0) +
+                                        dense.binding.title.compoundPaddingTop + dense.binding.title.compoundPaddingBottom)
+                                    assertEquals((48 * density).toInt(), dense.binding.more.width)
+                                    assertEquals((48 * density).toInt(), dense.binding.more.height)
+                                    assertEquals((8 * density).toInt(), dense.binding.more.left - dense.binding.detail.right)
+                                    assertTrue(dense.binding.more.right <= dense.itemView.width)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun playlistSongRowsMatchQueueAndKeepPlaylistActionsAndGroupRows() {
+        val tracks = fixtureTracks().map { it.copy(artist = "Fixture artist", album = "Fixture album") }
+        val playlist = LocalPlaylist("compact-playlist", "Compact mix", tracks.map { it.id })
+        runBlocking {
+            app.repository.update { LibraryEdits.upsertTracks(it, tracks).copy(playlists = listOf(playlist)) }
+        }
+        ActivityScenario.launch(MainActivity::class.java).use {
+            val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+            val controller = future.get(20, TimeUnit.SECONDS)
+            fun list() = resumedActivity().findViewById<RecyclerView>(R.id.playlistList)
+            fun rows() = (list().adapter as com.macarmusic.app.ui.MusicRowAdapter).currentList
+            fun groupRow() {
+                onView(withId(R.id.playlistList)).check { view, missing ->
+                    if (missing != null) throw missing
+                    val row = (view as RecyclerView).findViewHolderForAdapterPosition(0)!!.itemView
+                    assertFalse(rows().single().inlineSubtitle)
+                    assertEquals(View.VISIBLE, row.findViewById<View>(R.id.subtitle).visibility)
+                    assertFalse(row.findViewById<TextView>(R.id.title).text is android.text.Spanned)
+                }
+            }
+            fun songRows(count: Int) {
+                await { rows().size == count && list().findViewHolderForAdapterPosition(count - 1) != null }
+                onView(withId(R.id.playlistList)).check { view, missing ->
+                    if (missing != null) throw missing
+                    val songs = view as RecyclerView
+                    val density = songs.resources.displayMetrics.density
+                    assertTrue(rows().all { it.inlineSubtitle })
+                    for (row in songs.children) {
+                        val title = row.findViewById<TextView>(R.id.title)
+                        val subtitle = row.findViewById<TextView>(R.id.subtitle)
+                        val more = row.findViewById<View>(R.id.more)
+                        assertEquals((48 * density).toInt(), row.height)
+                        assertEquals(View.GONE, subtitle.visibility)
+                        assertTrue(title.text is android.text.Spanned)
+                        assertTrue(title.text.toString().endsWith("Fixture artist · Fixture album"))
+                        assertEquals(1, title.lineCount)
+                        assertEquals((8 * density).toInt(), more.left - row.findViewById<View>(R.id.detail).right)
+                        assertEquals((48 * density).toInt(), more.width)
+                        assertEquals((48 * density).toInt(), more.height)
+                    }
+                }
+            }
+            try {
+                onMain { controller.setMediaItems(tracks.map(Track::toMediaItem)); controller.prepare(); controller.pause() }
+                await { controller.playbackState == Player.STATE_READY }
+                onView(withId(R.id.nav_playlists)).perform(click())
+                await { rows().size == 1 && list().findViewHolderForAdapterPosition(0) != null }
+                groupRow()
+                onView(withText(playlist.name)).perform(click())
+                songRows(2)
+                onView(withId(R.id.playlistList)).perform(androidx.test.espresso.action.GeneralClickAction(
+                    androidx.test.espresso.action.Tap.SINGLE, { view ->
+                        val rect = bounds((view as RecyclerView).findViewHolderForAdapterPosition(1)!!.itemView)
+                        floatArrayOf(rect.left + rect.width() * 0.3f, rect.exactCenterY())
+                    }, Press.FINGER))
+                await { controller.currentMediaItem?.mediaId == tracks[1].id && controller.isPlaying }
+                onView(withId(R.id.nav_playlists)).perform(click())
+                songRows(2)
+                screenshot("compact-playlist-song-rows")
+                onView(withId(R.id.playlistList)).perform(androidx.test.espresso.action.GeneralClickAction(
+                    androidx.test.espresso.action.Tap.SINGLE, { view ->
+                        val row = (view as RecyclerView).findViewHolderForAdapterPosition(1)!!.itemView
+                        val rect = bounds(row.findViewById(R.id.more))
+                        floatArrayOf(rect.exactCenterX(), rect.exactCenterY())
+                    }, Press.FINGER))
+                onView(withText(R.string.remove_playlist_song)).inRoot(isDialog()).perform(click())
+                songRows(1)
+                onMain {
+                    assertEquals(2, app.repository.library.value.tracks.size)
+                    assertEquals(2, controller.mediaItemCount)
+                    assertTrue(controller.isPlaying)
+                }
+                onView(withText(R.string.back_playlists)).perform(scrollTo(), click())
+                await { rows().size == 1 && rows().single().key == playlist.id }
+                groupRow()
+                onView(withText(playlist.name)).perform(click())
+                songRows(1)
+            } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
+        }
+    }
+
     @Test fun fineTuningLibrarySelectionFolderPlaylistsAndPinsWorkEndToEnd() {
         val tracks = fixtureTracks()
         val source = app.repository.library.value.sources.single()
@@ -1421,8 +1756,12 @@ class MusicIntegrationTest {
                 val model = ViewModelProvider(activity)[MusicViewModel::class.java]
                 assertTrue(model.librarySelecting.value)
                 assertEquals(tracks.map { it.id }.toSet(), model.librarySelection.value.toSet())
+                activity.currentFocus?.clearFocus()
             }
-            onView(withId(R.id.libraryAddSelected)).perform(click())
+            screenshot("library-restored-before-playlist")
+            onView(isRoot()).perform(closeSoftKeyboard())
+            awaitPlayerFrame()
+            onView(withId(R.id.libraryAddSelected)).perform(scrollTo(), click())
             onView(withText(R.string.create_playlist)).inRoot(isDialog()).perform(click())
             fillName("Selected mix")
             onView(withText(R.string.create)).inRoot(isDialog()).perform(click())
@@ -2074,7 +2413,12 @@ class MusicIntegrationTest {
                     assertTrue(backgroundIsTransparent(details))
                     val heading = activity.findViewById<View>(R.id.settingsHeading)
                     val scroller = activity.findViewById<ScrollView>(R.id.settingsScroll)
-                    assertTrue("Configuration must stay below its fixed heading", scroller.top >= heading.bottom)
+                    assertEquals(category != SettingsCategory.ABOUT, heading.isShown)
+                    if (heading.isShown) {
+                        assertTrue("Configuration must stay below its fixed heading", scroller.top >= heading.bottom)
+                    } else {
+                        assertEquals("About must not reserve an empty heading", details.paddingTop, scroller.top)
+                    }
                     assertTrue("Configuration must fit above the mini-player", scroller.bottom <= details.height)
                 }
             }
@@ -2313,9 +2657,13 @@ class MusicIntegrationTest {
             val button = navigation.findViewById<LinearLayout>(id)
             val icon = button.getChildAt(0)
             val label = button.getChildAt(1) as TextView
+            val scale = if (button.isSelected) 1.5f else 1f
+            assertEquals((24 * density * scale).toInt(), icon.width)
+            assertEquals(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12 * scale,
+                navigation.resources.displayMetrics), label.textSize, 0.1f)
             assertEquals(if (besideIcons) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL, button.orientation)
             assertEquals(View.VISIBLE, label.visibility)
-            assertEquals(if (besideIcons) 1 else 2, label.maxLines)
+            if (besideIcons) assertEquals(1, label.maxLines) else assertTrue(label.maxLines in 1..2)
             assertTrue("Navigation must keep 48dp touch targets", button.width >= 48 * density && button.height >= 48 * density)
             fun childBounds(view: View) = Rect(0, 0, view.width, view.height).also {
                 button.offsetDescendantRectToMyCoords(view, it)
@@ -2325,6 +2673,11 @@ class MusicIntegrationTest {
             val labelBounds = childBounds(label)
             assertTrue("The icon must fit inside its button", buttonBounds.contains(iconBounds))
             assertTrue("The label must fit inside its button", buttonBounds.contains(labelBounds))
+            val content = Rect(iconBounds).apply { union(labelBounds) }
+            assertTrue("Navigation content must be horizontally centered",
+                kotlin.math.abs(content.exactCenterX() - buttonBounds.exactCenterX()) <= 1)
+            assertTrue("Navigation content must be vertically centered",
+                kotlin.math.abs(content.exactCenterY() - buttonBounds.exactCenterY()) <= 1)
             val bitmap = Bitmap.createBitmap(label.width, label.height, Bitmap.Config.ARGB_8888)
             try {
                 // Android 6 can rebuild an autosized TextView's text layout lazily on its first draw.
@@ -2337,7 +2690,8 @@ class MusicIntegrationTest {
                 assertTrue("Top/bottom landscape labels must sit beside the icon", labelBounds.left >= iconBounds.right + 8 * density)
                 assertTrue(kotlin.math.abs(iconBounds.exactCenterY() - labelBounds.exactCenterY()) <= 1)
                 assertEquals(1, label.lineCount)
-                assertEquals("Inline labels must remain readable", 0, layout.getEllipsisCount(0))
+                if (!button.isSelected) assertEquals("Unselected labels must remain readable", 0, layout.getEllipsisCount(0))
+                assertEquals("The full label stays accessible at enlarged sizes", label.text.toString(), button.contentDescription)
             } else {
                 assertTrue("Side-docked and portrait labels must stay below the icon", labelBounds.top >= iconBounds.bottom + 2 * density)
                 assertTrue("Stacked labels must stay centered", kotlin.math.abs(iconBounds.exactCenterX() - labelBounds.exactCenterX()) <= 1)
@@ -3531,24 +3885,146 @@ class MusicIntegrationTest {
         }
     }
 
-    @Test fun inlineNextLyricsUsesCurrentProviderAndPreservesPlaybackWhenExhausted() {
-        lyricMode("missing")
+    @Test fun onlineLyricsOpensImmediatelyAndSelectsBeforeAllProvidersFinish() {
+        val first = CompletableDeferred<Unit>()
+        val slow = CompletableDeferred<Unit>()
+        withOnlineCatalog(before = { url ->
+            if ("mobilecdn" in url) slow.await()
+            else if ("fcg_query_lyric_new" !in url) first.await()
+        }) { model, controller, requests, _ ->
+            val original = model.lyrics.value.result
+            onView(withId(R.id.nextLyrics)).perform(click())
+            onView(withId(R.id.onlineLyricsList)).inRoot(isDialog()).check(matches(isDisplayed()))
+            onView(withId(R.id.onlineLyricsProgress)).inRoot(isDialog()).check(matches(isDisplayed()))
+            assertTrue(model.onlineLyrics.value!!.candidates.isEmpty())
+            assertEquals(original, model.lyrics.value.result)
+            assertEquals(0L, runBlocking { app.lyrics.cache.inspect() }.files)
+            first.complete(Unit)
+            await { model.onlineLyrics.value?.candidates?.size == 3 }
+            assertTrue(model.onlineLyrics.value!!.searching)
+            assertFalse(requests.any { "fcg_query_lyric_new" in it })
+            assertEquals(original, model.lyrics.value.result)
+            screenshot("lyrics-online-progressive")
+            chooseOnlineMatch("second")
+            await { model.onlineLyrics.value == null &&
+                model.lyrics.value.result?.lyrics?.lines?.firstOrNull()?.text == "Synthetic selected online words" }
+            assertEquals(1, requests.count { "fcg_query_lyric_new" in it })
+            assertTrue(requests.last { "fcg_query_lyric_new" in it }.contains("songmid=second"))
+            assertTrue(model.lyrics.value.result!!.document!!.offlineSelected)
+            assertEquals(1L, runBlocking { app.lyrics.cache.inspect() }.files)
+            assertEquals(12_000L, onMainResult { controller.currentPosition })
+            assertFalse(onMainResult { controller.playWhenReady })
+            screenshot("lyrics-online-selected")
+        }
+    }
+
+    @Test fun onlineLyricsFailuresKeepCurrentLyricsAndAllowAnotherSelection() {
+        withOnlineCatalog { model, controller, _, _ ->
+            val original = model.lyrics.value.result
+            onView(withId(R.id.nextLyrics)).perform(click())
+            await { model.onlineLyrics.value?.searching == false }
+            assertEquals(5, model.onlineLyrics.value!!.completed.size)
+            chooseOnlineMatch("first")
+            await { model.onlineLyrics.value?.issue == com.macarmusic.app.lyrics.OnlineLyricIssue.NO_LYRICS }
+            assertEquals(original, model.lyrics.value.result)
+            assertEquals(0L, runBlocking { app.lyrics.cache.inspect() }.files)
+            chooseOnlineMatch("third")
+            await { model.onlineLyrics.value?.issue == com.macarmusic.app.lyrics.OnlineLyricIssue.DOWNLOAD_FAILED }
+            assertEquals(original, model.lyrics.value.result)
+            assertEquals(3, model.onlineLyrics.value!!.candidates.size)
+            screenshot("lyrics-online-download-failed")
+            chooseOnlineMatch("second")
+            await { model.onlineLyrics.value == null }
+            assertEquals("Synthetic selected online words", model.lyrics.value.result!!.lyrics!!.lines.first().text)
+            assertEquals(12_000L, onMainResult { controller.currentPosition })
+        }
+    }
+
+    @Test fun onlineLyricsSurvivesRecreationAndCancelsOnCloseOrSongChange() {
+        val never = CompletableDeferred<Unit>()
+        val active = java.util.concurrent.atomic.AtomicInteger()
+        withOnlineCatalog(before = {
+            active.incrementAndGet()
+            try { never.await() } finally { active.decrementAndGet() }
+        }) { model, controller, requests, scenario ->
+            val original = model.lyrics.value.result
+            onView(withId(R.id.nextLyrics)).perform(click())
+            await { active.get() == 2 }
+            scenario.recreate()
+            onView(withId(R.id.onlineLyricsList)).inRoot(isDialog()).check(matches(isDisplayed()))
+            assertSame(model, onMainResult { ViewModelProvider(resumedActivity())[MusicViewModel::class.java] })
+            assertEquals(2, requests.size)
+            pressBack()
+            await { model.onlineLyrics.value == null && active.get() == 0 }
+            await { !model.lyrics.value.loading && model.lyrics.value.result != null }
+            assertEquals(original, model.lyrics.value.result)
+            onView(withId(R.id.nextLyrics)).perform(click())
+            await { active.get() == 2 }
+            onMain { controller.seekTo(1, 0) }
+            await { model.onlineLyrics.value == null && active.get() == 0 }
+            await { model.lyrics.value.trackId == onMainResult { controller.currentMediaItem?.mediaId } &&
+                !model.lyrics.value.loading }
+            assertEquals(0L, runBlocking { app.lyrics.cache.inspect() }.files)
+            assertFalse(onMainResult { controller.playWhenReady })
+        }
+    }
+
+    @Test fun closingOnlineLyricsCancelsChosenDownloadWithoutApplyingOrCachingIt() {
+        val entered = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        val never = CompletableDeferred<Unit>()
+        withOnlineCatalog(before = { url ->
+            if ("fcg_query_lyric_new" in url) {
+                entered.complete(Unit)
+                try { never.await() } finally { cancelled.complete(Unit) }
+            }
+        }) { model, controller, _, _ ->
+            val original = model.lyrics.value.result
+            onView(withId(R.id.nextLyrics)).perform(click())
+            await { model.onlineLyrics.value?.searching == false }
+            chooseOnlineMatch("second")
+            await { entered.isCompleted && model.onlineLyrics.value?.busyKey != null }
+            pressBack()
+            await { model.onlineLyrics.value == null && cancelled.isCompleted }
+            assertEquals(original, model.lyrics.value.result)
+            assertEquals(0L, runBlocking { app.lyrics.cache.inspect() }.files)
+            assertEquals(12_000L, onMainResult { controller.currentPosition })
+            onView(withId(R.id.lyricVersions)).perform(click())
+            await { model.lyricChoices.value?.loading == false }
+            assertTrue(model.lyricChoices.value!!.choices.none { it.cached })
+            pressBack()
+        }
+    }
+
+    private fun chooseOnlineMatch(id: String) {
+        val label = "Synthetic $id match - Fixture singer"
+        onView(withContentDescription(app.text(R.string.lyrics_online_use, label, app.text(R.string.provider_qq))))
+            .inRoot(isDialog()).perform(click())
+    }
+
+    private fun withOnlineCatalog(
+        before: suspend (String) -> Unit = {},
+        action: (MusicViewModel, MediaController, List<String>, ActivityScenario<MainActivity>) -> Unit,
+    ) {
         val tracks = fixtureTracks()
-        val track = tracks.first()
         runBlocking { app.lyrics.cache.useInternal(); app.lyrics.cache.clear() }
         val field = LyricsRepository::class.java.getDeclaredField("client").apply { isAccessible = true }
         val previousClient = field.get(app.lyrics)
         val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
         val fixture = OnlineLyricsClient({ url, _, _ ->
             requests.add(url)
+            before(url)
             when {
                 "lyrics.kugou.com/search" in url -> """{"status":200,"candidates":[]}"""
                 "mobilecdn.kugou.com" in url -> """{"status":1,"data":{"info":[]}}"""
                 "client_search_cp" in url -> """{"code":0,"data":{"song":{"list":[
-                    {"songname":"${track.title}","songmid":"first"},{"songname":"${track.title}","songmid":"second"}]}}}"""
+                    {"songname":"Synthetic first match","singer":[{"name":"Fixture singer"}],"songmid":"first"},
+                    {"songname":"Synthetic second match","singer":[{"name":"Fixture singer"}],"songmid":"second"},
+                    {"songname":"Synthetic third match","singer":[{"name":"Fixture singer"}],"songmid":"third"}]}}}"""
                 "fcg_query_lyric_new" in url -> {
-                    val name = if ("songmid=first" in url) "Synthetic first choice" else "Synthetic second choice"
-                    val data = android.util.Base64.encodeToString("[00:00]$name\n[00:30]Synthetic ending".toByteArray(),
+                    if ("songmid=third" in url) throw java.io.IOException("Synthetic selected download failure")
+                    val text = if ("songmid=first" in url) "" else "[00:00]Synthetic selected online words\n[00:30]Synthetic ending"
+                    val data = android.util.Base64.encodeToString(text.toByteArray(),
                         android.util.Base64.NO_WRAP)
                     """{"code":0,"lyric":"$data"}"""
                 }
@@ -3556,40 +4032,25 @@ class MusicIntegrationTest {
                 "search.kuwo.cn" in url -> """{"abslist":[]}"""
                 else -> throw AssertionError(url)
             }
-        }) { _, error -> throw AssertionError(error) }
+        }) { _, error -> android.util.Log.w("OnlineFixture", "Synthetic provider failure", error) }
         field.set(app.lyrics, fixture)
         try {
             onMain { app.displaySettings.update { it.copy(lyricsEnabled = true, onlineLyrics = true) } }
-            ActivityScenario.launch(MainActivity::class.java).use {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
                 val controller = future.get(20, TimeUnit.SECONDS)
                 try {
                     onMain {
+                        controller.pause()
                         controller.setMediaItems(tracks.map(Track::toMediaItem))
-                        controller.repeatMode = Player.REPEAT_MODE_ONE
-                        controller.prepare(); controller.play()
+                        controller.prepare()
                     }
+                    await { onMainResult { controller.playbackState == Player.STATE_READY } }
+                    onMain { controller.seekTo(12_000) }
                     val model = onMainResult { ViewModelProvider(resumedActivity())[MusicViewModel::class.java] }
-                    fun state() = model.lyrics.value
-                    await { state().result?.lyrics?.lines?.firstOrNull()?.text == "Synthetic first choice" }
+                    await { !model.lyrics.value.loading && model.lyrics.value.result?.origin == LyricOrigin.LOCAL_FILE }
                     requests.clear()
-                    onView(withId(R.id.nextLyrics)).perform(click())
-                    try {
-                        await { state().result?.lyrics?.lines?.firstOrNull()?.text == "Synthetic second choice" && !state().loading }
-                    } catch (error: AssertionError) {
-                        throw AssertionError("Next lyric state=${state()}, notice=${app.notice.value}, requests=$requests", error)
-                    }
-                    assertEquals(2, requests.size)
-                    assertTrue(requests[0].contains("client_search_cp"))
-                    assertTrue(requests[1].contains("songmid=second"))
-                    assertTrue(state().result!!.document!!.selected)
-                    val chosen = state().result
-                    screenshot("lyrics-inline-next")
-                    onView(withId(R.id.nextLyrics)).perform(click())
-                    await { app.notice.value?.text == app.text(R.string.lyrics_no_more_matches) }
-                    assertEquals(chosen, state().result)
-                    assertTrue(onMainResult { controller.isPlaying })
-                    assertEquals(track.id, onMainResult { controller.currentMediaItem?.mediaId })
+                    action(model, controller, requests, scenario)
                 } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
             }
         } finally {
@@ -3628,18 +4089,23 @@ class MusicIntegrationTest {
         }
     }
 
-    private fun lyricChoiceButton(model: MusicViewModel, key: String): ViewInteraction {
+    private fun lyricChoiceName(model: MusicViewModel, key: String): String {
         val choices = requireNotNull(model.lyricChoices.value).choices
         val index = choices.indexOfFirst { it.key == key }
         assertTrue("The chosen version must still exist", index >= 0)
-        val name = choices[index].name.ifBlank { app.text(R.string.lyrics_version_number, index + 1) }
-        return onView(withContentDescription(app.text(R.string.lyrics_version_use, name))).inRoot(isDialog())
+        return choices[index].name.ifBlank { app.text(R.string.lyrics_version_number, index + 1) }
     }
+
+    private fun lyricChoiceButton(model: MusicViewModel, key: String): ViewInteraction =
+        onView(withContentDescription(app.text(R.string.lyrics_version_use, lyricChoiceName(model, key)))).inRoot(isDialog())
+
+    private fun lyricMoreButton(model: MusicViewModel, key: String): ViewInteraction =
+        onView(withContentDescription(app.text(R.string.options_for, lyricChoiceName(model, key)))).inRoot(isDialog())
 
     private fun lyricAction(model: MusicViewModel, key: String, action: Int) {
         lyricChoiceButton(model, key).perform(longClick())
         screenshot("lyrics-menu-${app.resources.getResourceEntryName(action)}")
-        onView(withText(app.text(action))).inRoot(isPlatformPopup()).perform(click())
+        onView(withText(app.text(action))).inRoot(isDialog()).perform(click())
     }
 
     private fun assertLyricPickerRows(model: MusicViewModel, checkLayout: Boolean = false) {
@@ -3671,7 +4137,10 @@ class MusicIntegrationTest {
                     val density = choose.resources.displayMetrics.density
                     assertEquals((4 * density).roundToInt(), source.left - best.right)
                     assertTrue("Short source names must not reserve the old fixed-width column", source.width < 68 * density)
-                    assertTrue(choose.width >= list.width - 140 * density)
+                    val more = row.findViewById<View>(R.id.lyricsVersionMore)
+                    assertTrue(more.width >= 48 * density && more.height >= 48 * density)
+                    assertTrue(more.left >= choose.right && more.right <= best.left)
+                    assertTrue(choose.width >= list.width - 192 * density)
                 }
             }
         }
@@ -3793,6 +4262,37 @@ class MusicIntegrationTest {
             }
         }
 
+    @Test fun lyricMoreButtonOpensActionsWithoutActivatingAndClosesOnSongChange() =
+        withDownloadedLyricVersions { model, controller, versions, _ ->
+            onView(withId(R.id.lyricVersions)).perform(click())
+            await { model.lyricChoices.value?.loading == false }
+            val target = model.lyricChoices.value!!.choices.single { it.version?.text == versions[0].text }
+            lyricMoreButton(model, target.key).perform(click())
+            onView(withId(R.id.lyricsVersionActions)).inRoot(isDialog()).check { view, missing ->
+                if (missing != null) throw missing
+                val size = (48 * view.resources.displayMetrics.density).roundToInt()
+                for (id in listOf(R.id.lyricsVersionActivate, R.id.lyricsVersionToggleBest, R.id.lyricsVersionDelete)) {
+                    val action = view.findViewById<MaterialButton>(id)
+                    assertTrue(action.isEnabled && action.height >= size)
+                    assertTrue(action.foreground is PlayerBlockDrawable)
+                }
+            }
+            assertEquals(versions.last().text, model.lyrics.value.result!!.document!!.text)
+            screenshot("lyrics-tap-actions")
+            onView(withId(R.id.lyricsVersionToggleBest)).inRoot(isDialog()).perform(click())
+            await { model.lyricChoices.value?.bestKey == target.key && model.lyricChoices.value?.busy == false }
+            lyricMoreButton(model, target.key).perform(click())
+            onView(withId(R.id.lyricsVersionActivate)).inRoot(isDialog()).perform(click())
+            await { model.lyricChoices.value == null && model.lyrics.value.result?.document?.text == versions[0].text }
+            onView(withId(R.id.lyricVersions)).perform(click())
+            await { model.lyricChoices.value?.loading == false }
+            lyricMoreButton(model, target.key).perform(click())
+            onView(withId(R.id.lyricsVersionActions)).inRoot(isDialog()).check(matches(isDisplayed()))
+            onMain { assertFalse(controller.playWhenReady); controller.seekTo(1, 0) }
+            await { model.lyricChoices.value == null }
+            onView(withId(R.id.lyricsVersionActions)).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+        }
+
     @Test fun lyricContextMenuActivatesMarksBestAndConfirmsNoncurrentRemoval() =
         withDownloadedLyricVersions { model, controller, versions, _ ->
             onView(withId(R.id.lyricVersions)).perform(click())
@@ -3872,8 +4372,11 @@ class MusicIntegrationTest {
             val current = requireNotNull(model.lyricChoices.value!!.currentKey)
             app.contentResolver.call(root, "setLyricReadDelay", "3000", null)
             try {
+                lyricMoreButton(model, current).perform(click())
+                onView(withId(R.id.lyricsVersionActions)).inRoot(isDialog()).check(matches(isDisplayed()))
                 onMain { model.removeLyricVersion(current) }
                 await { app.contentResolver.call(root, "lyricReadState", null, null)!!.getInt("active") > 0 }
+                onView(withId(R.id.lyricsVersionActions)).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
                 scenario.recreate()
                 app.contentResolver.call(root, "setLyricReadDelay", "0", null)
                 awaitPlayerFrame()
@@ -3932,15 +4435,13 @@ class MusicIntegrationTest {
                 }
                 val unsaved = model.lyricChoices.value!!.choices.first()
                 lyricChoiceButton(model, unsaved.key).perform(longClick())
-                onView(withText(app.text(R.string.lyrics_version_delete))).inRoot(isPlatformPopup()).check { view, missing ->
+                onView(withId(R.id.lyricsVersionDelete)).inRoot(isDialog()).check { view, missing ->
                     if (missing != null) throw missing
-                    val item = generateSequence(view) { it.parent as? View }
-                        .first { it.parent is android.widget.AdapterView<*> }
-                    assertFalse("The menu item, rather than its title label, must disable deletion of an original", item.isEnabled)
+                    assertFalse("The action must disable deletion of an original", view.isEnabled)
                 }
-                onView(withText(app.text(R.string.lyrics_version_activate))).inRoot(isPlatformPopup()).check(matches(isEnabled()))
+                onView(withId(R.id.lyricsVersionActivate)).inRoot(isDialog()).check(matches(isEnabled()))
                 screenshot("lyrics-original-actions")
-                onView(isRoot()).inRoot(isPlatformPopup()).perform(pressKey(KeyEvent.KEYCODE_BACK))
+                onView(withText(app.text(R.string.cancel))).inRoot(isDialog()).perform(click())
                 val alternate = model.lyricChoices.value!!.choices.single { "Alternate" in it.name }
                 onView(withContentDescription(app.text(R.string.lyrics_best_mark, alternate.name))).inRoot(isDialog()).perform(click())
                 await { model.lyricChoices.value?.bestKey == alternate.key && model.lyricChoices.value?.busy == false }

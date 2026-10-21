@@ -23,7 +23,6 @@ import androidx.appcompat.widget.AppCompatImageView
 import androidx.appcompat.widget.AppCompatTextView
 import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.widget.TooltipCompat
-import androidx.core.widget.TextViewCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.AccessibilityDelegateCompat
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
@@ -91,7 +90,6 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
                 text = entry.title
                 textSize = 12f
                 ellipsize = TextUtils.TruncateAt.END
-                TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(this, 10, 12, 1, TypedValue.COMPLEX_UNIT_SP)
                 includeFontPadding = false
                 importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
             }
@@ -157,6 +155,20 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
                     child.layoutParams = child.layoutParams.apply { this.width = itemWidth }
             }
         }
+        for (item in items) {
+            val width = if (vertical == true) MeasureSpec.getSize(widthSpec) else item.view.layoutParams.width
+            val height = if (vertical == true) item.view.layoutParams.height else itemHeight
+            val icon = if (item.view.isSelected) dp(36) else dp(24)
+            val minimumContent = if (labelsBesideIcons) maxOf(icon, item.label.lineHeight)
+                else icon + dp(2) + item.label.lineHeight
+            val verticalInset = minOf(itemInset, ((height - minimumContent) / 2).coerceAtLeast(0))
+            item.view.setPadding(itemInset, verticalInset, itemInset, verticalInset)
+            item.label.maxWidth = (width - itemInset * 2 - if (labelsBesideIcons) icon + dp(8) else 0).coerceAtLeast(1)
+            if (!labelsBesideIcons) {
+                val room = height - verticalInset * 2 - icon - dp(2)
+                item.label.maxLines = if (room >= ceil(item.label.paint.fontSpacing * 2).toInt()) 2 else 1
+            }
+        }
         super.onMeasure(widthSpec, heightSpec)
     }
 
@@ -167,10 +179,10 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
         items.forEach {
             it.view.orientation = if (besideIcons) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
             it.view.minimumHeight = dp(48)
-            it.label.gravity = if (besideIcons) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.CENTER
+            it.label.gravity = Gravity.CENTER
             it.label.maxLines = if (besideIcons) 1 else 2
             it.label.layoutParams = if (besideIcons) {
-                LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
+                LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) }
             } else LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                 topMargin = dp(2)
             }
@@ -215,6 +227,11 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
             item.view.setPadding(itemInset, itemInset, itemInset, itemInset)
             val selected = item.view.id == selectedItemId
             item.view.isSelected = selected
+            val iconSize = dp(if (selected) 36 else 24)
+            if (item.icon.layoutParams.width != iconSize) {
+                item.icon.layoutParams = item.icon.layoutParams.apply { width = iconSize; height = iconSize }
+            }
+            item.label.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (selected) 18f else 12f)
             val color = if (selected) primary else foreground
             item.icon.imageTintList = ColorStateList.valueOf(color)
             item.label.setTextColor(color)

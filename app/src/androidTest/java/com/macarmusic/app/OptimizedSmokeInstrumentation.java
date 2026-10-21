@@ -36,13 +36,20 @@ import android.widget.LinearLayout;
 import android.widget.Spinner;
 import android.widget.TextView;
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
+import java.net.URLConnection;
+import java.net.URLStreamHandler;
 import java.nio.charset.StandardCharsets;
 import java.util.zip.ZipFile;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import javax.net.ssl.HttpsURLConnection;
 
 // No AndroidX/Kotlin test runtime: debug tests otherwise depend on classes renamed by release R8.
 public class OptimizedSmokeInstrumentation extends Instrumentation {
@@ -55,6 +62,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
     private boolean homeWidgetsOnly;
     private boolean lyricCacheOnly;
     private boolean spectrumLyricsOnly;
+    private boolean queueOnly;
 
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
@@ -63,6 +71,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         homeWidgetsOnly = arguments != null && "true".equals(arguments.getString("homeWidgetsOnly"));
         lyricCacheOnly = arguments != null && "true".equals(arguments.getString("lyricCacheOnly"));
         spectrumLyricsOnly = arguments != null && "true".equals(arguments.getString("spectrumLyricsOnly"));
+        queueOnly = arguments != null && "true".equals(arguments.getString("queueOnly"));
         start();
     }
 
@@ -92,6 +101,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             monitor = new ActivityMonitor(audioPicker, new ActivityResult(Activity.RESULT_OK,
                 new Intent().setData(audio).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)), true);
             addMonitor(monitor);
+            if (queueOnly) writeQueueFixture(tree, audio);
             activity = launchPlayer(audio);
             if (colorPickerOnly) {
                 verifyColorPickers();
@@ -117,10 +127,16 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             });
             check(connected.await(25, TimeUnit.SECONDS) && controller != null, "Media session connection failed");
             await(() -> controller.getPlaybackState() != null);
+            if (queueOnly) {
+                verifyQueue();
+                result.putString("result", "PASS");
+                result.putString("checks", "Exact optimized APK: stable 100-song Queue scrolling, current highlighting, inline typography, 48dp targets and 8dp duration spacing; matching Playlist song rows with retained group layout, playback, removal and back/reopen behavior");
+                return;
+            }
             if (spectrumLyricsOnly) {
                 verifySpectrumAndLyricEdits(tree, audio);
                 result.putString("result", "PASS");
-                result.putString("checks", "Exact optimized APK: uniform 3/8/16/32 bands, all four in-window origins, inline local/downloaded version picker with trailing sources, separate current/Best selection, recreation and next-visit preference, timing preview/cancel/save/reset, portable storage and failed-write recovery");
+                result.putString("checks", "Exact optimized APK: uniform 3/8/16/32 bands, all four in-window origins, inline local/downloaded version picker with trailing sources, separate current/Best selection, recreation and next-visit preference, immediate progressive online catalog with selected-only download, timing preview/cancel/save/reset, portable storage and failed-write recovery");
                 return;
             }
             if (lyricCacheOnly) {
@@ -208,7 +224,8 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             check(activity.findViewById(id("navigation")).isShown(), "Settings must leave navigation available");
             verifySettingsPage("categoryGeneral", "settingsGeneralPanel");
             verifySystemInformation();
-            verifySettingsPage("categoryBackgrounds", "settingsBackgroundPanel");
+            check(activity.findViewById(id("settingsBackgroundPanel")).getParent() ==
+                activity.findViewById(id("settingsGeneralPanel")), "Custom backgrounds belong in General");
             verifySettingsPage("categoryPlayback", "settingsPlaybackPanel");
             verifySettingsPage("categorySpectrum", "settingsSpectrumPanel");
             verifySettingsPage("categoryLyrics", "settingsLyricsPanel");
@@ -277,7 +294,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             verifyCollections();
             verifyBulkFolderRemoval(tree);
             result.putString("result", "PASS");
-            result.putString("checks", "Non-debuggable/min23, paused launch, real playback and seek, all docks and pages, compact geometry, seven categories, header logo home action, installed About version and non-interactive logo, feature-only guide, consistent Settings borders and disabled blocks, artist/album browsing, independent playlist position restored paused, validated local ZIP export and settings restore, both bulk-folder entry points with cancellation and no file deletion");
+            result.putString("checks", "Non-debuggable/min23, paused launch, real playback and seek, all docks and pages, compact geometry, six categories with conditional General backgrounds, header logo home action, installed About version and non-interactive logo, feature-only guide, consistent Settings borders and disabled blocks, artist/album browsing, independent playlist position restored paused, validated local ZIP export and settings restore, both bulk-folder entry points with cancellation and no file deletion");
         } catch (Throwable error) {
             result.putString("result", "FAIL");
             result.putString("error", android.util.Log.getStackTraceString(error));
@@ -312,6 +329,184 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
     }
 
     private int id(String name) { return resource(name, "id"); }
+
+    private void writeQueueFixture(Uri tree, Uri audio) throws Exception {
+        File library = new File(getTargetContext().getFilesDir(), "library.json");
+        File playback = new File(getTargetContext().getFilesDir(), "playback.json");
+        check(!library.exists() && !playback.exists(), "Queue fixture requires fresh test data");
+        org.json.JSONArray tracks = new org.json.JSONArray();
+        for (int index = 0; index < 100; index++) {
+            String title = String.format(java.util.Locale.ROOT, "Queue %03d", index);
+            tracks.put(new org.json.JSONObject().put("id", "queue-fixture-" + index)
+                .put("uri", audio.toString()).put("fileName", title + ".wav").put("title", title)
+                .put("artist", "Fixture artist").put("album", "Fixture album").put("durationMs", 60_000)
+                .put("mimeType", "audio/wav").put("sourceUris", new org.json.JSONObject().put(tree.toString(), audio.toString())));
+        }
+        org.json.JSONObject source = new org.json.JSONObject().put("uri", tree.toString())
+            .put("name", "Synthetic queue fixture").put("persisted", true);
+        org.json.JSONArray trackIds = new org.json.JSONArray();
+        for (int index = 0; index < tracks.length(); index++) trackIds.put(tracks.getJSONObject(index).getString("id"));
+        org.json.JSONObject playlist = new org.json.JSONObject().put("id", "compact-playlist")
+            .put("name", "Compact playlist").put("trackIds", trackIds);
+        writeFixture(library, new org.json.JSONObject().put("version", 1).put("tracks", tracks)
+            .put("sources", new org.json.JSONArray().put(source))
+            .put("playlists", new org.json.JSONArray().put(playlist)).toString());
+        writeFixture(playback, new org.json.JSONObject().put("version", 1).put("queue", tracks)
+            .put("index", 76).put("positionMs", 20_000).put("shuffle", false).put("repeat", 0).toString());
+        check(getTargetContext().getSharedPreferences("settings", 0).edit()
+            .putString("playOrder", "SEQUENTIAL").putString("loopMode", "OFF").commit(), "Cannot save fixture playback order");
+    }
+
+    private void verifyQueue() throws Exception {
+        await(() -> controller.getQueue() != null && controller.getQueue().size() == 100);
+        check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING, "Queue restore must stay paused");
+        tap(() -> activity.findViewById(id("nav_queue")));
+        await(() -> firstQueueRow() != null && queueTitle(firstQueueRow()).startsWith("Queue 076"));
+        onMain(() -> {
+            View first = firstQueueRow();
+            check(first.getTop() == 0, "Opening Queue must locate the current occurrence");
+            int touch = Math.round(48 * activity.getResources().getDisplayMetrics().density);
+            check(first.getHeight() == touch, "Normal-font Queue rows must be 48dp high");
+            View more = first.findViewById(id("more"));
+            check(more.getWidth() == touch && more.getHeight() == touch, "More must keep a 48dp touch target");
+            check(more.getLeft() - first.findViewById(id("detail")).getRight() ==
+                Math.round(8 * activity.getResources().getDisplayMetrics().density), "Queue time needs 8dp before More");
+            TextView title = first.findViewById(id("title"));
+            TextView subtitle = first.findViewById(id("subtitle"));
+            check(title.getLineCount() == 1 && subtitle.getVisibility() == View.GONE, "Queue metadata must stay inline");
+            check(title.getText() instanceof android.text.Spanned, "Inline metadata must retain styled text runs");
+            check(title.getText().toString().endsWith(subtitle.getText().toString()), "Queue must retain its metadata");
+            android.text.TextPaint titlePaint = queueTextPaint(title, 0);
+            android.text.TextPaint subtitlePaint = queueTextPaint(title, title.getText().length() - 1);
+            check(Math.abs(titlePaint.getTextSize() - title.getTextSize()) < 0.01f &&
+                titlePaint.getTypeface().isBold(), "Title typography changed");
+            check(Math.abs(subtitlePaint.getTextSize() - subtitle.getTextSize()) < 0.01f &&
+                subtitlePaint.getColor() == subtitle.getCurrentTextColor() && !subtitlePaint.getTypeface().isBold(),
+                "Metadata font size/color/style changed");
+            queueList().scrollBy(0, -50 * first.getHeight() + 11);
+        });
+        await(() -> queueTitle(firstQueueRow()).startsWith("Queue 026") && firstQueueRow().getTop() == -11);
+        String[] anchor = {""};
+        int[] inactiveColor = {0};
+        onMain(() -> {
+            anchor[0] = queueAnchor();
+            inactiveColor[0] = ((TextView) queueRow("Queue 028").findViewById(id("title"))).getCurrentTextColor();
+        });
+        long selectedId = controller.getQueue().get(28).getQueueId();
+        long nextId = controller.getQueue().get(29).getQueueId();
+        tap(() -> queueRow("Queue 028").findViewById(id("title")));
+        await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+            controller.getPlaybackState().getActiveQueueItemId() == selectedId);
+        await(() -> ((TextView) queueRow("Queue 028").findViewById(id("title"))).getCurrentTextColor() != inactiveColor[0]);
+        onMain(() -> check(anchor[0].equals(queueAnchor()), "Selecting a song moved the Queue scroll anchor"));
+        saveScreenshot("optimized-compact-queue-selection.png");
+        tap(() -> activity.findViewById(id("miniNext")));
+        await(() -> controller.getPlaybackState().getActiveQueueItemId() == nextId);
+        waitForIdleSync();
+        onMain(() -> check(anchor[0].equals(queueAnchor()), "Next moved the browsed Queue"));
+        tap(() -> activity.findViewById(id("nav_library")));
+        tap(() -> activity.findViewById(id("nav_queue")));
+        await(() -> queueTitle(firstQueueRow()).startsWith("Queue 029") && firstQueueRow().getTop() == 0);
+        onMain(() -> controller.getTransportControls().pause());
+        tap(() -> queueRow("Queue 029").findViewById(id("more")));
+        String remove = activity.getString(resource("remove_queue", "string"));
+        tap(() -> windowText(remove));
+        await(() -> controller.getQueue().size() == 99);
+        check(savedLibrary().getJSONArray("tracks").length() == 100, "Queue removal changed the library");
+        saveScreenshot("optimized-compact-queue-removal.png");
+        verifyPlaylistRows();
+    }
+
+    private void verifyPlaylistRows() throws Exception {
+        tap(() -> activity.findViewById(id("nav_playlists")));
+        await(() -> playlistList() != null && playlistList().getChildCount() > 0);
+        onMain(() -> check(playlistList().getChildAt(0).findViewById(id("subtitle")).isShown(),
+            "Playlist group rows must retain their separate count"));
+        tap(() -> textView(activity.getWindow().getDecorView(), "Compact playlist"));
+        await(() -> playlistList().getChildCount() >= 3 && playlistList().getChildAt(0)
+            .findViewById(id("subtitle")).getVisibility() == View.GONE);
+        onMain(() -> {
+            View row = playlistList().getChildAt(0);
+            TextView title = row.findViewById(id("title"));
+            View more = row.findViewById(id("more"));
+            float density = activity.getResources().getDisplayMetrics().density;
+            check(row.getHeight() == Math.round(48 * density) && title.getLineCount() == 1 &&
+                title.getText() instanceof android.text.Spanned, "Playlist songs must match compact Queue rows");
+            TextView subtitle = row.findViewById(id("subtitle"));
+            android.text.TextPaint caption = queueTextPaint(title, title.getText().length() - 1);
+            check(Math.abs(caption.getTextSize() - subtitle.getTextSize()) < 0.01f &&
+                caption.getColor() == subtitle.getCurrentTextColor() && !caption.getTypeface().isBold(),
+                "Playlist metadata font size/color/style changed");
+            check(more.getWidth() == Math.round(48 * density) && more.getHeight() == Math.round(48 * density) &&
+                more.getLeft() - row.findViewById(id("detail")).getRight() == Math.round(8 * density),
+                "Playlist duration/More spacing or target size changed");
+        });
+        tap(() -> songRow(playlistList(), "Queue 002").findViewById(id("title")));
+        await(() -> controller.getQueue().size() == 100 &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+            controller.getMetadata() != null &&
+            "Queue 002".contentEquals(controller.getMetadata().getDescription().getTitle()));
+        tap(() -> activity.findViewById(id("nav_playlists")));
+        saveScreenshot("optimized-compact-playlist.png");
+        tap(() -> songRow(playlistList(), "Queue 002").findViewById(id("more")));
+        tap(() -> windowText(activity.getString(resource("remove_playlist_song", "string"))));
+        await(() -> {
+            try { return savedLibrary().getJSONArray("playlists").getJSONObject(0).getJSONArray("trackIds").length() == 99; }
+            catch (org.json.JSONException error) { throw new AssertionError(error); }
+        });
+        check(savedLibrary().getJSONArray("tracks").length() == 100 && controller.getQueue().size() == 100,
+            "Playlist removal must keep the library and current Queue");
+        tap(() -> textView(activity.getWindow().getDecorView(), activity.getString(resource("back_playlists", "string"))));
+        await(() -> playlistList().getChildCount() > 0 &&
+            "Compact playlist".equals(queueTitle(playlistList().getChildAt(0))));
+        onMain(() -> check(playlistList().getChildAt(0).findViewById(id("subtitle")).isShown(),
+            "Returning to playlist groups reused the wrong row layout"));
+        tap(() -> textView(activity.getWindow().getDecorView(), "Compact playlist"));
+        await(() -> playlistList().getChildAt(0).findViewById(id("subtitle")).getVisibility() == View.GONE);
+    }
+
+    private ViewGroup playlistList() { return (ViewGroup) activity.findViewById(id("playlistList")); }
+
+    private ViewGroup queueList() { return (ViewGroup) activity.findViewById(id("queueList")); }
+
+    private View firstQueueRow() {
+        ViewGroup list = queueList();
+        if (list == null) return null;
+        View first = null;
+        for (int index = 0; index < list.getChildCount(); index++) {
+            View row = list.getChildAt(index);
+            if (row.getBottom() > 0 && row.getTop() < list.getHeight() &&
+                (first == null || row.getTop() < first.getTop())) first = row;
+        }
+        return first;
+    }
+
+    private String queueTitle(View row) { return ((TextView) row.findViewById(id("title"))).getText().toString(); }
+
+    private View queueRow(String title) { return songRow(queueList(), title); }
+
+    private View songRow(ViewGroup list, String title) {
+        for (int index = 0; index < list.getChildCount(); index++) {
+            View row = list.getChildAt(index);
+            if (queueTitle(row).startsWith(title + "  ")) return row;
+        }
+        throw new AssertionError("Song row is no longer visible: " + title);
+    }
+
+    private String queueAnchor() {
+        View row = firstQueueRow();
+        return queueTitle(row) + ":" + row.getTop();
+    }
+
+    private android.text.TextPaint queueTextPaint(TextView view, int offset) {
+        android.text.TextPaint paint = new android.text.TextPaint(view.getPaint());
+        paint.setColor(view.getCurrentTextColor());
+        android.text.Spanned text = (android.text.Spanned) view.getText();
+        for (android.text.style.CharacterStyle span : text.getSpans(offset, offset + 1, android.text.style.CharacterStyle.class)) {
+            span.updateDrawState(paint);
+        }
+        return paint;
+    }
 
     private void verifyHomeWidgets(Uri tree) throws Exception {
         onMain(() -> controller.getTransportControls().pause());
@@ -397,6 +592,13 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         widgetCommand("resize", "2:220x110");
         await(() -> widgetStatus().getBoolean("lyricNextVisible2")
             && "Synthetic ending".equals(widgetStatus().getString("lyricNext2")));
+        widgets = widgetStatus();
+        check(widgets.getFloat("lyricSizeSp2") == 24f && widgets.getFloat("lyricNextSizeSp2") == 20f,
+            "The optimized widget must use the default active and other lyric font sizes");
+        for (String row : new String[] {"lyric", "lyricNext"}) {
+            check(widgets.getInt(row + "Height2") >= widgets.getInt(row + "LayoutHeight2"),
+                "Both optimized lyric rows must fit at the compact widget height");
+        }
         check(widgetStatus().getInt("playTop2") <= Math.round(16 * activity.getResources().getDisplayMetrics().density),
             "Lyric widget controls must stay at the top");
         int minimum = Math.round(48 * activity.getResources().getDisplayMetrics().density);
@@ -565,6 +767,8 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
     }
 
     private void saveScreenshot(String name) throws Exception {
+        waitForIdleSync();
+        SystemClock.sleep(250);
         android.graphics.Bitmap bitmap = getUiAutomation().takeScreenshot();
         check(bitmap != null, "Screenshot unavailable: " + name);
         File directory = new File(getTargetContext().getExternalFilesDir(null), "test-screenshots");
@@ -738,6 +942,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         await(() -> activity.findViewById(id("lyricsTiming")).isEnabled());
 
         verifyAvailableLyricVersions(music, audio, recordFile);
+        verifyOnlineLyricCatalog(recordFile);
 
         Uri cacheTree = DocumentsContract.buildTreeDocumentUri(PACKAGE + ".test.cache", "root");
         Bundle reset = new Bundle();
@@ -925,9 +1130,132 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
 
     private void lyricVersionAction(String name, String action) {
         revealLyricVersion(name);
-        onMain(() -> check(lyricVersionRow(name).findViewById(id("lyricsVersionChoose")).performLongClick(),
-            "Lyric rows must expose long-press actions"));
+        tap(() -> lyricVersionRow(name).findViewById(id("lyricsVersionMore")));
+        await(() -> dialogWith("lyricsVersionActions") != null);
         tap(() -> windowText(activity.getString(resource(action, "string"))));
+    }
+
+    private void verifyOnlineLyricCatalog(File recordFile) throws Exception {
+        FixtureOnlineCatalog fixture = new FixtureOnlineCatalog();
+        // Synthetic HTTPS responses are confined to this instrumentation process.
+        URL.setURLStreamHandlerFactory(protocol -> "https".equals(protocol) ? fixture : null);
+        String original = fileText(recordFile);
+        String originalName = new org.json.JSONObject(original).getString("name");
+        String originalBest = new org.json.JSONObject(original).optString("bestVersionId");
+        try {
+            tap(() -> activity.findViewById(id("action_settings")));
+            if (activity.getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT) {
+                verifySettingsPage("categoryGeneral", "settingsGeneralPanel");
+                tap(() -> activity.findViewById(id("settingsLanguage")));
+                tap(() -> windowText(activity.getString(resource("language_chinese", "string"))));
+                await(() -> "zh".equals(activity.getResources().getConfiguration().locale.getLanguage()));
+            }
+            verifySettingsPage("categoryLyrics", "settingsLyricsPanel");
+            tap(() -> activity.findViewById(id("settingsOnlineLyrics")));
+            tap(() -> activity.findViewById(id("nav_player")));
+            await(() -> activity.findViewById(id("nextLyrics")).isEnabled());
+            tap(() -> activity.findViewById(id("nextLyrics")));
+            await(() -> dialogWith("onlineLyricsList") != null && fixture.searches.get() > 0);
+            onMain(() -> {
+                View dialog = dialogWith("onlineLyricsList");
+                check(dialog.findViewById(id("onlineLyricsProgress")).isShown(), "Pending search must be visible");
+                check(!((android.widget.ProgressBar) dialog.findViewById(id("onlineLyricsProgress"))).isIndeterminate(),
+                    "Pending catalogs must not require a continuous loading animation");
+                check(((ViewGroup) dialog.findViewById(id("onlineLyricsList"))).getChildCount() == 0,
+                    "The dialog must open before metadata arrives");
+            });
+            check(original.equals(fileText(recordFile)) && fixture.downloads.get() == 0,
+                "Opening the catalog must not download lyrics or change the cache");
+            fixture.release.countDown();
+            String match = "Optimized second match - Fixture singer";
+            await(() -> dialogWith("onlineLyricsList") != null &&
+                textView(dialogWith("onlineLyricsList"), match) != null);
+            check(fixture.mobileFinished.get() == 0, "Matches must be selectable while another route is pending");
+            check(fixture.downloads.get() == 0 && original.equals(fileText(recordFile)),
+                "Catalog results must remain metadata-only");
+            saveScreenshot("online-lyrics-release-progressive.png");
+            tap(() -> textView(dialogWith("onlineLyricsList"), match));
+            await(() -> dialogWith("onlineLyricsList") == null &&
+                textView(activity.findViewById(id("lyricsList")), "Optimized selected online words") != null);
+            check(fixture.downloads.get() == 1, "Only the selected match should be downloaded");
+            org.json.JSONObject saved = new org.json.JSONObject(fileText(recordFile));
+            check(originalBest.equals(saved.optString("bestVersionId")), "Online selection changed Best");
+            check(savedVersionNamed(recordFile, match), "Selected online version was not retained");
+            check(pausedAt(12_000), "Online selection changed playback");
+            saveScreenshot("online-lyrics-release-selected.png");
+            tap(() -> activity.findViewById(id("lyricVersions")));
+            await(() -> dialogWith("lyricsVersionsList") != null &&
+                !dialogWith("lyricsVersionsList").findViewById(id("lyricsVersionsStatus")).isShown());
+            revealLyricVersion(match);
+            onMain(() -> check(lyricVersionRow(match).findViewById(id("lyricsVersionChoose")).isSelected(),
+                "Available lyrics must highlight the chosen online version"));
+            revealLyricVersion(originalName);
+            tap(() -> lyricVersionRow(originalName).findViewById(id("lyricsVersionChoose")));
+            await(() -> dialogWith("lyricsVersionsList") == null && activity.findViewById(id("lyricsTiming")).isEnabled());
+            tap(() -> activity.findViewById(id("action_settings")));
+            verifySettingsPage("categoryLyrics", "settingsLyricsPanel");
+            tap(() -> activity.findViewById(id("settingsOnlineLyrics")));
+            tap(() -> activity.findViewById(id("nav_player")));
+        } finally {
+            fixture.release.countDown();
+            fixture.slow.countDown();
+        }
+    }
+
+    private static final class FixtureOnlineCatalog extends URLStreamHandler {
+        final CountDownLatch release = new CountDownLatch(1);
+        final CountDownLatch slow = new CountDownLatch(1);
+        final AtomicInteger searches = new AtomicInteger();
+        final AtomicInteger downloads = new AtomicInteger();
+        final AtomicInteger mobileFinished = new AtomicInteger();
+
+        @Override protected URLConnection openConnection(URL address) {
+            return new HttpsURLConnection(address) {
+                private volatile boolean closed;
+                private byte[] body;
+                @Override public void connect() throws IOException {
+                    if (body != null) return;
+                    String url = getURL().toString();
+                    String text;
+                    if (url.contains("fcg_query_lyric_new")) {
+                        downloads.incrementAndGet();
+                        if (!url.contains("songmid=optimizedSecond")) throw new IOException("Unselected fixture download");
+                        text = "{\"code\":0,\"lyric\":\"" + android.util.Base64.encodeToString(
+                            "[00:00]Optimized selected online words\n[00:30]Optimized ending".getBytes(StandardCharsets.UTF_8),
+                            android.util.Base64.NO_WRAP) + "\"}";
+                    } else {
+                        searches.incrementAndGet();
+                        CountDownLatch gate = url.contains("mobilecdn") ? slow : release;
+                        try {
+                            while (!closed && !gate.await(50, TimeUnit.MILLISECONDS)) { }
+                        } catch (InterruptedException error) {
+                            Thread.currentThread().interrupt();
+                            throw new IOException("Fixture search interrupted", error);
+                        }
+                        if (closed) throw new IOException("Fixture search cancelled");
+                        if (url.contains("lyrics.kugou.com/search")) text = "{\"status\":200,\"candidates\":[]}";
+                        else if (url.contains("mobilecdn")) {
+                            mobileFinished.incrementAndGet();
+                            text = "{\"status\":1,\"data\":{\"info\":[]}}";
+                        } else if (url.contains("client_search_cp")) text =
+                            "{\"code\":0,\"data\":{\"song\":{\"list\":[{\"songname\":\"Optimized first match\",\"songmid\":\"optimizedFirst\"}," +
+                            "{\"songname\":\"Optimized second match\",\"singer\":[{\"name\":\"Fixture singer\"}],\"songmid\":\"optimizedSecond\"}]}}}";
+                        else if (url.contains("music.163.com")) text = "{\"code\":200,\"result\":{\"songCount\":0}}";
+                        else if (url.contains("search.kuwo.cn")) text = "{\"abslist\":[]}";
+                        else throw new IOException("Unexpected fixture endpoint: " + url);
+                    }
+                    body = text.getBytes(StandardCharsets.UTF_8);
+                }
+                @Override public int getResponseCode() throws IOException { connect(); return 200; }
+                @Override public InputStream getInputStream() throws IOException { connect(); return new ByteArrayInputStream(body); }
+                @Override public int getContentLength() { return body == null ? -1 : body.length; }
+                @Override public void disconnect() { closed = true; }
+                @Override public boolean usingProxy() { return false; }
+                @Override public String getCipherSuite() { return "Fixture"; }
+                @Override public java.security.cert.Certificate[] getLocalCertificates() { return null; }
+                @Override public java.security.cert.Certificate[] getServerCertificates() { return new java.security.cert.Certificate[0]; }
+            };
+        }
     }
 
     private void confirmLyricRemoval() {

@@ -448,10 +448,9 @@ class StorageCompatibilityTest {
             Intent().setData(image).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)), true)
         instrumentation.addMonitor(monitor)
         try {
+            onMain { app.themeMode = com.macarmusic.app.data.DisplaySettings.CUSTOM_THEME }
             ActivityScenario.launch(MainActivity::class.java).use {
                 onView(withId(R.id.action_settings)).perform(click())
-                onView(withId(R.id.categoryBackgrounds)).perform(scrollTo(), click())
-                onView(withId(R.id.settingsUseCustomTheme)).perform(scrollTo(), click())
                 val previous = app.displaySettings.options.value.imageVersion
                 onView(withId(R.id.settingsBackgroundImage)).perform(scrollTo(), click())
                 await { app.displaySettings.options.value.imageVersion > previous }

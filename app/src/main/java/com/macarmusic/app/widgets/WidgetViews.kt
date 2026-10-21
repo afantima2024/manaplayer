@@ -4,19 +4,27 @@ import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Color
+import android.util.TypedValue
+import android.view.ContextThemeWrapper
 import android.view.View
 import android.widget.RemoteViews
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.graphics.ColorUtils
 import com.macarmusic.app.R
+import com.macarmusic.app.data.DisplayOptions
 import com.macarmusic.app.model.WidgetPlayback
 import com.macarmusic.app.model.WidgetPresentation
 import com.macarmusic.app.ui.MainActivity
+import com.macarmusic.app.ui.AccentTheme
 import com.macarmusic.app.ui.TimeText
 
 object WidgetViews {
     fun full(context: Context, kind: HomeWidgetKind, id: Int, state: WidgetPlayback,
-        cover: Bitmap?, lyric: String, transparency: Int = 50): RemoteViews = RemoteViews(context.packageName, kind.layout).apply {
-        setInt(R.id.widget_background, "setImageAlpha", WidgetPresentation.backgroundAlpha(transparency))
+        cover: Bitmap?, lyric: String, display: DisplayOptions = DisplayOptions()): RemoteViews = RemoteViews(context.packageName, kind.layout).apply {
+        setInt(R.id.widget_background, "setImageAlpha", WidgetPresentation.backgroundAlpha(display.widgetTransparency))
         val open = openPlayer(context)
         setOnClickPendingIntent(R.id.widget_root, open)
         setContentDescription(R.id.widget_root, state.track?.let {
@@ -52,9 +60,32 @@ object WidgetViews {
         if (kind == HomeWidgetKind.LYRICS) {
             setOnClickPendingIntent(R.id.widget_lyric, open)
             setOnClickPendingIntent(R.id.widget_lyric_next, open)
+            lyricAppearance(context, this, display)
         }
         progress(context, this, state)
         if (kind == HomeWidgetKind.LYRICS) lyrics(this, lyric)
+    }
+
+    private fun lyricAppearance(context: Context, views: RemoteViews, display: DisplayOptions) {
+        val configuration = Configuration(context.resources.configuration).apply {
+            val night = when (AppCompatDelegate.getDefaultNightMode()) {
+                AppCompatDelegate.MODE_NIGHT_YES -> Configuration.UI_MODE_NIGHT_YES
+                AppCompatDelegate.MODE_NIGHT_NO -> Configuration.UI_MODE_NIGHT_NO
+                else -> uiMode and Configuration.UI_MODE_NIGHT_MASK
+            }
+            uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or night
+        }
+        val theme = ContextThemeWrapper(context.createConfigurationContext(configuration), R.style.Theme_ManaPlayer)
+        AccentTheme.apply(theme, display.themeAccent)
+        val appearance = display.lyricAppearance
+        val active = appearance.activeColor?.or(Color.BLACK)
+            ?: AccentTheme.color(theme, com.google.android.material.R.attr.colorPrimary)
+        val other = appearance.otherColor?.or(Color.BLACK) ?: ColorUtils.setAlphaComponent(
+            AccentTheme.color(theme, com.google.android.material.R.attr.colorOnSurface), 191)
+        views.setTextColor(R.id.widget_lyric, active)
+        views.setTextColor(R.id.widget_lyric_next, other)
+        views.setTextViewTextSize(R.id.widget_lyric, TypedValue.COMPLEX_UNIT_SP, appearance.activeSizeSp.toFloat())
+        views.setTextViewTextSize(R.id.widget_lyric_next, TypedValue.COMPLEX_UNIT_SP, appearance.otherSizeSp.toFloat())
     }
 
     fun dynamic(context: Context, kind: HomeWidgetKind, state: WidgetPlayback, lyric: String): RemoteViews =

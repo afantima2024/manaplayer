@@ -31,6 +31,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
@@ -1103,6 +1104,63 @@ class LyricCacheIntegrationTest {
         assertFalse(inventory.choices.single().cached)
         fails { repository.remove(track, inventory.choices.single(), current, inventory.generation) }
         assertEquals(0L, cache.inspect().files)
+    }
+
+    @Test fun onlineCatalogDoesNotWriteAndSelectedDownloadPreservesBestTimingAndRetrievalAge() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val calls = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val repository = selectionRepository(track, calls)
+        cache = repository.cache
+        val original = repository.load(track, online = true)
+        val inventory = repository.available(track, original)
+        val marked = requireNotNull(repository.best(track, inventory.choices.single(), original, inventory.generation))
+        val key = internal.keys().single()
+        val before = cache.read(key).value
+        val downloads = calls.count { "fcg_query_lyric_new" in it }
+        val catalogs = repository.searchOnline(track).toList()
+        assertEquals(5, catalogs.size)
+        assertEquals(before, cache.read(key).value)
+        assertEquals(downloads, calls.count { "fcg_query_lyric_new" in it })
+        val choice = catalogs.flatMap { it.candidates }.single { it.key.id == "second" }
+        val chosen = requireNotNull(repository.selectOnline(track, choice, cache.generation))
+        assertEquals("Synthetic alternative", chosen.lyrics!!.lines.first().text)
+        assertEquals(marked.document!!.bestVersionId, chosen.document!!.bestVersionId)
+        assertTrue(chosen.availableOffline)
+        assertFalse(chosen.document.selected)
+        val oldAge = now - 86_400_000
+        val timed = repository.saveTiming(track, chosen.document.copy(savedAtMs = oldAge), 750)
+        val selectedAgain = requireNotNull(repository.selectOnline(track, choice, cache.generation))
+        assertEquals(750L, selectedAgain.document!!.offsetMs)
+        assertEquals(oldAge, selectedAgain.document.savedAtMs)
+        assertEquals(timed.document!!.bestVersionId, selectedAgain.document.bestVersionId)
+        assertEquals(2, repository.available(track, selectedAgain).choices.size)
+        val fresh = selectionRepository(track, calls).load(track, online = true, allowNetwork = false)
+        assertEquals(original.document!!.text, fresh.document!!.text)
+    }
+
+    @Test fun clearingCacheDuringSelectedOnlineDownloadRejectsTheLateSave() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val entered = CompletableDeferred<Unit>()
+        val released = CompletableDeferred<Unit>()
+        val repository = selectionRepository(track, mutableListOf()) { url ->
+            if ("fcg_query_lyric_new" in url) { entered.complete(Unit); released.await() }
+        }
+        cache = repository.cache
+        val original = repository.saveTiming(track, CachedLyric("[00:01]Synthetic retained", LyricOrigin.QQ, now), 100)
+        val candidate = com.macarmusic.app.lyrics.OnlineLyricCandidate(
+            com.macarmusic.app.lyrics.LyricCandidateId(com.macarmusic.app.lyrics.LyricSearchRoute.QQ, "second"),
+            track.title, track.artist)
+        val generation = cache.generation
+        val pending = async { fails { repository.selectOnline(track, candidate, generation) } }
+        try {
+            withTimeout(5_000) { entered.await() }
+            assertEquals(1L, cache.clear().files)
+            released.complete(Unit)
+            pending.await()
+            assertEquals(0L, cache.inspect().files)
+            assertEquals(original, repository.latest.value.result)
+            fails { repository.selectOnline(track, candidate, generation) }
+        } finally { released.complete(Unit); pending.cancel() }
     }
 
     private fun selectionRepository(track: Track, calls: MutableList<String>, before: suspend (String) -> Unit = {}) =

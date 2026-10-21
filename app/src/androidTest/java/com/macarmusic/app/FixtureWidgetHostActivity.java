@@ -226,7 +226,17 @@ public class FixtureWidgetHostActivity extends Activity {
 
     private void text(Bundle result, View root, int kind, String key, String name) {
         TextView view = root.findViewById(id(name));
-        if (view != null) result.putString(key + kind, view.getText().toString());
+        if (view == null) return;
+        result.putString(key + kind, view.getText().toString());
+        result.putInt(key + "Color" + kind, view.getCurrentTextColor());
+        result.putFloat(key + "SizeSp" + kind, view.getTextSize() / view.getResources().getDisplayMetrics().scaledDensity);
+        result.putInt(key + "Height" + kind, view.getHeight());
+        result.putInt(key + "LayoutHeight" + kind, view.getLayout() == null ? 0 : view.getLayout().getHeight());
+        int[] position = new int[2];
+        int[] origin = new int[2];
+        view.getLocationOnScreen(position);
+        root.getLocationOnScreen(origin);
+        result.putInt(key + "Top" + kind, position[1] - origin[1]);
     }
     private int id(String name) { return playerResources.getIdentifier(name, "id", PLAYER); }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }

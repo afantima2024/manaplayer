@@ -1,5 +1,6 @@
 package com.macarmusic.app.ui
 
+import kotlin.math.roundToInt
 import androidx.appcompat.widget.TooltipCompat
 
 import android.animation.Animator
@@ -182,6 +183,7 @@ class MainActivity : AppCompatActivity() {
     private var deviceMusicDialog: AlertDialog? = null
     private var lyricTimingDialog: AlertDialog? = null
     private var lyricVersionsDialog: LyricVersionsDialog? = null
+    private var onlineLyricsDialog: OnlineLyricsDialog? = null
     private var timingTrackId: String? = null
     private var timingDocument: CachedLyric? = null
     private var renderedDeviceMusic: DeviceMusicPicker? = null
@@ -231,6 +233,8 @@ class MainActivity : AppCompatActivity() {
     private val originalActionStrokes by lazy {
         listOf(now.controls.favorite, now.controls.details).associateWith { it.strokeWidth }
     }
+    private val favoriteTextSize by lazy { now.controls.favorite.textSize }
+    private val favoriteIconSize by lazy { now.controls.favorite.iconSize }
     private var customSystemBars = false
     private val barElevations by lazy {
         listOf(binding.toolbar, binding.navigation, binding.miniPlayer).associateWith { it.elevation }
@@ -476,6 +480,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         lyricVersionsDialog?.dismiss()
+        onlineLyricsDialog?.dismiss()
         lyricTimingDialog?.dismiss()
         deviceMusicDialog?.dismiss()
         deviceMusicDialog = null
@@ -526,7 +531,6 @@ class MainActivity : AppCompatActivity() {
     private val playerListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
             updatePlayer()
-            if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) queueScrollPending = true
             if (events.contains(Player.EVENT_TIMELINE_CHANGED) ||
                 events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
                 events.contains(Player.EVENT_MEDIA_METADATA_CHANGED)
@@ -576,6 +580,7 @@ class MainActivity : AppCompatActivity() {
                 } }
                 launch { model.lyrics.collect(::renderLyrics) }
                 launch { model.lyricChoices.collect(::renderLyricChoices) }
+                launch { model.onlineLyrics.collect(::renderOnlineLyrics) }
                 launch { model.importingBackground.collect { renderSettings() } }
                 launch { model.lyricCacheBusy.collect { renderLyricCache() } }
                 launch { model.deviceMusic.collect(::renderDeviceMusicPicker) }
@@ -689,7 +694,7 @@ class MainActivity : AppCompatActivity() {
         }
         now.cover.retryLyrics.setOnClickListener { model.requestLyrics(currentTrack(), refresh = true) }
         now.cover.lyricVersions.setOnClickListener { model.showLyricVersions() }
-        now.cover.nextLyrics.setOnClickListener { model.nextLyrics() }
+        now.cover.nextLyrics.setOnClickListener { model.showOnlineLyrics() }
         now.cover.lyricsTiming.setOnClickListener { showLyricTiming() }
         TooltipCompat.setTooltipText(now.cover.nextLyrics, getString(R.string.lyrics_next))
         TooltipCompat.setTooltipText(now.cover.lyricsTiming, getString(R.string.lyrics_timing))
@@ -891,8 +896,9 @@ class MainActivity : AppCompatActivity() {
             },
         )
         queueAdapter = MusicRowAdapter(
-            compact = compactChrome,
+            compact = true,
             onClick = { row ->
+                queueScrollPending = false
                 val index = row.key.substringBefore(':').toIntOrNull()
                 if (index != null) withController {
                     if (index < it.mediaItemCount) {
@@ -909,6 +915,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildPlaylists() {
         playlistPanel = ListPanel(this, compactChrome)
+        playlistPanel.list.id = R.id.playlistList
         playlistBack = playlistPanel.action(R.string.back_playlists) { model.playlist(null) }
         playlistPlay = playlistPanel.action(R.string.play_all) {
             model.selectedPlaylist.value?.let {
@@ -986,7 +993,6 @@ class MainActivity : AppCompatActivity() {
         }
         settings.settingsTheme.setOnClickListener { themeDialog() }
         settings.settingsAccent.setOnClickListener { accentDialog() }
-        settings.settingsUseCustomTheme.setOnClickListener { model.app.themeMode = DisplaySettings.CUSTOM_THEME }
         settings.settingsControlBlocks.setOnCheckedChangeListener { _, checked ->
             model.app.displaySettings.update { it.copy(controlBlocks = checked) }
         }
@@ -1390,8 +1396,7 @@ class MainActivity : AppCompatActivity() {
         }.joinToString("\n")
         settings.lyricsProviderOrder.text = getString(R.string.lyrics_provider_order, providers,
             getString(if (display.lyricsEnabled && display.effective().onlineLyrics) R.string.lyrics_online_enabled else R.string.lyrics_online_disabled))
-        settings.settingsBackground.isVisible = display.customTheme
-        settings.settingsUseCustomTheme.isVisible = !display.customTheme
+        settings.settingsBackgroundPanel.isVisible = display.customTheme
         settings.settingsBackgroundImage.isEnabled = !model.importingBackground.value && !model.backupBusy.value
         settings.settingsBackgroundImage.setText(
             if (display.imageVersion == 0L) R.string.background_choose else R.string.background_change,
@@ -1803,7 +1808,7 @@ class MainActivity : AppCompatActivity() {
         playlistPlay.isEnabled = playlistTrackRows.isNotEmpty()
         val rows = if (id == null) library.playlists.map {
             MusicRow(it.id, it.name, resources.getQuantityString(R.plurals.track_count, it.trackIds.size, it.trackIds.size), icon = R.drawable.ic_playlist)
-        } else playlistTrackRows.map { trackRow(it) }
+        } else playlistTrackRows.map { trackRow(it).copy(inlineSubtitle = true) }
         playlistAdapter.submitList(rows)
         playlistPanel.heading.text = playlist?.name ?: getString(R.string.playlists)
         playlistPanel.empty(getString(if (id == null) R.string.playlists_empty else R.string.playlist_empty), rows.isEmpty())
@@ -1826,7 +1831,7 @@ class MainActivity : AppCompatActivity() {
             queueSignature = signature
         }
         queueAdapter.submitList(queueTracks.mapIndexed { index, track ->
-            trackRow(track).copy(key = "$index:${track.id}", active = index == player?.currentMediaItemIndex)
+            trackRow(track).copy(key = "$index:${track.id}", active = index == player?.currentMediaItemIndex, inlineSubtitle = true)
         }) {
             val index = controller?.currentMediaItemIndex ?: -1
             if (queueScrollPending && visibleScreen === queuePanel && index in queueAdapter.currentList.indices) {
@@ -1974,12 +1979,14 @@ class MainActivity : AppCompatActivity() {
         val shuffled = options.order == PlayOrder.RANDOM
         now.controls.shuffle.contentDescription = getString(orderLabel(options.order))
         now.controls.shuffle.imageTintList = tint(shuffled)
+        now.controls.shuffle.isSelected = shuffled
         now.controls.repeat.setImageResource(when (options.loop) {
             LoopMode.SINGLE_FILE -> R.drawable.ic_repeat_one
             LoopMode.FOLDER -> R.drawable.ic_folder
             else -> R.drawable.ic_repeat
         })
         now.controls.repeat.imageTintList = tint(options.loop != LoopMode.OFF)
+        now.controls.repeat.isSelected = options.loop != LoopMode.OFF
         now.controls.repeat.contentDescription = getString(R.string.loop_mode_description, getString(loopLabel(options.loop)))
         now.controls.playbackOptions.text = getString(R.string.playback_options_summary,
             getString(R.string.loop_mode_description, getString(loopLabel(options.loop))), getString(orderLabel(options.order)))
@@ -1988,6 +1995,10 @@ class MainActivity : AppCompatActivity() {
         now.controls.favorite.contentDescription = favoriteLabel
         now.controls.favorite.text = if (now.root.compactControls) "" else favoriteLabel
         now.controls.favorite.setIconResource(if (favored) R.drawable.ic_favorite else R.drawable.ic_favorite_border)
+        val favoriteScale = if (favored) 1.5f else 1f
+        now.controls.favorite.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, favoriteTextSize * favoriteScale)
+        now.controls.favorite.iconSize = (favoriteIconSize * favoriteScale).roundToInt()
+        now.controls.favorite.isSelected = favored
         now.controls.favorite.isEnabled = track != null && findTrack(track.id) != null
         now.controls.details.isEnabled = track != null
         val status = when {
@@ -2068,6 +2079,7 @@ class MainActivity : AppCompatActivity() {
         now.controls.volumeMute.setImageResource(if (muted) R.drawable.ic_volume_off else R.drawable.ic_volume_on)
         now.controls.volumeMute.contentDescription = getString(if (muted) R.string.unmute_player else R.string.mute_player)
         now.controls.volumeMute.imageTintList = tint(muted)
+        now.controls.volumeMute.isSelected = muted
         now.controls.volume.progress = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
         now.controls.volumeValue.setTextIfChanged(getString(R.string.volume_level, now.controls.volume.progress))
     }
@@ -2118,8 +2130,8 @@ class MainActivity : AppCompatActivity() {
         now.cover.lyricsStatus.maxLines = if (lyrics == null) 4 else 1
         now.cover.lyricVersions.isVisible = enabled
         now.cover.lyricVersions.isEnabled = !state.loading
-        now.cover.nextLyrics.isVisible = enabled && lyrics != null
-        now.cover.nextLyrics.isEnabled = !state.loading && display.onlineLyrics && !display.lightMode
+        now.cover.nextLyrics.isVisible = enabled
+        now.cover.nextLyrics.isEnabled = display.onlineLyrics && !display.lightMode
         now.cover.lyricsTiming.isVisible = enabled && lyrics?.timed == true && result?.document != null
         now.cover.lyricsTiming.isEnabled = !state.loading
         if (lyricTimingDialog != null && (!enabled || timingTrackId != state.trackId ||
@@ -2176,6 +2188,22 @@ class MainActivity : AppCompatActivity() {
                 if (!isChangingConfigurations) model.closeLyricVersions()
             }.also {
                 lyricVersionsDialog = it
+                it.show()
+            }
+        dialog.update(state)
+    }
+
+    private fun renderOnlineLyrics(state: com.macarmusic.app.lyrics.OnlineLyricSearch?) {
+        if (state == null) {
+            onlineLyricsDialog?.dismiss()
+            return
+        }
+        val dialog = onlineLyricsDialog ?: OnlineLyricsDialog(this,
+            { model.app.displaySettings.options.value }, model::chooseOnlineLyric) {
+                onlineLyricsDialog = null
+                if (!isChangingConfigurations) model.closeOnlineLyrics()
+            }.also {
+                onlineLyricsDialog = it
                 it.show()
             }
         dialog.update(state)

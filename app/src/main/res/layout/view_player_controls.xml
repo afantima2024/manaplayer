@@ -126,7 +126,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/player_gap"
         android:gravity="center">
-        <androidx.appcompat.widget.AppCompatImageButton
+        <com.macarmusic.app.ui.PlayerIconButton
             android:id="@+id/shuffle"
             style="@style/PlayerIconButton"
             android:layout_width="0dp"
@@ -179,7 +179,7 @@
             android:layout_marginEnd="@dimen/player_gap"
             android:contentDescription="@string/next"
             app:srcCompat="@drawable/ic_next" />
-        <androidx.appcompat.widget.AppCompatImageButton
+        <com.macarmusic.app.ui.PlayerIconButton
             android:id="@+id/repeat"
             style="@style/PlayerIconButton"
             android:layout_width="0dp"
@@ -226,7 +226,7 @@
         android:paddingStart="8dp"
         android:paddingEnd="8dp"
         android:gravity="center_vertical">
-        <androidx.appcompat.widget.AppCompatImageButton
+        <com.macarmusic.app.ui.PlayerIconButton
             android:id="@+id/volumeMute"
             style="@style/PlayerIconButton"
             android:layout_width="48dp"

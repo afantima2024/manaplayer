@@ -25,12 +25,6 @@
                 android:layout_height="wrap_content"
                 android:text="@string/category_general" />
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/categoryBackgrounds"
-                style="@style/SettingCategory"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/category_backgrounds" />
-            <com.google.android.material.button.MaterialButton
                 android:id="@+id/categoryPlayback"
                 style="@style/SettingCategory"
                 android:layout_width="match_parent"
@@ -145,6 +139,119 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/theme" />
+                    <LinearLayout
+                        android:id="@+id/settingsBackgroundPanel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/settingsBackgroundImage"
+                            style="@style/SettingButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/background_choose" />
+                        <TextView
+                            android:id="@+id/backgroundSummary"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:textColor="?attr/colorOnSurfaceVariant"
+                            android:textSize="16sp"
+                            android:padding="8dp" />
+                        <LinearLayout
+                            android:id="@+id/settingsSlideshow"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:visibility="gone">
+                            <TextView
+                                android:id="@+id/backgroundIntervalValue"
+                                style="@style/SettingLabel"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/background_interval"
+                                android:labelFor="@id/backgroundInterval" />
+                            <SeekBar
+                                android:id="@+id/backgroundInterval"
+                                android:layout_width="match_parent"
+                                android:layout_height="56dp"
+                                android:max="119"
+                                android:contentDescription="@string/background_interval" />
+                            <TextView
+                                android:id="@+id/backgroundDurationValue"
+                                style="@style/SettingLabel"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/background_duration"
+                                android:labelFor="@id/backgroundDuration" />
+                            <SeekBar
+                                android:id="@+id/backgroundDuration"
+                                android:layout_width="match_parent"
+                                android:layout_height="56dp"
+                                android:max="100"
+                                android:contentDescription="@string/background_duration" />
+                            <TextView
+                                style="@style/SettingLabel"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/background_transition"
+                                android:labelFor="@id/backgroundTransition" />
+                            <Spinner
+                                android:id="@+id/backgroundTransition"
+                                style="@style/SettingChoice"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content" />
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:padding="8dp"
+                                android:text="@string/slideshow_help"
+                                android:textColor="?attr/colorOnSurfaceVariant"
+                                android:textSize="16sp" />
+                        </LinearLayout>
+                        <TextView
+                            android:id="@+id/backgroundBlurValue"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:textColor="?attr/colorOnSurface"
+                            android:textSize="18sp"
+                            android:text="@string/background_blur"
+                            android:labelFor="@id/backgroundBlur" />
+                        <SeekBar
+                            android:id="@+id/backgroundBlur"
+                            android:layout_width="match_parent"
+                            android:layout_height="56dp"
+                            android:max="100"
+                            android:contentDescription="@string/background_blur" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/settingsBackgroundTint"
+                            style="@style/SettingButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/background_tint" />
+                        <TextView
+                            android:id="@+id/backgroundTintValue"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:textColor="?attr/colorOnSurface"
+                            android:textSize="18sp"
+                            android:text="@string/background_tint_strength"
+                            android:labelFor="@id/backgroundTintStrength" />
+                        <SeekBar
+                            android:id="@+id/backgroundTintStrength"
+                            android:layout_width="match_parent"
+                            android:layout_height="56dp"
+                            android:max="100"
+                            android:contentDescription="@string/background_tint_strength" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:paddingTop="8dp"
+                            android:paddingBottom="16dp"
+                            android:text="@string/background_help"
+                            android:textColor="?attr/colorOnSurfaceVariant"
+                            android:textSize="16sp" />
+                    </LinearLayout>
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/settingsAccent"
                         style="@style/SettingButton"
@@ -288,132 +395,6 @@
                         android:text="@string/backup_help"
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:textSize="16sp" />
-                </LinearLayout>
-                <LinearLayout
-                    android:id="@+id/settingsBackgroundPanel"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:visibility="gone">
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/settingsUseCustomTheme"
-                        style="@style/SettingButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/background_use_custom" />
-                    <LinearLayout
-                        android:id="@+id/settingsBackground"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:visibility="gone">
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/settingsBackgroundImage"
-                            style="@style/SettingButton"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="@string/background_choose" />
-                        <TextView
-                            android:id="@+id/backgroundSummary"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            android:textSize="16sp"
-                            android:padding="8dp" />
-                        <LinearLayout
-                            android:id="@+id/settingsSlideshow"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="vertical"
-                            android:visibility="gone">
-                            <TextView
-                                android:id="@+id/backgroundIntervalValue"
-                                style="@style/SettingLabel"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:text="@string/background_interval"
-                                android:labelFor="@id/backgroundInterval" />
-                            <SeekBar
-                                android:id="@+id/backgroundInterval"
-                                android:layout_width="match_parent"
-                                android:layout_height="56dp"
-                                android:max="119"
-                                android:contentDescription="@string/background_interval" />
-                            <TextView
-                                android:id="@+id/backgroundDurationValue"
-                                style="@style/SettingLabel"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:text="@string/background_duration"
-                                android:labelFor="@id/backgroundDuration" />
-                            <SeekBar
-                                android:id="@+id/backgroundDuration"
-                                android:layout_width="match_parent"
-                                android:layout_height="56dp"
-                                android:max="100"
-                                android:contentDescription="@string/background_duration" />
-                            <TextView
-                                style="@style/SettingLabel"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:text="@string/background_transition"
-                                android:labelFor="@id/backgroundTransition" />
-                            <Spinner
-                                android:id="@+id/backgroundTransition"
-                                style="@style/SettingChoice"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content" />
-                            <TextView
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:padding="8dp"
-                                android:text="@string/slideshow_help"
-                                android:textColor="?attr/colorOnSurfaceVariant"
-                                android:textSize="16sp" />
-                        </LinearLayout>
-                        <TextView
-                            android:id="@+id/backgroundBlurValue"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:textColor="?attr/colorOnSurface"
-                            android:textSize="18sp"
-                            android:text="@string/background_blur"
-                            android:labelFor="@id/backgroundBlur" />
-                        <SeekBar
-                            android:id="@+id/backgroundBlur"
-                            android:layout_width="match_parent"
-                            android:layout_height="56dp"
-                            android:max="100"
-                            android:contentDescription="@string/background_blur" />
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/settingsBackgroundTint"
-                            style="@style/SettingButton"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="@string/background_tint" />
-                        <TextView
-                            android:id="@+id/backgroundTintValue"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:textColor="?attr/colorOnSurface"
-                            android:textSize="18sp"
-                            android:text="@string/background_tint_strength"
-                            android:labelFor="@id/backgroundTintStrength" />
-                        <SeekBar
-                            android:id="@+id/backgroundTintStrength"
-                            android:layout_width="match_parent"
-                            android:layout_height="56dp"
-                            android:max="100"
-                            android:contentDescription="@string/background_tint_strength" />
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:paddingTop="8dp"
-                            android:paddingBottom="16dp"
-                            android:text="@string/background_help"
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            android:textSize="16sp" />
-                    </LinearLayout>
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/settingsPlaybackPanel"

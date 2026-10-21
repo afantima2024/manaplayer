@@ -146,7 +146,8 @@ class PlayerLayout @JvmOverloads constructor(context: Context, attrs: AttributeS
             findViewById<MaterialButton>(id).apply {
                 text = if (compact) "" else contentDescription
                 minimumWidth = dp(48)
-                iconGravity = if (compact) MaterialButton.ICON_GRAVITY_TEXT_START else MaterialButton.ICON_GRAVITY_START
+                gravity = android.view.Gravity.CENTER
+                iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
                 iconPadding = if (compact) 0 else dp(8)
                 setPaddingRelative(dp(if (compact) 12 else 16), paddingTop, dp(if (compact) 12 else 16), paddingBottom)
             }

@@ -1,10 +1,13 @@
 package com.macarmusic.app.lyrics
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.IOException
@@ -29,6 +32,111 @@ class OnlineLyricsClientTest {
             LyricSearchRoute.QQ, LyricSearchRoute.NETEASE, LyricSearchRoute.KUWO), OnlineLyricsClient.ROUTES)
         assertEquals(listOf(LyricOrigin.KUGOU, LyricOrigin.QQ, LyricOrigin.NETEASE, LyricOrigin.KUWO),
             OnlineLyricsClient.PROVIDERS)
+    }
+
+    @Test fun onlineCatalogListsEveryRouteWithoutDownloadingAndFetchesOnlyTheChosenMatch() = runBlocking {
+        val calls = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val client = client { url ->
+            calls.add(url)
+            when {
+                "lyrics.kugou.com/search" in url -> search
+                "mobilecdn" in url -> mobile
+                "client_search_cp" in url -> qqSearch().replace("]}}}",
+                    """,{"songname":"Synthetic second","singer":[{"name":"Another singer"}],"interval":62,"songmid":"second"}]}}}""")
+                "/get/web?" in url -> """{"code":200,"result":{"songs":[{"id":9,"name":"Synthetic netease","artists":[{"name":"Singer"}]}]}}"""
+                "search.kuwo.cn" in url -> """{"abslist":[{"SONGNAME":"Synthetic kuwo","ARTIST":"Singer","MUSICRID":"MUSIC_8"}]}"""
+                "songmid=second" in url -> """{"code":0,"lyric":"${encoded(text)}"}"""
+                else -> throw AssertionError("Only the selected lyric can be downloaded: $url")
+            }
+        }
+        val catalogs = client.search(query).toList()
+        assertEquals(OnlineLyricsClient.ROUTES.toSet(), catalogs.map { it.route }.toSet())
+        assertTrue(catalogs.none { it.failed })
+        assertEquals(5, calls.size)
+        val matches = catalogs.flatMap { it.candidates }
+        assertEquals(6, matches.size)
+        val choice = matches.single { it.key.id == "second" }
+        assertEquals("Synthetic second", choice.title)
+        assertEquals("Another singer", choice.artist)
+        assertEquals(62_000L, choice.durationMs)
+        assertFound(text, LyricOrigin.QQ, client.download(choice))
+        assertEquals(6, calls.size)
+        assertTrue(calls.last().contains("songmid=second"))
+    }
+
+    @Test fun onlineResultsAreProgressiveBoundedAndCancelPendingCatalogs() = runBlocking {
+        val never = CompletableDeferred<Unit>()
+        val active = java.util.concurrent.atomic.AtomicInteger()
+        val peak = java.util.concurrent.atomic.AtomicInteger()
+        val started = java.util.concurrent.atomic.AtomicInteger()
+        val cancelled = CompletableDeferred<Unit>()
+        val client = client { url ->
+            val request = started.incrementAndGet()
+            val count = active.incrementAndGet()
+            peak.updateAndGet { maxOf(it, count) }
+            try {
+                if (request == 2) empty(url) else {
+                    try { never.await() } finally { cancelled.complete(Unit) }
+                    empty(url)
+                }
+            } finally { active.decrementAndGet() }
+        }
+        val first = withTimeout(3_000) { client.search(query).first() }
+        assertTrue(first.route in OnlineLyricsClient.ROUTES)
+        assertFalse(first.failed)
+        withTimeout(3_000) { cancelled.await() }
+        assertEquals(2, peak.get())
+        assertEquals(0, active.get())
+    }
+
+    @Test fun onlineCatalogRetainsManualLowRankedChoicesButBoundsEachRouteToTen() = runBlocking {
+        val client = client { url ->
+            if ("lyrics.kugou.com/search" in url) """{"status":200,"candidates":[${
+                (1..15).joinToString(",") {
+                    """{"id":"$it","accesskey":"fixture","song":"Unrelated $it","singer":"Different","duration":60000}"""
+                }
+            }]}""" else empty(url)
+        }
+        val direct = client.search(query).toList().single { it.route == LyricSearchRoute.KUGOU_DIRECT }
+        assertEquals(10, direct.candidates.size)
+        assertEquals(10, direct.candidates.map { it.key }.toSet().size)
+        assertTrue(direct.candidates.all { it.title.startsWith("Unrelated") })
+        assertNull(client.find(query))
+    }
+
+    @Test fun onlineCatalogReportsFailedAndTimedOutRoutesWithoutDiscardingOtherMatches() = runBlocking {
+        val errors = java.util.concurrent.CopyOnWriteArrayList<LyricOrigin>()
+        val client = OnlineLyricsClient({ url, _, _ ->
+            when {
+                "lyrics.kugou.com/search" in url -> { delay(5_000); search }
+                "mobilecdn" in url -> throw IOException("Synthetic provider failure")
+                "client_search_cp" in url -> qqSearch()
+                else -> empty(url)
+            }
+        }, providerTimeoutMs = 200) { provider, _ -> errors.add(provider) }
+        val catalogs = withTimeout(3_000) { client.search(query).toList() }
+        assertEquals(5, catalogs.size)
+        assertEquals(setOf(LyricSearchRoute.KUGOU_DIRECT, LyricSearchRoute.KUGOU_MOBILE),
+            catalogs.filter { it.failed }.map { it.route }.toSet())
+        assertEquals(1, catalogs.single { it.route == LyricSearchRoute.QQ }.candidates.size)
+        assertEquals(2, errors.size)
+    }
+
+    @Test fun onlineProgressAppendsWithoutMovingOrDuplicatingExistingRows() {
+        val qq = OnlineLyricCandidate(LyricCandidateId(LyricSearchRoute.QQ, "one"), "Title", "Singer")
+        val kuwo = OnlineLyricCandidate(LyricCandidateId(LyricSearchRoute.KUWO, "two"), "Title", "Singer")
+        var state = OnlineLyricSearch("track", "Song", 7)
+            .append(OnlineLyricCatalog(LyricSearchRoute.QQ, listOf(qq)))
+        state = state.copy(busyKey = qq.key).append(OnlineLyricCatalog(LyricSearchRoute.KUWO, listOf(kuwo)))
+            .append(OnlineLyricCatalog(LyricSearchRoute.QQ, listOf(qq)))
+        assertEquals(listOf(qq, kuwo), state.candidates)
+        assertEquals(qq.key, state.busyKey)
+        assertEquals(7L, state.generation)
+        assertTrue(state.searching)
+        for (route in OnlineLyricsClient.ROUTES) state = state.append(OnlineLyricCatalog(route, failed = true))
+        assertFalse(state.searching)
+        assertEquals(OnlineLyricsClient.ROUTES.toSet(), state.failed)
+        assertEquals(listOf(qq, kuwo), state.candidates)
     }
 
     @Test fun copiedNumberedFilenameSearchesTheSongAndSingerNotCopy() = runBlocking {

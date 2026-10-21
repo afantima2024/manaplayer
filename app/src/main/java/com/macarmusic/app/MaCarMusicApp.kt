@@ -55,7 +55,8 @@ class MaCarMusicApp : Application() {
     }
     internal val playbackReady = MutableStateFlow(false)
     val spectrum by lazy { SpectrumSource(applicationScope) }
-    val homeWidgets by lazy { HomeWidgets(this) }
+    private val widgets = lazy { HomeWidgets(this) }
+    val homeWidgets get() = widgets.value
     val localizedContext by lazy { LocalizedContext(this) }
 
     override fun onCreate() {
@@ -108,11 +109,12 @@ class MaCarMusicApp : Application() {
 
     private fun applyTheme() {
         val appearance = displaySettings.options.value
-        AppCompatDelegate.setDefaultNightMode(
-            if (!appearance.customTheme) themeMode
+        val mode = if (!appearance.customTheme) themeMode
             else if (appearance.tint == BackgroundTint.LIGHT) AppCompatDelegate.MODE_NIGHT_NO
-            else AppCompatDelegate.MODE_NIGHT_YES,
-        )
+            else AppCompatDelegate.MODE_NIGHT_YES
+        val changed = AppCompatDelegate.getDefaultNightMode() != mode
+        AppCompatDelegate.setDefaultNightMode(mode)
+        if (changed && widgets.isInitialized()) applicationScope.launch(Dispatchers.Main.immediate) { homeWidgets.refresh() }
     }
 
     var sortOrder: SortOrder

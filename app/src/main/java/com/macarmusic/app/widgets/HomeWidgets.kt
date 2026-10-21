@@ -17,6 +17,8 @@ import com.macarmusic.app.lyrics.LyricIssue
 import com.macarmusic.app.lyrics.LyricResult
 import com.macarmusic.app.model.WidgetPlayback
 import com.macarmusic.app.model.WidgetPresentation
+import com.macarmusic.app.model.LyricAppearance
+import com.macarmusic.app.model.ThemeAccent
 import com.macarmusic.app.playback.toTrack
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -53,6 +55,10 @@ class HomeWidgets(private val app: MaCarMusicApp) {
     private var settingsObserver: Job? = null
     private var screenRegistered = false
     private var updateFailed = false
+    private data class Presentation(
+        val online: Boolean, val transparency: Int, val lyrics: LyricAppearance,
+        val accent: ThemeAccent, val customAccent: Int?,
+    )
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
             if (ids.isNotEmpty()) updatePlayer()
@@ -173,9 +179,11 @@ class HomeWidgets(private val app: MaCarMusicApp) {
         if (settingsObserver?.isActive == true) return
         settingsObserver = scope.launch {
             combine(app.playbackSettings.muted,
-                app.displaySettings.options.map { it.onlineLyrics to it.widgetTransparency }.distinctUntilChanged()) { muted, display -> muted to display }
+                app.displaySettings.options.map {
+                    Presentation(it.onlineLyrics, it.widgetTransparency, it.lyricAppearance, it.themeAccent, it.customAccentColor)
+                }.distinctUntilChanged()) { muted, display -> muted to display }
                 .collect { (muted, display) ->
-                    val online = display.first
+                    val online = display.online
                     state = state.copy(muted = muted)
                     if (lyricKey?.second != online) {
                         lyricKey = null
@@ -297,17 +305,17 @@ class HomeWidgets(private val app: MaCarMusicApp) {
         })
 
     private fun publish() {
-        if (updateFailed) return
+        if (updateFailed || !power.isInteractive) return
         update {
             for ((kind, widgetIds) in ids) for (id in widgetIds) {
                 manager.updateAppWidget(id, WidgetViews.full(app.localizedContext, kind, id, state, cover, lyricText(),
-                    app.displaySettings.options.value.widgetTransparency))
+                    app.displaySettings.options.value))
             }
         }
     }
 
     private fun publishDynamic() {
-        if (updateFailed) return
+        if (updateFailed || !power.isInteractive) return
         update {
             for ((kind, widgetIds) in ids) if (kind != HomeWidgetKind.PLAY) {
                 manager.partiallyUpdateAppWidget(widgetIds, WidgetViews.dynamic(app.localizedContext, kind, state, lyricText()))

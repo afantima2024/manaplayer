@@ -55,8 +55,11 @@ object AccentTheme {
     fun swatches(context: Context): Map<ThemeAccent, Int> =
         colors.mapValues { context.getColor(it.value) and 0xffffff }
 
-    fun color(view: View, attribute: Int): Int {
-        val custom = customColor(view.context) ?: return MaterialColors.getColor(view, attribute)
+    fun color(view: View, attribute: Int): Int = color(view.context, attribute)
+
+    fun color(context: Context, attribute: Int): Int {
+        fun native(value: Int) = MaterialColors.getColor(context, value, "AccentTheme")
+        val custom = customColor(context) ?: return native(attribute)
         return when (attribute) {
             com.google.android.material.R.attr.colorPrimary,
             com.google.android.material.R.attr.colorSecondary -> custom
@@ -64,11 +67,11 @@ object AccentTheme {
             com.google.android.material.R.attr.colorOnSecondary -> contrasting(custom)
             com.google.android.material.R.attr.colorPrimaryContainer,
             com.google.android.material.R.attr.colorSecondaryContainer -> ColorUtils.blendARGB(
-                MaterialColors.getColor(view, com.google.android.material.R.attr.colorSurface), custom, 0.18f)
+                native(com.google.android.material.R.attr.colorSurface), custom, 0.18f)
             com.google.android.material.R.attr.colorOnPrimaryContainer,
             com.google.android.material.R.attr.colorOnSecondaryContainer ->
-                MaterialColors.getColor(view, com.google.android.material.R.attr.colorOnSurface)
-            else -> MaterialColors.getColor(view, attribute)
+                native(com.google.android.material.R.attr.colorOnSurface)
+            else -> native(attribute)
         }
     }
 

@@ -1,9 +1,16 @@
 package com.macarmusic.app.ui
 
 import android.content.res.ColorStateList
+import android.graphics.Typeface
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import androidx.core.text.bold
+import androidx.core.text.buildSpannedString
+import androidx.core.text.inSpans
 import androidx.core.view.isVisible
+import androidx.core.view.updateLayoutParams
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -19,6 +26,7 @@ data class MusicRow(
     val icon: Int = R.drawable.ic_note,
     val active: Boolean = false,
     val selected: Boolean? = null,
+    val inlineSubtitle: Boolean = false,
 )
 
 class MusicRowAdapter(
@@ -38,10 +46,13 @@ class MusicRowAdapter(
         notifyItemRangeChanged(0, itemCount, blocks)
     }
 
+    override fun getItemViewType(position: Int) = if (getItem(position).inlineSubtitle) INLINE_ROW else 0
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val binding = RowItemBinding.inflate(LayoutInflater.from(parent.context), parent, false)
+        val inlineSubtitle = viewType == INLINE_ROW
         AccentTheme.tintControls(binding.root)
-        if (compact) {
+        if (compact || inlineSubtitle) {
             val size = (48 * parent.resources.displayMetrics.density).toInt()
             binding.root.minimumHeight = size
             binding.root.setPaddingRelative(binding.root.paddingStart, 0, binding.root.paddingEnd, 0)
@@ -50,6 +61,12 @@ class MusicRowAdapter(
             binding.more.layoutParams.width = size
             binding.more.layoutParams.height = size
         }
+        if (inlineSubtitle) {
+            binding.title.typeface = Typeface.create(binding.title.typeface, Typeface.NORMAL)
+            binding.more.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                marginStart = (8 * parent.resources.displayMetrics.density).toInt()
+            }
+        }
         return Holder(binding)
     }
 
@@ -57,9 +74,17 @@ class MusicRowAdapter(
         holder.buttons.apply(blocks.first, blocks.second)
         val row = getItem(position)
         with(holder.binding) {
-            title.text = row.title
+            title.text = if (row.inlineSubtitle) buildSpannedString {
+                bold { append(row.title) }
+                if (row.subtitle.isNotEmpty()) {
+                    append("  ")
+                    inSpans(ForegroundColorSpan(subtitle.currentTextColor), RelativeSizeSpan(subtitle.textSize / title.textSize)) {
+                        append(row.subtitle)
+                    }
+                }
+            } else row.title
             subtitle.text = row.subtitle
-            subtitle.isVisible = row.subtitle.isNotEmpty()
+            subtitle.isVisible = !row.inlineSubtitle && row.subtitle.isNotEmpty()
             detail.text = row.detail
             icon.setImageResource(row.icon)
             val textColor = AccentTheme.color(
@@ -85,6 +110,7 @@ class MusicRowAdapter(
     }
 
     private companion object {
+        const val INLINE_ROW = 1
         val Diff = object : DiffUtil.ItemCallback<MusicRow>() {
             override fun areItemsTheSame(oldItem: MusicRow, newItem: MusicRow) = oldItem.key == newItem.key
             override fun areContentsTheSame(oldItem: MusicRow, newItem: MusicRow) = oldItem == newItem

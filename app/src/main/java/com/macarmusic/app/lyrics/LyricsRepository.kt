@@ -153,6 +153,32 @@ class LyricsRepository(
         }
     }
 
+    fun searchOnline(track: Track) = client.search(LyricQuery.from(track), track.fileName)
+
+    suspend fun selectOnline(track: Track, candidate: OnlineLyricCandidate, generation: Long): LyricResult? =
+        withContext(Dispatchers.IO) {
+            if (generation != cache.generation) throw IOException("The lyric cache changed; reopen the online search")
+            val found = networkMutex.withLock { client.download(candidate) } ?: return@withContext null
+            currentCoroutineContext().ensureActive()
+            val key = key(LyricQuery.from(track), track.fileName)
+            val downloaded = CachedLyric(found.text, found.origin, nowMs().coerceAtLeast(0),
+                offlineSelected = true, automatic = false, history = found.history,
+                name = listOf(candidate.title, candidate.artist).filter(String::isNotBlank).joinToString(" - "))
+            val previous = cache.read(key).value
+            val existing = (listOfNotNull(previous?.version()) + previous?.versions.orEmpty())
+                .firstOrNull { it.id == downloaded.version().id }
+            val selected = downloaded.copy(
+                savedAtMs = existing?.savedAtMs ?: downloaded.savedAtMs,
+                offsetMs = existing?.offsetMs ?: 0,
+            )
+            val saved = cache.retain(key, selected, generation, preserveActive = true)
+                ?: throw IOException("The selected online lyric could not be saved in the active cache")
+            currentCoroutineContext().ensureActive()
+            withStoredVersions(selected, saved).result(cached = true).also {
+                publish(track.id, it, userEdited = true)
+            }
+        }
+
     suspend fun next(track: Track, current: LyricResult): LyricResult? = withContext(Dispatchers.IO) {
         val generation = cache.generation
         val document = current.document

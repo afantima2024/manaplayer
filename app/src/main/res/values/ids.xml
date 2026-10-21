@@ -1,7 +1,14 @@
 <resources>
+    <item name="onlineLyricsProgress" type="id" />
+    <item name="onlineLyricsStatus" type="id" />
+    <item name="onlineLyricsList" type="id" />
+    <item name="onlineLyricsChoose" type="id" />
+    <item name="onlineLyricsSource" type="id" />
     <item name="lyricsVersionsList" type="id" />
     <item name="lyricsVersionsStatus" type="id" />
     <item name="lyricsVersionChoose" type="id" />
+    <item name="lyricsVersionMore" type="id" />
+    <item name="lyricsVersionActions" type="id" />
     <item name="lyricsVersionBest" type="id" />
     <item name="lyricsVersionSource" type="id" />
     <item name="lyricsVersionActivate" type="id" />
@@ -30,6 +37,7 @@
     <item type="id" name="libraryAddSelected" />
     <item type="id" name="librarySelectAll" />
     <item type="id" name="libraryList" />
+    <item type="id" name="playlistList" />
     <item type="id" name="libraryBrowse" />
     <item type="id" name="libraryBack" />
     <item type="id" name="folderRestorePosition" />
