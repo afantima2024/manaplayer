@@ -48,11 +48,61 @@ class BackupArchiveTest {
         val value = backup().copy(settings = settings.copy(display = DisplayOptions(
             blockOutline = BlockOutline(BlockStyle.NONE, "+", 36, true),
             spectrum = SpectrumOptions(refreshRate = 60), navigationPosition = NavigationPosition.LEFT,
-            lyricAppearance = LyricAppearance(30, 16, 0x123456, 0xabcdef), lightMode = true, widgetTransparency = 85,
+            lyricAppearance = LyricAppearance(30, 16, 0x123456, 0xabcdef), widgetTransparency = 85,
             internalLyricExpiry = LyricCacheExpiry.NEVER, portableLyricExpiry = LyricCacheExpiry.SEVEN_DAYS)))
         val output = ByteArrayOutputStream()
         BackupArchive.write(output, value, emptyMap())
         assertEquals(value, read(output.toByteArray()))
+    }
+
+    private val fire = SpectrumColors(0x123456, 0xabcdef, 0x654321)
+    private val fullJson = Json { encodeDefaults = true }
+
+    private fun legacy(light: String = "true", classic: String = Json.encodeToString(SpectrumColors.CLASSIC)): String {
+        val value = backup().copy(settings = settings.copy(display = DisplayOptions(
+            onlineLyrics = true, blur = 65, settingsTransition = TransitionStyle.ZOOM,
+            spectrum = SpectrumOptions(colors = fire, refreshRate = 60))))
+        return fullJson.encodeToString(value)
+            .replace("\"display\":{", "\"display\":{\"lightMode\":$light,")
+            .replace("\"spectrum\":{", "\"spectrum\":{\"classicColors\":$classic,")
+    }
+
+    @Test fun legacyBackupsKeepFireColorsAndDoNotApplyRetiredLightModeOverrides() {
+        for (light in listOf("true", "false")) {
+            val restored = read(raw(backup(), text = legacy(light)))
+            assertEquals(fire, restored.settings.display.spectrum.colors)
+            assertEquals(60, restored.settings.display.spectrum.refreshRate)
+            assertTrue(restored.settings.display.onlineLyrics)
+            assertEquals(65, restored.settings.display.blur)
+            assertEquals(TransitionStyle.ZOOM, restored.settings.display.settingsTransition)
+            val rewritten = fullJson.encodeToString(restored)
+            assertFalse(rewritten.contains("\"lightMode\""))
+            assertFalse(rewritten.contains("\"classicColors\""))
+            assertTrue(rewritten.contains("\"fireColors\""))
+        }
+    }
+
+    @Test fun invalidLegacyLightModeValuesAreNotSilentlyDiscarded() {
+        for (value in listOf("null", "1", "\"true\"", "[]", "{}")) {
+            try {
+                read(raw(backup(), text = legacy(light = value)))
+                fail("Invalid legacy value must be rejected: $value")
+            } catch (_: IllegalArgumentException) { }
+        }
+    }
+
+    @Test fun invalidLegacyColorsAreNotSilentlyDiscarded() {
+        for (value in listOf("null", "[]", "{\"low\":-1,\"middle\":0,\"high\":0}",
+            "{\"low\":0,\"middle\":0,\"high\":0,\"unexpected\":true}")) {
+            try {
+                read(raw(backup(), text = legacy(classic = value)))
+                fail("Invalid legacy colors must be rejected: $value")
+            } catch (_: IllegalArgumentException) { }
+        }
+    }
+
+    @Test(expected = SerializationException::class) fun retiringKnownFieldsDoesNotAllowArbitraryUnknownSettings() {
+        read(raw(backup(), text = legacy().replace("\"lightMode\":true", "\"futureSetting\":true")))
     }
 
     @Test fun olderBackupsKeepOmittedPlaybackAndTimeDefaults() {

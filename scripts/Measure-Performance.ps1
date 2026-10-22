@@ -18,7 +18,7 @@ param(
     [int] $FeatureTrackCount = 1,
     [int[]] $TrackCounts = @(0, 2000, 10000),
     [ValidateSet('minimal', 'lyrics', 'static', 'slideshow', 'blurred-slideshow',
-        'spectrum15', 'spectrum30', 'spectrum60', 'combined', 'light')]
+        'spectrum15', 'spectrum30', 'spectrum60', 'combined')]
     [string[]] $Features = @('minimal', 'lyrics', 'static', 'slideshow', 'blurred-slideshow',
         'spectrum15', 'spectrum30', 'spectrum60', 'combined'),
     [switch] $SkipStartup,
@@ -118,20 +118,19 @@ function Seed([int] $Count, [string] $Feature) {
     $playback = @{ version = 1; queue = $tracks; index = 0; positionMs = 0; shuffle = $false; repeat = 0 }
     $library | ConvertTo-Json -Depth 8 -Compress | Set-Content -LiteralPath "$report\library.json" -Encoding utf8NoBOM
     $playback | ConvertTo-Json -Depth 8 -Compress | Set-Content -LiteralPath "$report\playback.json" -Encoding utf8NoBOM
-    $pictures = $Feature -in @('static', 'slideshow', 'blurred-slideshow', 'combined', 'light')
-    $lyrics = $Feature -in @('lyrics', 'combined', 'light')
-    $spectrum = $Feature.StartsWith('spectrum') -or $Feature -in @('combined', 'light')
+    $pictures = $Feature -in @('static', 'slideshow', 'blurred-slideshow', 'combined')
+    $lyrics = $Feature -in @('lyrics', 'combined')
+    $spectrum = $Feature.StartsWith('spectrum') -or $Feature -eq 'combined'
     $rate = if ($Feature -eq 'spectrum15') { 15 } elseif ($Feature -eq 'spectrum60') { 60 } else { 30 }
     $ids = @()
     if ($Feature -eq 'static') { $ids = @($imageNames[0]) }
     elseif ($pictures) { $ids = $imageNames }
     $escapedIds = [Security.SecurityElement]::Escape((ConvertTo-Json -InputObject @($ids) -Compress))
-    $blur = if ($Feature -in @('blurred-slideshow', 'combined', 'light')) { 60 } else { 0 }
+    $blur = if ($Feature -in @('blurred-slideshow', 'combined')) { 60 } else { 0 }
     @"
 <?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 <map>
 <boolean name="parkedNoticeSeen" value="true" />
-<boolean name="lightMode" value="$(($Feature -eq 'light').ToString().ToLowerInvariant())" />
 <int name="theme" value="2" />
 <boolean name="lyricsEnabled" value="$($lyrics.ToString().ToLowerInvariant())" />
 <boolean name="onlineLyrics" value="false" />

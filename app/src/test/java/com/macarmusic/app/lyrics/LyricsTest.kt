@@ -29,6 +29,46 @@ class LyricsTest {
         assertEquals("", lyrics.lines[lyrics.activeLine(5_000)].text)
     }
 
+    @Test fun lastTimestampUsesTheSortedEndpointIncludingBlankEndMarkersAndSavedOffsets() {
+        val text = "[offset:500]\n[03:42]\n[00:01][01:30]Synthetic words\n[02:00]Other words"
+        assertEquals(221_500L, LyricsParser.parse(text)!!.lastTimestampMs)
+        assertEquals(220_500L, LyricsParser.parse(text, additionalOffsetMs = 1_000)!!.lastTimestampMs)
+        assertEquals(222_500L, LyricsParser.parse(text, additionalOffsetMs = -1_000)!!.lastTimestampMs)
+        assertEquals(0L, LyricsParser.parse("[offset:2000]\n[00:01]First")!!.lastTimestampMs)
+    }
+
+    @Test fun untimedLyricsHaveNoInventedDuration() {
+        assertNull(LyricsParser.parse("[length:03:42]\nSynthetic plain text")!!.lastTimestampMs)
+        assertNull(Lyrics(emptyList()).lastTimestampMs)
+    }
+
+    @Test fun durationChecksHaveInclusiveBoundariesAndAllowRealOutrosNotShortPreviews() {
+        fun words(end: Long) = Lyrics(listOf(LyricLine(0, "Start"), LyricLine(end, "End")))
+        assertTrue(LyricMatch.durationMatches(180_000, 162_000))
+        assertTrue(LyricMatch.durationMatches(180_000, 198_000))
+        assertFalse(LyricMatch.durationMatches(180_000, 161_999))
+        assertFalse(LyricMatch.durationMatches(180_000, 198_001))
+        assertFalse(LyricMatch.timingMatches(180_000, words(40_000)))
+        assertFalse(LyricMatch.timingMatches(180_000, words(134_999)))
+        assertTrue(LyricMatch.timingMatches(180_000, words(135_000)))
+        assertTrue(LyricMatch.timingMatches(180_000, words(198_000)))
+        assertFalse(LyricMatch.timingMatches(180_000, words(198_001)))
+        assertFalse(LyricMatch.timingMatches(30_000, words(5_000)))
+        assertTrue(LyricMatch.timingMatches(30_000, words(22_500)))
+        assertFalse(LyricMatch.timingMatches(600_000, words(539_999)))
+        assertTrue(LyricMatch.timingMatches(600_000, words(540_000)))
+    }
+
+    @Test fun unknownDurationsDoNotInventTimingAndOffsetsAndBlankEndMarkersAreRespected() {
+        val plain = LyricsParser.parse("Synthetic untimed lyrics")!!
+        assertFalse(LyricMatch.timingMatches(180_000, plain))
+        assertTrue(LyricMatch.timingMatches(0, plain))
+        assertTrue(LyricMatch.durationMatches(180_000, 0))
+        assertTrue(LyricMatch.durationMatches(0, 40_000))
+        assertTrue(LyricMatch.timingMatches(180_000, LyricsParser.parse("[00:40]Words\n[03:00]")!!))
+        assertFalse(LyricMatch.timingMatches(180_000, LyricsParser.parse("[offset:50000]\n[02:50]Words")!!))
+    }
+
     @Test fun metadataIsNotDisplayedAndPlainLyricsCanBeScrolled() {
         val lyrics = LyricsParser.parse("[ar:Synthetic artist]\nFirst marker\n\nSecond marker")!!
         assertFalse(lyrics.timed)
@@ -74,6 +114,8 @@ class LyricsTest {
         val files = listOf(entry("SONG.txt"), entry("notes.txt"), entry("Song.LRC"), entry("Song.lrc", virtual = true),
             entry("Song.lrc", directory = true), entry("Song.mp3"))
         assertEquals(listOf("Song.LRC", "SONG.txt"), LyricFiles.matching(track, files).map { it.name })
+        assertEquals(LyricFiles.matching(track, files), LyricFiles.matching(track, LyricFiles.index(files)))
+        assertTrue(LyricFiles.matching(track.copy(fileName = "Other.mp3"), LyricFiles.index(files)).isEmpty())
     }
 
     @Test fun matchingUsesReferenceWeightsRatherThanHardSingerAndVersionRejection() {

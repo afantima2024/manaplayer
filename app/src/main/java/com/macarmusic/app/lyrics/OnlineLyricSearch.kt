@@ -1,5 +1,9 @@
 package com.macarmusic.app.lyrics
 
+import java.io.IOException
+
+internal class LyricSearchFailure(val answeredRoute: Boolean, cause: IOException) : IOException(cause.message, cause)
+
 data class OnlineLyricCandidate(
     val key: LyricCandidateId,
     val title: String,
@@ -25,6 +29,7 @@ data class OnlineLyricSearch(
     val failed: Set<LyricSearchRoute> = emptySet(),
     val busyKey: LyricCandidateId? = null,
     val issue: OnlineLyricIssue? = null,
+    val trackDurationMs: Long = 0,
 ) {
     val searching: Boolean get() = completed.size < OnlineLyricsClient.ROUTES.size
 

@@ -17,11 +17,15 @@ import java.util.Base64
 class OnlineLyricsClientTest {
     private val query = LyricQuery("Synthetic song", "Fixture singer", 60_000)
     private val hash = "a".repeat(32)
-    private val text = (0..7).joinToString("\n") { "[00:0$it]Synthetic marker $it" }
+    private val text = timedText(49)
     private val search = """{"status":200,"candidates":[{"id":"42","accesskey":"test-only","song":"Synthetic song","singer":"Fixture singer","duration":60000}]}"""
     private val mobile = """{"status":1,"data":{"info":[{"songname":"Synthetic song","singername":"Fixture singer","hash":"$hash"}]}}"""
     private fun encoded(value: String) = Base64.getEncoder().encodeToString(value.toByteArray())
     private fun download(value: String = text) = """{"status":200,"content":"${encoded(value)}"}"""
+    private fun timedText(endSeconds: Int) = (0..7).joinToString("\n") {
+        val seconds = endSeconds * it / 7
+        "[${(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}]Synthetic marker $it"
+    }
     private fun client(answer: suspend (String) -> String) = OnlineLyricsClient({ url, body, _ ->
         assertNull("The reference local routes use GET", body)
         answer(url)
@@ -141,16 +145,18 @@ class OnlineLyricsClientTest {
 
     @Test fun copiedNumberedFilenameSearchesTheSongAndSingerNotCopy() = runBlocking {
         val calls = mutableListOf<String>()
+        val words = timedText(250)
         val client = client { url ->
             calls.add(URLDecoder.decode(url, "UTF-8"))
             when {
                 "/search?" in url -> search.replace("Synthetic song", "演员").replace("Fixture singer", "薛之谦")
-                "/download?" in url -> download()
+                    .replace("60000", "261000")
+                "/download?" in url -> download(words)
                 else -> throw AssertionError("A matching direct result must stop the search")
             }
         }
         val filename = "1586.演员-薛之谦 - Copy (2).mp3"
-        assertFound(text, LyricOrigin.KUGOU, client.find(LyricQuery(filename, "", 261_000), filename))
+        assertFound(words, LyricOrigin.KUGOU, client.find(LyricQuery(filename, "", 261_000), filename))
         assertTrue(calls.first().contains("keyword=演员 薛之谦&duration=261"))
         assertTrue(calls.none { "Copy" in it || "1586." in it })
         assertEquals(2, calls.size)
@@ -161,7 +167,7 @@ class OnlineLyricsClientTest {
         val client = client { url ->
             calls.add(URLDecoder.decode(url, "UTF-8"))
             if ("/search?" in url) search.replace("Synthetic song", "当爱已成往事")
-                .replace("Fixture singer", "李宗盛、林忆莲") else download()
+                .replace("Fixture singer", "李宗盛、林忆莲").replace("60000", "279000") else download(timedText(270))
         }
         assertEquals(LyricOrigin.KUGOU, client.find(
             LyricQuery("1542. 当爱已成往事-林忆莲_李宗盛.MP3", "小高网分享", 279_000))?.origin)
@@ -198,10 +204,10 @@ class OnlineLyricsClientTest {
         }
     }
 
-    @Test fun directCandidatesUseWeightedMatchingInsteadOfHardRejection() = runBlocking {
+    @Test fun directCandidatesKeepWeightedTitleMatchingWithinTheDurationWindow() = runBlocking {
         val client = client { url ->
             if ("/search?" in url) search.replace("Synthetic song", "Synthetic song (Live)")
-                .replace("60000", "100000") else download()
+                .replace("60000", "65000") else download()
         }
         assertEquals(LyricOrigin.KUGOU, client.find(query)?.origin)
     }
@@ -254,28 +260,28 @@ class OnlineLyricsClientTest {
                 "lyrics.kugou.com/search" in url -> search
                 "/download?" in url -> download(text.lines().take(7).joinToString("\n"))
                 "client_search_cp" in url -> qqSearch()
-                "fcg_query_lyric_new" in url -> """{"code":0,"lyric":"${encoded("[00:01]Synthetic QQ")}"}"""
+                "fcg_query_lyric_new" in url -> """{"code":0,"lyric":"${encoded("[00:50]Synthetic QQ")}"}"""
                 else -> empty(url)
             }
         }
         assertEquals(LyricOrigin.QQ, client.find(query)?.origin)
     }
 
-    @Test fun qqUsesTheFirstSingerAndDecodesBase64EntitiesWithoutADurationGate() = runBlocking {
+    @Test fun qqUsesTheFirstSingerAndDecodesBase64EntitiesWithMatchingTiming() = runBlocking {
         val client = OnlineLyricsClient({ url, _, referer ->
             when {
                 "client_search_cp" in url -> """{"code":0,"data":{"song":{"list":[
                     {"songname":"Synthetic song","singer":[{"name":"Wrong"},{"name":"Fixture singer"}],"songmid":"wrong"},
-                    {"songname":"Synthetic song","singer":[{"name":"Fixture singer"}],"interval":999,"songmid":"correct"}]}}}"""
+                    {"songname":"Synthetic song","singer":[{"name":"Fixture singer"}],"interval":60,"songmid":"correct"}]}}}"""
                 "fcg_query_lyric_new" in url -> {
                     assertEquals("https://y.qq.com/", referer)
                     assertTrue("songmid=correct&g_tk=5381&format=json&nobase64=0" in url)
-                    """{"code":0,"lyric":"${encoded("&#91;00:01&#93;Synthetic &amp; marker")}"}"""
+                    """{"code":0,"lyric":"${encoded("&#91;00:50&#93;Synthetic &amp; marker")}"}"""
                 }
                 else -> empty(url)
             }
         }) { _, error -> throw AssertionError(error) }
-        assertFound("[00:01]Synthetic & marker", LyricOrigin.QQ, client.find(query))
+        assertFound("[00:50]Synthetic & marker", LyricOrigin.QQ, client.find(query))
     }
 
     @Test fun qqFallsBackToTranslationWhenDecodedOriginalIsEmpty() = runBlocking {
@@ -297,19 +303,19 @@ class OnlineLyricsClientTest {
                 "/get/web?" in url -> {
                     assertEquals("https://music.163.com", referer)
                     assertTrue(url.endsWith("&type=1&offset=0&total=true&limit=10"))
-                    """{"code":200,"result":{"songs":[{"id":7,"name":"Synthetic song","artists":[{"name":"Fixture singer"}],"duration":999999}]}}"""
+                    """{"code":200,"result":{"songs":[{"id":7,"name":"Synthetic song","artists":[{"name":"Fixture singer"}],"duration":60000}]}}"""
                 }
                 "/api/song/lyric?" in url -> {
                     assertTrue(url.endsWith("id=7&lv=1&kv=1&tv=-1"))
-                    """{"code":200,"lrc":{"lyric":"[]"},"tlyric":{"lyric":"[00:01]Synthetic translation"}}"""
+                    """{"code":200,"lrc":{"lyric":"[]"},"tlyric":{"lyric":"[00:50]Synthetic translation"}}"""
                 }
                 else -> empty(url)
             }
         }) { _, error -> throw AssertionError(error) }
-        assertFound("[00:01]Synthetic translation", LyricOrigin.NETEASE, client.find(query))
+        assertFound("[00:50]Synthetic translation", LyricOrigin.NETEASE, client.find(query))
     }
 
-    @Test fun aChosenSongWithNoLyricsDoesNotTryTheSecondSong() = runBlocking {
+    @Test fun aChosenSongWithNoLyricsTriesTheNextRankedSongWithoutRepeatingTheSearch() = runBlocking {
         val downloads = mutableListOf<String>()
         val client = client { url ->
             when {
@@ -318,14 +324,16 @@ class OnlineLyricsClientTest {
                     {"id":8,"name":"Synthetic song","artists":[{"name":"Fixture singer"}]}]}}"""
                 "/api/song/lyric?" in url -> {
                     downloads.add(url)
-                    """{"code":200,"lrc":{"lyric":""}}"""
+                    if ("id=7&" in url) """{"code":200,"lrc":{"lyric":""}}"""
+                    else """{"code":200,"lrc":{"lyric":"[00:50]Synthetic second"}}"""
                 }
                 else -> empty(url)
             }
         }
-        assertNull(client.find(query))
-        assertEquals(1, downloads.size)
-        assertTrue("id=7&" in downloads.single())
+        assertFound("[00:50]Synthetic second", LyricOrigin.NETEASE, client.find(query))
+        assertEquals(2, downloads.size)
+        assertTrue("id=7&" in downloads[0])
+        assertTrue("id=8&" in downloads[1])
     }
 
     @Test fun kuwoUsesTheReferenceFieldsEndpointAndCentisecondFormatting() = runBlocking {
@@ -335,7 +343,7 @@ class OnlineLyricsClientTest {
                 "/openapi/v1/www/lyric/getlyric?" in url -> {
                     assertTrue(url.endsWith("musicId=123"))
                     """{"data":{"lrclist":[${(0..7).joinToString(",") {
-                        """{"time":"${it + 1}.25","lineLyric":"Synthetic &amp; marker $it"}"""
+                        """{"time":"${it * 7 + 1}.25","lineLyric":"Synthetic &amp; marker $it"}"""
                     }}]}}"""
                 }
                 else -> empty(url)
@@ -364,21 +372,121 @@ class OnlineLyricsClientTest {
         assertEquals(listOf(LyricOrigin.KUGOU, LyricOrigin.KUGOU), failures)
     }
 
+    @Test fun fortySecondLyricsForAThreeMinuteSongTryTheNextCandidateEvenWithMatchingMetadata() = runBlocking {
+        val calls = mutableListOf<String>()
+        val full = timedText(170)
+        val client = client { url ->
+            calls.add(url)
+            when {
+                "/search?" in url -> search.replace("60000", "180000").replace("]}", """,
+                    {"id":"43","accesskey":"test-only","song":"Synthetic song","singer":"Fixture singer","duration":180000}]}""")
+                "id=42&" in url -> download(timedText(40))
+                "id=43&" in url -> download(full)
+                else -> throw AssertionError("The second suitable match should stop the search")
+            }
+        }
+        val found = client.find(query.copy(durationMs = 180_000))
+        assertFound(full, LyricOrigin.KUGOU, found)
+        assertEquals(listOf("42", "43"), found!!.history.candidates.map { it.id })
+        assertEquals(3, calls.size)
+    }
+
+    @Test fun everyProviderRejectsKnownDurationMismatchesBeforeDownloadingBodies() = runBlocking {
+        val catalogs = mapOf(
+            LyricSearchRoute.KUGOU_DIRECT to search.replace("60000", "40000"),
+            LyricSearchRoute.KUGOU_MOBILE to mobile.replace("\"hash\"", "\"duration\":40,\"hash\""),
+            LyricSearchRoute.QQ to qqSearch().replace("\"songmid\"", "\"interval\":40,\"songmid\""),
+            LyricSearchRoute.NETEASE to """{"code":200,"result":{"songs":[{"id":7,"name":"Synthetic song","duration":40000}]}}""",
+            LyricSearchRoute.KUWO to """{"abslist":[{"SONGNAME":"Synthetic song","MUSICRID":"MUSIC_7","DURATION":"40"}]}""",
+        )
+        val prefixes = listOf("lyrics.kugou.com/search", "mobilecdn", "client_search_cp", "/get/web?", "search.kuwo.cn")
+        for ((index, route) in OnlineLyricsClient.ROUTES.withIndex()) {
+            val calls = mutableListOf<String>()
+            val client = client { url ->
+                calls.add(url)
+                if (prefixes[index] in url) catalogs.getValue(route) else empty(url)
+            }
+            assertNull(route.name, client.find(query.copy(durationMs = 180_000)))
+            assertEquals(route.name, 5, calls.size)
+        }
+    }
+
+    @Test fun automaticDownloadsAreBoundedToThreeCandidatesPerRoute() = runBlocking {
+        var downloads = 0
+        val client = client { url ->
+            when {
+                "lyrics.kugou.com/search" in url -> """{"status":200,"candidates":[${
+                    (1..10).joinToString(",") {
+                        """{"id":"$it","accesskey":"test","song":"Synthetic song","singer":"Fixture singer","duration":180000}"""
+                    }
+                }]}"""
+                "/download?" in url -> { downloads++; download(timedText(40)) }
+                else -> empty(url)
+            }
+        }
+        assertNull(client.find(query.copy(durationMs = 180_000)))
+        assertEquals(3, downloads)
+    }
+
+    @Test fun unknownCatalogDurationStillChecksTheLyricBodyButExplicitSelectionsRemainAllowed() = runBlocking {
+        val short = timedText(40)
+        val client = client { url ->
+            when {
+                "lyrics.kugou.com/search" in url -> search.replace("60000", "0")
+                "/download?" in url -> download(short)
+                else -> empty(url)
+            }
+        }
+        assertNull(client.find(query.copy(durationMs = 180_000)))
+        assertFound(short, LyricOrigin.KUGOU, client.find(query.copy(durationMs = 0)))
+        assertFound(short, LyricOrigin.KUGOU, client.download(OnlineLyricCandidate(
+            LyricCandidateId(LyricSearchRoute.KUGOU_DIRECT, "42"), "Synthetic song", "Fixture singer",
+            durationMs = 180_000, accessKey = "test-only")))
+    }
+
+    @Test fun batchRouteTimeoutOverrideStillLeavesTimeForLaterProviders() = runBlocking {
+        val failures = mutableListOf<LyricOrigin>()
+        val client = OnlineLyricsClient({ url, _, _ ->
+            when {
+                "kugou" in url -> { delay(5_000); "" }
+                "client_search_cp" in url -> qqSearch()
+                "fcg_query_lyric_new" in url -> """{"code":0,"lyric":"${encoded(text)}"}"""
+                else -> empty(url)
+            }
+        }) { origin, _ -> failures.add(origin) }
+        assertEquals(LyricOrigin.QQ, withTimeout(2_000) { client.find(query, routeTimeoutMs = 100) }?.origin)
+        assertEquals(listOf(LyricOrigin.KUGOU, LyricOrigin.KUGOU), failures)
+    }
+
     @Test fun failuresAreReportedWithoutPreventingLaterRoutes() = runBlocking {
         val failures = mutableListOf<LyricOrigin>()
         val client = OnlineLyricsClient({ url, _, _ ->
             if ("kugou" in url) throw IOException("Synthetic unavailable service")
             empty(url)
         }) { origin, _ -> failures.add(origin) }
-        assertThrows(IOException::class.java) { runBlocking { client.find(query) } }
+        val error = assertThrows(LyricSearchFailure::class.java) { runBlocking { client.find(query) } }
+        assertTrue(error.answeredRoute)
         assertEquals(listOf(LyricOrigin.KUGOU, LyricOrigin.KUGOU), failures)
     }
 
     @Test fun malformedCatalogsCannotMasqueradeAsNoMatch() = runBlocking {
         val failures = mutableListOf<LyricOrigin>()
         val client = OnlineLyricsClient({ _, _, _ -> "{}" }) { origin, _ -> failures.add(origin) }
-        assertThrows(IOException::class.java) { runBlocking { client.find(query) } }
+        val error = assertThrows(LyricSearchFailure::class.java) { runBlocking { client.find(query) } }
+        assertFalse(error.answeredRoute)
         assertEquals(OnlineLyricsClient.ROUTES.map { it.origin }, failures)
+    }
+
+    @Test fun aValidCatalogStillCountsAsAResponseWhenItsBodyTimesOut() = runBlocking {
+        val client = OnlineLyricsClient({ url, _, _ ->
+            when {
+                "lyrics.kugou.com/search" in url -> search
+                "lyrics.kugou.com/download" in url -> { delay(5_000); "" }
+                else -> throw IOException("Synthetic unavailable route")
+            }
+        }, providerTimeoutMs = 100) { _, _ -> }
+        val error = assertThrows(LyricSearchFailure::class.java) { runBlocking { client.find(query) } }
+        assertTrue(error.answeredRoute)
     }
 
     @Test fun mobileErrorCodeIsNotHiddenBySuccessStatus() = runBlocking {

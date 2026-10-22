@@ -32,6 +32,7 @@ data class LyricChoice(
     val uri: String? = null,
     val cached: Boolean = false,
     val preview: String = "",
+    val lastTimestampMs: Long? = null,
 )
 
 data class LocalLyricChoices(
@@ -48,6 +49,7 @@ data class LyricChoices(
     val busy: Boolean = false,
     val issue: LyricIssue? = null,
     val generation: Long = 0,
+    val trackDurationMs: Long = 0,
 )
 
 data class LyricRemoval(val result: LyricResult, val choices: LyricChoices)
@@ -73,7 +75,8 @@ internal object LyricVersions {
             (previous?.history?.candidates.orEmpty() + value.history.candidates).distinct().takeLast(MAX_VERSIONS),
             (previous?.history?.contents.orEmpty() + value.history.contents).distinct().takeLast(MAX_VERSIONS),
         )
-        var result = value.copy(versions = versions.toList(), bestVersionId = best, history = history)
+        var result = value.copy(versions = versions.toList(), bestVersionId = best, history = history,
+            downloaded = value.downloaded || previous?.downloaded == true)
         while (versions.size + 1 > MAX_VERSIONS || LyricCacheFiles.encodedSize(result) > LyricCacheFiles.MAX_RECORD_BYTES) {
             val oldest = versions.withIndex().filter { it.value.id != best && it.value.id != preserveVersionId }
                 .minByOrNull { it.value.savedAtMs }
@@ -97,6 +100,7 @@ internal object LyricVersions {
         return primary.document().copy(
             history = value.history, versions = kept.filterNot { it.id == primary.id }, bestVersionId = best,
             offlineSelected = true, automatic = value.automatic,
+            downloaded = value.downloaded,
         )
     }
 
@@ -112,6 +116,7 @@ internal object LyricVersions {
             offlineSelected = value.offlineSelected || active.origin == LyricOrigin.LOCAL_FILE || active.origin == LyricOrigin.EMBEDDED,
             history = value.history, bestVersionId = best, versions = kept.filterNot { it.id == active.id },
             automatic = value.automatic && (!activeExpired || best != null),
+            downloaded = value.downloaded,
         )
     }
 }

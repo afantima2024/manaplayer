@@ -68,6 +68,7 @@ import androidx.test.espresso.Espresso.onData
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.espresso.ViewInteraction
 import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.action.ViewActions.doubleClick
 import androidx.test.espresso.action.ViewActions.longClick
 import androidx.test.espresso.action.ViewActions.pressKey
 import androidx.test.espresso.action.ViewActions.replaceText
@@ -78,6 +79,7 @@ import androidx.test.espresso.action.Press
 import androidx.test.espresso.action.Swipe
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.isDescendantOfA
 import androidx.test.espresso.matcher.ViewMatchers.isEnabled
 import androidx.test.espresso.matcher.ViewMatchers.isRoot
 import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
@@ -98,6 +100,7 @@ import com.macarmusic.app.data.BackgroundEffects
 import com.macarmusic.app.data.BackgroundRepository
 import com.macarmusic.app.data.BackgroundTint
 import com.macarmusic.app.data.DisplaySettings
+import com.macarmusic.app.data.DisplayOptions
 import com.macarmusic.app.lyrics.LocalLyricsLoader
 import com.macarmusic.app.lyrics.CachedLyric
 import com.macarmusic.app.lyrics.InternalLyricCache
@@ -106,6 +109,7 @@ import com.macarmusic.app.lyrics.LyricIssue
 import com.macarmusic.app.lyrics.LyricOrigin
 import com.macarmusic.app.lyrics.LyricQueries
 import com.macarmusic.app.lyrics.LyricQuery
+import com.macarmusic.app.lyrics.LyricDownloadPhase
 import com.macarmusic.app.lyrics.LyricsRepository
 import com.macarmusic.app.lyrics.OnlineLyricsClient
 import com.macarmusic.app.model.Library
@@ -147,6 +151,7 @@ import com.macarmusic.app.playback.SpectrumSource
 import com.macarmusic.app.playback.toMediaItem
 import com.macarmusic.app.ui.MainActivity
 import com.macarmusic.app.ui.AccentTheme
+import com.macarmusic.app.ui.PlayerDialog
 import com.macarmusic.app.ui.MiniPlayerLayout
 import com.macarmusic.app.ui.LyricsAdapter
 import com.macarmusic.app.ui.MusicViewModel
@@ -178,6 +183,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.hamcrest.Matchers.containsString
+import org.hamcrest.Matchers.allOf
 import org.hamcrest.Matchers.equalTo
 import org.hamcrest.Matchers.anything
 import java.io.File
@@ -223,7 +229,7 @@ class MusicIntegrationTest {
                     mainTimeMode = PlaybackTimeMode.ELAPSED, navigationPosition = NavigationPosition.BOTTOM,
                     lyricsDragSeek = false, lyricsSmoothScroll = true, lyricAppearance = LyricAppearance(),
                     landscapeLyrics = LyricSide.START, portraitLyrics = LyricSide.START, themeAccent = ThemeAccent.DEFAULT,
-                    blockOutline = BlockOutline(), customAccentColor = null, lightMode = false, widgetTransparency = 50)
+                    blockOutline = BlockOutline(), customAccentColor = null, widgetTransparency = 50)
             }
             app.themeMode = AppCompatDelegate.MODE_NIGHT_YES
             app.playbackSettings.setLoop(LoopMode.OFF)
@@ -413,14 +419,17 @@ class MusicIntegrationTest {
         } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
     }
 
-    @Test fun lightModePreferencesPreserveCustomValuesAndExplicitSpectrumRates() {
-        val context = instrumentation.context
+    @Test fun legacyDisplayPreferencesIgnoreLightModeAndKeepFireColorsAtEverySpectrumRate() {
+        val context = object : android.content.ContextWrapper(app) {
+            override fun getSharedPreferences(name: String, mode: Int) =
+                app.getSharedPreferences("display-update125-test-$name", mode)
+        }
         val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-        preferences.edit().clear().commit()
+        assertTrue(preferences.edit().clear().commit())
         try {
             assertEquals(15, DisplaySettings(context) {}.options.value.spectrum.refreshRate)
             for (rate in listOf(15, 30, 60)) {
-                preferences.edit().putInt("spectrumRefreshRate", rate).commit()
+                assertTrue(preferences.edit().putInt("spectrumRefreshRate", rate).commit())
                 val settings = DisplaySettings(context) {}
                 settings.update { it.copy(
                     onlineLyrics = true, blur = 65, settingsTransition = TransitionStyle.ZOOM,
@@ -429,17 +438,24 @@ class MusicIntegrationTest {
                         "00000000-0000-0000-0000-000000000001.png", "00000000-0000-0000-0000-000000000002.png"),
                 ) }
                 val original = settings.options.value
-                settings.update { it.copy(lightMode = true) }
+                val fire = SpectrumColors(0x123456, 0xabcdef, 0x654321)
+                assertTrue(preferences.edit().putBoolean("lightMode", true)
+                    .putInt("classicColorLow", 0).putInt("classicColorMiddle", 0).putInt("classicColorHigh", 0)
+                    .putInt("fireColorLow", fire.low).putInt("fireColorMiddle", fire.middle).putInt("fireColorHigh", fire.high)
+                    .commit())
                 val reloaded = DisplaySettings(context) {}
-                assertEquals(original.copy(lightMode = true), reloaded.options.value)
-                assertEquals(rate, reloaded.options.value.effective().spectrum.refreshRate)
-                assertTrue(reloaded.options.value.effective().spectrum.enabled)
-                assertFalse(reloaded.options.value.effective().onlineLyrics)
-                assertEquals(1, reloaded.options.value.effective().backgroundImages.size)
-                reloaded.update { it.copy(lightMode = false) }
-                assertEquals(original, DisplaySettings(context) {}.options.value)
+                val expected = original.copy(spectrum = original.spectrum.copy(colors = fire))
+                assertEquals(expected, reloaded.options.value)
+                assertEquals(rate, reloaded.options.value.spectrum.refreshRate)
+                assertTrue(reloaded.options.value.spectrum.enabled)
+                assertTrue(reloaded.options.value.onlineLyrics)
+                assertEquals(2, reloaded.options.value.backgroundImages.size)
+                reloaded.update { it.copy(blur = 64) }
+                assertEquals(expected.copy(blur = 64), DisplaySettings(context) {}.options.value)
+                for (key in listOf("lightMode", "classicColorLow", "classicColorMiddle", "classicColorHigh"))
+                    assertFalse(preferences.contains(key))
             }
-        } finally { preferences.edit().clear().commit() }
+        } finally { assertTrue(preferences.edit().clear().commit()) }
     }
 
     @Test fun pausedProgressStopsPollingAndHiddenMainControlsStayIdle() {
@@ -467,11 +483,12 @@ class MusicIntegrationTest {
                 onMain { controller.pause() }
                 await { !polling("progressPolling") && !polling("volumePolling") }
                 selectCategory(SettingsCategory.GENERAL)
-                setting(R.id.settingsLightMode).perform(scrollTo(), click())
-                assertTrue(app.displaySettings.options.value.lightMode)
+                val blocks = app.displaySettings.options.value.controlBlocks
+                setting(R.id.settingsControlBlocks).perform(scrollTo(), click())
+                assertEquals(!blocks, app.displaySettings.options.value.controlBlocks)
                 assertFalse(onMainResult { controller.playWhenReady })
-                setting(R.id.settingsLightMode).perform(click())
-                assertFalse(app.displaySettings.options.value.lightMode)
+                setting(R.id.settingsControlBlocks).perform(click())
+                assertEquals(blocks, app.displaySettings.options.value.controlBlocks)
                 onView(withContentDescription(app.text(R.string.back))).perform(click())
                 await { !polling("progressPolling") && polling("volumePolling") }
             } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
@@ -535,6 +552,7 @@ class MusicIntegrationTest {
             onMain {
                 assertTrue(resumedActivity().findViewById<View>(R.id.settingsBackgroundPanel).isShown)
                 assertEquals(7, app.displaySettings.options.value.blur)
+                assertEquals(0, resumedActivity().resources.getIdentifier("settingsLightMode", "id", app.packageName))
                 val theme = resumedActivity().findViewById<TextView>(R.id.settingsTheme)
                 assertEquals(android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL, theme.gravity)
             }
@@ -583,7 +601,15 @@ class MusicIntegrationTest {
                         for (id in listOf(R.id.favorite, R.id.details)) {
                             val button = activity.findViewById<MaterialButton>(id)
                             assertEquals(android.view.Gravity.CENTER, button.gravity)
-                            assertEquals(MaterialButton.ICON_GRAVITY_TEXT_START, button.iconGravity)
+                            assertEquals(if (button.text.isEmpty()) MaterialButton.ICON_GRAVITY_TEXT_START
+                                else MaterialButton.ICON_GRAVITY_START, button.iconGravity)
+                            if (button.text.isNotEmpty()) {
+                                val textCenter = button.totalPaddingLeft +
+                                    (button.layout.getLineLeft(0) + button.layout.getLineRight(0)) / 2
+                                assertEquals("The label must be centered independently of the leading icon",
+                                    button.width / 2f, textCenter, 1f)
+                                assertEquals(button.totalPaddingLeft, button.totalPaddingRight)
+                            }
                         }
                     }
                     screenshot("selected-controls-$orientation")
@@ -627,6 +653,40 @@ class MusicIntegrationTest {
         }
     }
 
+    @Test fun allMainPageActionsKeepLeadingIconsAndIndependentlyCenteredWords() {
+        fixtureTracks()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            for (orientation in listOf(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)) {
+                rotate(scenario, orientation)
+                for (id in listOf(R.id.nav_library, R.id.nav_folders, R.id.nav_queue, R.id.nav_playlists)) {
+                    onView(withId(id)).perform(click())
+                    awaitPlayerFrame()
+                    onMain {
+                        var count = 0
+                        fun inspect(view: View) {
+                            if (view is com.macarmusic.app.ui.PlayerTextButton && view.isShown && view.text.isNotEmpty()) {
+                                count++
+                                assertEquals(0, view.scrollX)
+                                for (line in 0 until view.layout.lineCount) {
+                                    val center = view.totalPaddingLeft +
+                                        (view.layout.getLineLeft(line) + view.layout.getLineRight(line)) / 2
+                                    assertEquals(view.text.toString(), view.width / 2f, center, 1f)
+                                }
+                                if (view.icon != null) {
+                                    assertEquals(MaterialButton.ICON_GRAVITY_START, view.iconGravity)
+                                    assertEquals(view.totalPaddingLeft, view.totalPaddingRight)
+                                }
+                            }
+                            if (view is ViewGroup) view.children.forEach(::inspect)
+                        }
+                        inspect(resumedActivity().findViewById(R.id.screenContainer))
+                        assertTrue("Every main page should expose real action buttons", count > 0)
+                    }
+                }
+            }
+        }
+    }
+
     @Test fun polishCustomColorEntryValidatesWithoutSavingAndKeepsPaletteBlocks() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             onView(withId(R.id.action_settings)).perform(click())
@@ -634,7 +694,7 @@ class MusicIntegrationTest {
             setting(R.id.spectrumColorLow).perform(scrollTo(), click())
             onView(withId(R.id.colorGrid)).check { view, _ -> assertEquals(13, (view as android.widget.GridLayout).childCount) }
             onView(withTagValue(equalTo<Any>("rainbow:0"))).perform(scrollTo(), click())
-            assertEquals(SpectrumColors.CLASSIC, app.displaySettings.options.value.spectrum.classicColors)
+            assertEquals(SpectrumColors.FIRE, app.displaySettings.options.value.spectrum.colors)
             onView(withTagValue(equalTo<Any>("custom:0"))).perform(scrollTo(), click())
             onView(withId(R.id.customColorInput)).perform(scrollTo(), replaceText("#XYZ"), closeSoftKeyboard())
             onView(withText(R.string.color_use)).inRoot(isDialog()).perform(click())
@@ -642,7 +702,7 @@ class MusicIntegrationTest {
                 assertEquals(app.text(R.string.custom_color_invalid),
                     (view as com.google.android.material.textfield.TextInputLayout).error)
             }
-            assertEquals(SpectrumColors.CLASSIC, app.displaySettings.options.value.spectrum.classicColors)
+            assertEquals(SpectrumColors.FIRE, app.displaySettings.options.value.spectrum.colors)
             onView(withId(R.id.customColorInput)).perform(replaceText("12ab67"), closeSoftKeyboard())
             onView(withId(R.id.colorEditorPreview)).check { view, _ ->
                 assertEquals(0xff12ab67.toInt(), (view.background as ColorDrawable).color)
@@ -652,14 +712,14 @@ class MusicIntegrationTest {
             onView(withId(R.id.colorBlue)).check { view, _ -> assertEquals(103, (view as SeekBar).progress) }
             onView(withText(R.string.cancel)).inRoot(isDialog()).perform(click())
             onView(withText(R.string.cancel)).inRoot(isDialog()).perform(click())
-            assertEquals(SpectrumColors.CLASSIC, app.displaySettings.options.value.spectrum.classicColors)
+            assertEquals(SpectrumColors.FIRE, app.displaySettings.options.value.spectrum.colors)
             setting(R.id.spectrumColorLow).perform(scrollTo(), click())
             onView(withTagValue(equalTo<Any>("custom:0"))).perform(scrollTo(), click())
             onView(withId(R.id.customColorInput)).perform(scrollTo(), replaceText("#12ab67"), closeSoftKeyboard())
             onView(withText(R.string.color_use)).inRoot(isDialog()).perform(click())
             onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
-            await { app.displaySettings.options.value.spectrum.classicColors.low == 0x12ab67 }
-            assertEquals(0x12ab67, DisplaySettings(app) {}.options.value.spectrum.classicColors.low)
+            await { app.displaySettings.options.value.spectrum.colors.low == 0x12ab67 }
+            assertEquals(0x12ab67, DisplaySettings(app) {}.options.value.spectrum.colors.low)
             scenario.recreate()
             setting(R.id.spectrumColorLow).perform(scrollTo(), click())
             onView(withTagValue(equalTo<Any>("custom:0"))).perform(scrollTo()).check(matches(isDisplayed()))
@@ -669,7 +729,7 @@ class MusicIntegrationTest {
             onView(withText(R.string.cancel)).inRoot(isDialog()).perform(click())
             onView(withTagValue(equalTo<Any>("rainbow:4"))).perform(scrollTo(), click())
             onView(withText(R.string.apply)).inRoot(isDialog()).perform(click())
-            await { app.displaySettings.options.value.spectrum.classicColors.low == 0x0000ff }
+            await { app.displaySettings.options.value.spectrum.colors.low == 0x0000ff }
             assertEquals(0x12ab67, com.macarmusic.app.data.ColorSlotStore(app).read().colors[0])
             setting(R.id.spectrumColorMiddle).perform(scrollTo(), click())
             previewCustomColor(0x2468ac)
@@ -992,6 +1052,22 @@ class MusicIntegrationTest {
                     val spectrum = activity.findViewById<SpectrumView>(R.id.spectrum)
                     assertTrue(spectrum.isShown)
                     assertFalse(spectrum.javaClass.getDeclaredField("redrawPosted").apply { isAccessible = true }.getBoolean(spectrum))
+                    val actual = Bitmap.createBitmap(spectrum.width, spectrum.height, Bitmap.Config.ARGB_8888)
+                    val expected = Bitmap.createBitmap(spectrum.width, spectrum.height, Bitmap.Config.ARGB_8888)
+                    try {
+                        spectrum.draw(Canvas(actual))
+                        spectrum.background?.draw(Canvas(expected))
+                        val logo = requireNotNull(androidx.appcompat.content.res.AppCompatResources.getDrawable(activity, R.drawable.ic_launcher))
+                        val size = minOf(spectrum.width - spectrum.paddingLeft - spectrum.paddingRight,
+                            spectrum.height - spectrum.paddingTop - spectrum.paddingBottom,
+                            (96 * spectrum.resources.displayMetrics.density).roundToInt())
+                        val left = spectrum.paddingLeft + (spectrum.width - spectrum.paddingLeft - spectrum.paddingRight - size) / 2
+                        val top = spectrum.paddingTop + (spectrum.height - spectrum.paddingTop - spectrum.paddingBottom - size) / 2
+                        logo.setBounds(left, top, left + size, top + size)
+                        logo.draw(Canvas(expected))
+                        spectrum.foreground?.draw(Canvas(expected))
+                        assertTrue("Off must show the actual program icon rather than text", actual.sameAs(expected))
+                    } finally { actual.recycle(); expected.recycle() }
                     assertTrue(controller.isPlaying)
                 }
                 onView(withId(R.id.spectrum)).perform(click())
@@ -2276,9 +2352,9 @@ class MusicIntegrationTest {
         assertEquals(initial * 2, requests)
     }
 
-    @Test fun lightModeKeepsCachedLyricsWithoutNetworkEvenWhenRefreshed() = runBlocking(Dispatchers.IO) {
+    @Test fun explicitCacheOnlyRequestsNeverAccessNetworkEvenWhenRefreshed() = runBlocking(Dispatchers.IO) {
         lyricMode("missing")
-        val track = fixtureTracks().first().copy(title = "Synthetic Light mode cache")
+        val track = fixtureTracks().first().copy(title = "Synthetic cache-only request")
         val fetched = LyricsRepository(app, app.repository, app.applicationScope, syntheticLyricClient(track) {})
             .load(track, online = true, refresh = true)
         var requests = 0
@@ -2288,32 +2364,12 @@ class MusicIntegrationTest {
             val cached = offline.load(track, online = true, refresh = refresh, allowNetwork = false)
             assertTrue(cached.cached)
             assertEquals(fetched.lyrics, cached.lyrics)
-            assertNull(offline.load(track.copy(title = "Synthetic uncached Light mode"),
+            assertNull(offline.load(track.copy(title = "Synthetic uncached request"),
                 online = true, refresh = refresh, allowNetwork = false).lyrics)
         }
         assertEquals(0, requests)
         assertNull(offline.load(track, online = false, allowNetwork = false).lyrics)
 
-        lateinit var model: MusicViewModel
-        lateinit var store: ViewModelStore
-        onMain {
-            app.displaySettings.update { it.copy(lyricsEnabled = true, onlineLyrics = true, lightMode = true) }
-            model = MusicViewModel(app, SavedStateHandle())
-            store = ViewModelStore().apply { put("light-lyrics", model) }
-            model.setLyricsActive(true)
-            model.requestLyrics(track)
-        }
-        try {
-            await { model.lyrics.value.result?.cached == true }
-            assertEquals(fetched.lyrics, model.lyrics.value.result?.lyrics)
-            onMain { model.requestLyrics(track, refresh = true) }
-            await { model.lyrics.value.result?.cached == true }
-            assertTrue(app.displaySettings.options.value.onlineLyrics)
-            assertTrue(app.displaySettings.options.value.lightMode)
-            lyricMode("available")
-            onMain { model.requestLyrics(track, refresh = true) }
-            await { model.lyrics.value.result?.origin == LyricOrigin.LOCAL_FILE }
-        } finally { onMain { store.clear() } }
     }
 
     @Test fun lyricPanelTracksSeekSongChangesAndTheSettingsSwitch() {
@@ -2466,7 +2522,7 @@ class MusicIntegrationTest {
         }
     }
 
-    @Test fun paletteEditorsKeepClassicAndFireIndependentAndPersistRendering() {
+    @Test fun paletteEditorsShareFireColorsAcrossClassicAndFireAndPersistRendering() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             onView(withId(R.id.action_settings)).perform(click())
             chooseSetting(R.id.settingsLanguage, R.string.language_english)
@@ -2477,31 +2533,30 @@ class MusicIntegrationTest {
             onView(withTagValue(equalTo<Any>("rainbow:4"))).perform(scrollTo(), click())
             screenshot("fire-color-editor")
             onView(withText(app.text(R.string.cancel))).inRoot(isDialog()).perform(click())
-            assertEquals(SpectrumColors.FIRE, app.displaySettings.options.value.spectrum.fireColors)
+            assertEquals(SpectrumColors.FIRE, app.displaySettings.options.value.spectrum.colors)
             setting(R.id.spectrumColorLow).perform(scrollTo(), click())
             onView(withTagValue(equalTo<Any>("rainbow:4"))).perform(scrollTo(), click())
             onView(withText(app.text(R.string.apply))).inRoot(isDialog()).perform(click())
-            val fire = app.displaySettings.options.value.spectrum.fireColors
+            val fire = app.displaySettings.options.value.spectrum.colors
             assertNotEquals(SpectrumColors.FIRE.low, fire.low)
             assertEquals(SpectrumColors.FIRE.middle, fire.middle)
-            assertEquals(SpectrumColors.CLASSIC, app.displaySettings.options.value.spectrum.classicColors)
             chooseDropdown(R.id.spectrumPalette, app.text(R.string.spectrum_classic))
+            assertEquals(fire, app.displaySettings.options.value.spectrum.colors)
             setting(R.id.spectrumColorHigh).perform(scrollTo(), click())
             onView(withTagValue(equalTo<Any>("rainbow:3"))).perform(scrollTo(), click())
             onView(withText(app.text(R.string.apply))).inRoot(isDialog()).perform(click())
-            val classic = app.displaySettings.options.value.spectrum.classicColors
-            assertNotEquals(SpectrumColors.CLASSIC.high, classic.high)
-            assertEquals(fire, app.displaySettings.options.value.spectrum.fireColors)
+            val classic = app.displaySettings.options.value.spectrum.colors
+            assertNotEquals(fire.high, classic.high)
+            assertEquals(fire.low, classic.low)
             scenario.recreate()
             val restored = DisplaySettings(app) {}.options.value.spectrum
-            assertEquals(classic, restored.classicColors)
-            assertEquals(fire, restored.fireColors)
+            assertEquals(classic, restored.colors)
             assertEquals(FireStyle.SMOOTH, restored.fireStyle)
             chooseDropdown(R.id.spectrumPalette, app.text(R.string.spectrum_fire))
+            assertEquals(classic, app.displaySettings.options.value.spectrum.colors)
             chooseDropdown(R.id.spectrumFireStyle, app.text(R.string.spectrum_led))
             setting(R.id.spectrumResetColors).perform(scrollTo(), click())
-            assertEquals(SpectrumColors.FIRE, app.displaySettings.options.value.spectrum.fireColors)
-            assertEquals(classic, app.displaySettings.options.value.spectrum.classicColors)
+            assertEquals(SpectrumColors.FIRE, app.displaySettings.options.value.spectrum.colors)
             assertEquals(FireStyle.LED, app.displaySettings.options.value.spectrum.fireStyle)
             screenshot("fire-palette-settings")
         }
@@ -2674,8 +2729,8 @@ class MusicIntegrationTest {
             assertTrue("The icon must fit inside its button", buttonBounds.contains(iconBounds))
             assertTrue("The label must fit inside its button", buttonBounds.contains(labelBounds))
             val content = Rect(iconBounds).apply { union(labelBounds) }
-            assertTrue("Navigation content must be horizontally centered",
-                kotlin.math.abs(content.exactCenterX() - buttonBounds.exactCenterX()) <= 1)
+            assertTrue("The label must stay independently centered",
+                kotlin.math.abs(labelBounds.exactCenterX() - buttonBounds.exactCenterX()) <= 1)
             assertTrue("Navigation content must be vertically centered",
                 kotlin.math.abs(content.exactCenterY() - buttonBounds.exactCenterY()) <= 1)
             val bitmap = Bitmap.createBitmap(label.width, label.height, Bitmap.Config.ARGB_8888)
@@ -2687,10 +2742,12 @@ class MusicIntegrationTest {
             assertNotNull("The navigation label must be measured: ${label.text}, ${label.width}x${label.height}", layout)
             assertTrue("Text must not be vertically clipped: ${label.text}", label.height >= layout.height)
             if (besideIcons) {
+                assertEquals("Horizontal icons must stay at the leading edge", button.paddingLeft, iconBounds.left)
                 assertTrue("Top/bottom landscape labels must sit beside the icon", labelBounds.left >= iconBounds.right + 8 * density)
                 assertTrue(kotlin.math.abs(iconBounds.exactCenterY() - labelBounds.exactCenterY()) <= 1)
                 assertEquals(1, label.lineCount)
-                if (!button.isSelected) assertEquals("Unselected labels must remain readable", 0, layout.getEllipsisCount(0))
+                if (label.paint.measureText(label.text.toString()) <= label.width)
+                    assertEquals("Labels must not truncate when they have room", 0, layout.getEllipsisCount(0))
                 assertEquals("The full label stays accessible at enlarged sizes", label.text.toString(), button.contentDescription)
             } else {
                 assertTrue("Side-docked and portrait labels must stay below the icon", labelBounds.top >= iconBounds.bottom + 2 * density)
@@ -3670,7 +3727,7 @@ class MusicIntegrationTest {
             val customized = SpectrumColors(0x1122ff, 0xaa22dd, 0x44ddcc)
             for (palette in listOf(SpectrumPalette.CLASSIC, SpectrumPalette.FIRE)) {
                 view.configure(options.copy(palette = palette, fireStyle = FireStyle.SMOOTH,
-                    classicColors = customized, fireColors = customized))
+                    colors = customized))
                 val colored = render()
                 try {
                     val pixels = (1 until 19).map { row ->
@@ -3713,7 +3770,7 @@ class MusicIntegrationTest {
                 for (bands in SpectrumOptions.BAND_COUNTS) for (origin in SpectrumOrigin.entries) {
                     for (style in FireStyle.entries) for (bin in listOf(0, 10, 20, 31)) {
                         view.configure(SpectrumOptions(enabled = true, bands = bands, origin = origin,
-                            barStyle = style, classicColors = color, peaks = false))
+                            barStyle = style, colors = color, peaks = false))
                         view.setPlaybackActive(false)
                         view.setPlaybackActive(true)
                         view.submit(SpectrumFrame(FloatArray(32).apply { this[bin] = 0.6f }, true, 44_100))
@@ -3764,6 +3821,232 @@ class MusicIntegrationTest {
             } finally { picture.recycle(); view.setPlaybackActive(false) }
         }
     }
+
+    @Test fun spectrumDoubleTapRotatesClockwiseWithoutAlsoChangingDisplayMode() {
+        onMain { app.displaySettings.update { it.copy(spectrum = SpectrumOptions(enabled = true, bands = 8)) } }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            await { resumedActivity().findViewById<View>(R.id.spectrum)?.isShown == true }
+            awaitPlayerFrame()
+            val original = app.displaySettings.options.value.spectrum
+            val position = onMainResult { bounds(resumedActivity().findViewById(R.id.spectrum)) }
+            for (origin in listOf(SpectrumOrigin.LEFT, SpectrumOrigin.TOP, SpectrumOrigin.RIGHT, SpectrumOrigin.BOTTOM)) {
+                onView(withId(R.id.spectrum)).perform(doubleClick())
+                Thread.sleep(android.view.ViewConfiguration.getDoubleTapTimeout() + 80L)
+                assertEquals(original.copy(origin = origin), app.displaySettings.options.value.spectrum)
+                assertEquals(origin, DisplaySettings(app) {}.options.value.spectrum.origin)
+                assertEquals(position, onMainResult { bounds(resumedActivity().findViewById(R.id.spectrum)) })
+            }
+            onView(withId(R.id.spectrum)).perform(click())
+            await { app.displaySettings.options.value.spectrum == original.nextMode() }
+            onMain { app.displaySettings.update { it.copy(spectrum = it.spectrum.copy(style = SpectrumStyle.OFF)) } }
+            awaitPlayerFrame()
+            onView(withId(R.id.spectrum)).perform(doubleClick())
+            Thread.sleep(android.view.ViewConfiguration.getDoubleTapTimeout() + 80L)
+            assertEquals(SpectrumStyle.OFF, app.displaySettings.options.value.spectrum.style)
+            assertEquals(SpectrumOrigin.LEFT, app.displaySettings.options.value.spectrum.origin)
+            assertFalse(app.spectrum.frames.value.hasAudio)
+            scenario.recreate()
+            await { resumedActivity().findViewById<View>(R.id.spectrum)?.isShown == true }
+            assertEquals(SpectrumOrigin.LEFT, app.displaySettings.options.value.spectrum.origin)
+            onMain {
+                assertTrue(resumedActivity().findViewById<View>(R.id.spectrum)
+                    .performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null))
+            }
+            assertEquals(SpectrumStyle.LINE, app.displaySettings.options.value.spectrum.style)
+            assertEquals(SpectrumOrigin.LEFT, app.displaySettings.options.value.spectrum.origin)
+            assertEquals("Playing", app.text(R.string.now_playing))
+        }
+    }
+
+    @Test fun libraryInitialSearchUsesBundledReadingsAndPlayerOwnedSongMenus() {
+        val tracks = fixtureTracks()
+        val original = app.repository.library.value
+        val first = tracks[0].copy(fileName = "消防.mp3", title = "Search fixture one", artist = "周华健")
+        val second = tracks[1].copy(fileName = "重慶.mp3", title = "Search fixture two")
+        runBlocking { app.repository.update { library -> library.copy(tracks = library.tracks.map {
+            when (it.id) { first.id -> first; second.id -> second; else -> it }
+        }) } }
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use {
+                onView(withId(R.id.nav_library)).perform(click())
+                val model = onMainResult { ViewModelProvider(resumedActivity())[MusicViewModel::class.java] }
+                for ((query, song) in listOf("xf" to first, "XF zhj" to first, "cq" to second, "重慶" to second)) {
+                    onView(withHint(R.string.search_hint)).perform(replaceText(query), closeSoftKeyboard())
+                    await { model.libraryPage.value.tracks.map(Track::id) == listOf(song.id) }
+                    onView(allOf(withText(song.title), isDescendantOfA(withId(R.id.libraryList))))
+                        .check(matches(isDisplayed()))
+                }
+                onView(allOf(withContentDescription(app.text(R.string.options_for, second.title)),
+                    isDescendantOfA(withId(R.id.libraryList)))).perform(click())
+                onView(withId(R.id.playerDialogPanel)).inRoot(isDialog()).check(matches(isDisplayed()))
+                onView(withId(R.id.playerDialogList)).inRoot(isDialog()).check { view, _ ->
+                    assertTrue((view as android.widget.ListView).getChildAt(0) is android.widget.Checkable)
+                    assertTrue(view.getChildAt(0).foreground is PlayerBlockDrawable)
+                }
+                screenshot("player-owned-library-menu")
+                pressBack()
+            }
+            val elapsed = runBlocking(Dispatchers.Default) {
+                assertNotEquals(android.os.Looper.getMainLooper(), android.os.Looper.myLooper())
+                val library = Library(tracks = List(10_000) { first.copy(id = "pinyin-$it", title = "消防 $it") })
+                val start = System.nanoTime()
+                val page = LibraryBrowsing.page(library, "xf", false, com.macarmusic.app.model.SortOrder.TITLE,
+                    com.macarmusic.app.model.LibraryLocation())
+                assertEquals(10_000, page.tracks.size)
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
+            }
+            assertTrue("10,000-track initial filtering/sorting exceeded 1.5 seconds: $elapsed ms", elapsed < 1_500)
+            val directory = File(app.getExternalFilesDir(null), "test-screenshots").apply { mkdirs() }
+            File(directory, "pinyin-search-performance.json").writeText("""{"tracks":10000,"warmMilliseconds":$elapsed}""")
+        } finally { runBlocking { app.repository.update { original } } }
+    }
+
+    @Test fun ownedChoicePanelsRecycleRowsAndKeepAllActionsVisibleWithLargeFonts() {
+        ActivityScenario.launch(MainActivity::class.java).use {
+            for ((night, mode) in listOf(
+                Configuration.UI_MODE_NIGHT_YES to AppCompatDelegate.MODE_NIGHT_YES,
+                Configuration.UI_MODE_NIGHT_NO to AppCompatDelegate.MODE_NIGHT_NO,
+            )) for (language in listOf("en", "zh")) for (scale in listOf(1f, 2f)) {
+                val previous = onMainResult { resumedActivity() }
+                val changing = app.themeMode != mode ||
+                    androidx.core.os.ConfigurationCompat.getLocales(previous.resources.configuration)[0]?.language != language
+                onMain {
+                    app.themeMode = mode
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        app.getSystemService(android.app.LocaleManager::class.java).applicationLocales =
+                            android.os.LocaleList.forLanguageTags(language)
+                    } else AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(language))
+                }
+                await { onMainResult {
+                    ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<MainActivity>().any { activity ->
+                            (!changing || activity !== previous) && activity.hasWindowFocus() &&
+                                activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == night &&
+                                androidx.core.os.ConfigurationCompat.getLocales(activity.resources.configuration)[0]?.language == language
+                        }
+                } }
+                lateinit var dialog: PlayerDialog
+                lateinit var labels: Array<String>
+                val checked = BooleanArray(500).also { it[0] = true }
+                onMain {
+                    val context = ContextThemeWrapper(resumedActivity(), R.style.Theme_ManaPlayer).apply {
+                        applyOverrideConfiguration(Configuration(resumedActivity().resources.configuration).apply {
+                            fontScale = scale
+                        })
+                    }
+                    assertEquals(language, androidx.core.os.ConfigurationCompat.getLocales(context.resources.configuration)[0]?.language)
+                    labels = Array(500) { context.getString(R.string.lyrics_version_number, it + 1) }
+                    dialog = AccentTheme.dialog(context).setTitle(R.string.lyrics_versions)
+                        .setMultiChoiceItems(labels, checked) { value, index, selected ->
+                            if (index == 0 && !selected) {
+                                checked[0] = true
+                                (value as PlayerDialog).listView.setItemChecked(0, true)
+                            }
+                        }.setPositiveButton(R.string.save, null)
+                        .setNeutralButton(R.string.select_all_shown, null)
+                        .setNegativeButton(R.string.cancel, null).show()
+                    dialog.window!!.setLayout((320 * context.resources.displayMetrics.density).roundToInt(), -2)
+                }
+                try {
+                    awaitPlayerFrame()
+                    onMain {
+                        assertEquals(night, dialog.context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK)
+                        assertEquals(language, androidx.core.os.ConfigurationCompat.getLocales(
+                            dialog.context.resources.configuration)[0]?.language)
+                        assertTrue(dialog.listView.childCount in 1..20)
+                        for (id in listOf(-1, -2, -3)) {
+                            val button = dialog.getButton(id)
+                            val visible = Rect()
+                            assertTrue(button.getLocalVisibleRect(visible))
+                            assertEquals(button.height, visible.height())
+                            assertEquals(button.width, visible.width())
+                            assertTrue(button.height >= 48 * button.resources.displayMetrics.density)
+                            assertTrue(button.width >= 48 * button.resources.displayMetrics.density)
+                            assertEquals(0, button.scrollX)
+                            assertTrue("Framed actions need readable text on the dialog surface",
+                                androidx.core.graphics.ColorUtils.calculateContrast(button.currentTextColor,
+                                    AccentTheme.color(button, com.google.android.material.R.attr.colorSurface)) >= 4.5)
+                            assertTrue(button.height >= button.layout.height + button.compoundPaddingTop + button.compoundPaddingBottom)
+                            assertDialogButtonBorder(button, true)
+                        }
+                    }
+                    onData(equalTo(labels[0])).inAdapterView(withId(R.id.playerDialogList)).perform(click())
+                    assertTrue(checked[0])
+                    assertTrue(onMainResult { dialog.listView.isItemChecked(0) })
+                    onData(equalTo(labels.last())).inAdapterView(withId(R.id.playerDialogList)).perform(click())
+                    assertTrue(checked.last())
+                    assertTrue(onMainResult { dialog.listView.isItemChecked(499) })
+                    screenshot("owned-choice-$language-font$scale-night$night")
+                    onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click())
+                    assertFalse(dialog.isShowing)
+                } finally { onMain { dialog.dismiss() } }
+            }
+        }
+    }
+
+    @Test fun ownedPanelsRetainDynamicMessagesButtonOverridesAndLifecycleCleanup() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var dialog: PlayerDialog
+            var accepted = 0
+            onMain {
+                dialog = AccentTheme.dialog(resumedActivity()).setTitle(R.string.details)
+                    .setMessage("Initial details").setPositiveButton(R.string.save, null)
+                    .setNegativeButton(R.string.close, null).create()
+                dialog.setOnShowListener {
+                    dialog.getButton(-1).setOnClickListener {
+                        accepted++
+                        dialog.setMessage("Updated details\n".repeat(50))
+                    }
+                }
+                dialog.show()
+            }
+            onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+            assertEquals(1, accepted)
+            assertTrue(dialog.isShowing)
+            onView(withId(android.R.id.message)).inRoot(isDialog()).check(matches(withText("Updated details\n".repeat(50))))
+            onView(withId(android.R.id.button2)).inRoot(isDialog()).check(matches(isDisplayed()))
+            scenario.recreate()
+            await { !dialog.isShowing }
+            onView(withId(R.id.nav_player)).check(matches(isDisplayed()))
+        }
+    }
+
+    @Test fun allThreeLyricActionGlyphsStayCenteredWithinTheirUnchangedButtons() =
+        withDownloadedLyricVersions { _, _, _, _ ->
+            val sizes = mutableMapOf<Int, Pair<Int, Int>>()
+            for (style in BlockStyle.selectable) {
+                onMain { app.displaySettings.update { it.copy(blockOutline = BlockOutline(style)) } }
+                awaitPlayerFrame()
+                onMain {
+                    for (id in listOf(R.id.lyricVersions, R.id.nextLyrics, R.id.lyricsTiming)) {
+                        val button = resumedActivity().findViewById<ImageView>(id)
+                        assertTrue(button.isShown)
+                        val size = button.width to button.height
+                        assertEquals(sizes.getOrPut(id) { size }, size)
+                        val image = Bitmap.createBitmap(button.width, button.height, Bitmap.Config.ARGB_8888)
+                        try {
+                            val canvas = Canvas(image)
+                            canvas.translate(button.paddingLeft.toFloat(), button.paddingTop.toFloat())
+                            canvas.concat(button.imageMatrix)
+                            button.drawable.draw(canvas)
+                            var left = image.width
+                            var top = image.height
+                            var right = -1
+                            var bottom = -1
+                            for (y in 0 until image.height) for (x in 0 until image.width)
+                                if (Color.alpha(image.getPixel(x, y)) > 32) {
+                                    left = minOf(left, x); right = maxOf(right, x)
+                                    top = minOf(top, y); bottom = maxOf(bottom, y)
+                                }
+                            assertTrue(right > left && bottom > top)
+                            assertEquals("Horizontal glyph center, control $id", button.width / 2f, (left + right + 1) / 2f, 1f)
+                            assertEquals("Vertical glyph center, control $id", button.height / 2f, (top + bottom + 1) / 2f, 1f)
+                        } finally { image.recycle() }
+                    }
+                }
+            }
+            screenshot("centered-lyric-action-icons")
+        }
 
     @Test fun spectrumOriginsPersistWithoutMovingTheSpectrumWindow() {
         val tracks = fixtureTracks()
@@ -3826,7 +4109,12 @@ class MusicIntegrationTest {
                 }
                 val model = onMainResult { ViewModelProvider(resumedActivity())[MusicViewModel::class.java] }
                 fun state() = model.lyrics.value
-                await { controller.isPlaying && state().result?.document != null }
+                await { onMainResult {
+                    val timing = resumedActivity().findViewById<View>(R.id.lyricsTiming)
+                    controller.isPlaying && !state().loading && state().result?.document != null &&
+                        timing.isShown && timing.isEnabled
+                } }
+                awaitPlayerFrame()
                 val original = state().result!!
                 onMain {
                     val source = resumedActivity().findViewById<View>(R.id.lyricsStatus)
@@ -3897,6 +4185,10 @@ class MusicIntegrationTest {
             onView(withId(R.id.onlineLyricsList)).inRoot(isDialog()).check(matches(isDisplayed()))
             onView(withId(R.id.onlineLyricsProgress)).inRoot(isDialog()).check(matches(isDisplayed()))
             assertTrue(model.onlineLyrics.value!!.candidates.isEmpty())
+            val duration = model.onlineLyrics.value!!.trackDurationMs
+            assertTrue(duration > 0)
+            onView(withId(R.id.lyricsTrackDuration)).inRoot(isDialog())
+                .check(matches(withText(app.text(R.string.lyrics_music_duration, TimeText.format(duration)))))
             assertEquals(original, model.lyrics.value.result)
             assertEquals(0L, runBlocking { app.lyrics.cache.inspect() }.files)
             first.complete(Unit)
@@ -3904,6 +4196,18 @@ class MusicIntegrationTest {
             assertTrue(model.onlineLyrics.value!!.searching)
             assertFalse(requests.any { "fcg_query_lyric_new" in it })
             assertEquals(original, model.lyrics.value.result)
+            for (candidate in model.onlineLyrics.value!!.candidates) {
+                val label = "${candidate.title} - ${candidate.artist}"
+                val time = candidate.durationMs.takeIf { it > 0 }?.let(TimeText::format)
+                    ?: app.text(R.string.lyrics_time_unknown)
+                onView(withContentDescription(app.text(R.string.lyrics_online_use, label, app.text(R.string.provider_qq))))
+                    .inRoot(isDialog()).check(matches(withText("$label\n${app.text(R.string.lyrics_provider_duration, time)}")))
+            }
+            assertTrue(model.onlineLyrics.value!!.candidates.any { it.durationMs == 0L })
+            assertTrue(model.onlineLyrics.value!!.candidates.any { it.durationMs == 62_000L })
+            onView(withId(android.R.id.button2)).inRoot(isDialog()).check { view, _ ->
+                assertDialogButtonBorder(view, true)
+            }
             screenshot("lyrics-online-progressive")
             chooseOnlineMatch("second")
             await { model.onlineLyrics.value == null &&
@@ -3996,6 +4300,219 @@ class MusicIntegrationTest {
         }
     }
 
+    @Test fun queueLyricDownloadsShowProgressSurviveRotationAndKeepPlaybackAndOfflineUse() {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        withOfflineDownloads(before = { url ->
+            if ("lyrics.kugou.com/search" in url) { entered.complete(Unit); release.await() }
+        }) { model, controller, tracks, requests, scenario ->
+            try {
+                onMain {
+                    controller.setMediaItems(listOf(tracks[0], tracks[0], tracks[1]).map(Track::toMediaItem), 0, 12_000)
+                    controller.prepare()
+                    controller.play()
+                }
+                await { onMainResult { controller.isPlaying } }
+                onView(withId(R.id.nav_queue)).perform(click())
+                onView(withId(R.id.queueDownloadLyrics)).perform(scrollTo(), click())
+                runBlocking { withTimeout(10_000) { entered.await() } }
+                assertEquals(2, model.lyricDownloads.value!!.total)
+                assertEquals(0, model.lyricDownloads.value!!.completed)
+                onView(withId(R.id.lyricsDownloadProgress)).inRoot(isDialog()).check(matches(isDisplayed()))
+                onView(withId(R.id.lyricsDownloadCurrent)).inRoot(isDialog()).check(matches(withText(tracks[0].title)))
+                screenshot("lyric-download-progress-landscape")
+                val previous = onMainResult { resumedActivity() }
+                scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+                await {
+                    ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<MainActivity>().any { it !== previous &&
+                            it.resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT }
+                }
+                assertSame(model, onMainResult { ViewModelProvider(resumedActivity())[MusicViewModel::class.java] })
+                assertEquals(1, requests.size)
+                assertFalse(app.displaySettings.options.value.onlineLyrics)
+                screenshot("lyric-download-progress-portrait")
+                release.complete(Unit)
+                assertDownloadsFinished(model, 2, 2, 0)
+                assertEquals(4, requests.size)
+                assertTrue(onMainResult { controller.isPlaying })
+                assertEquals(3, onMainResult { controller.mediaItemCount })
+                assertEquals(0, onMainResult { controller.currentMediaItemIndex })
+                onView(withId(R.id.lyricsDownloadProgress)).inRoot(isDialog()).check { view, error ->
+                    if (error != null) throw error
+                    val bar = view as android.widget.ProgressBar
+                    assertEquals(2, bar.max)
+                    assertEquals(2, bar.progress)
+                    assertFalse(bar.isIndeterminate)
+                }
+                screenshot("lyric-download-completed-portrait")
+                closeDownloads(model)
+                onMain { app.displaySettings.update { it.copy(lyricsEnabled = true, onlineLyrics = false) } }
+                onView(withId(R.id.nav_player)).perform(click())
+                await { model.lyrics.value.result?.document?.downloaded == true && !model.lyrics.value.loading }
+                assertTrue(model.lyrics.value.result!!.availableOffline)
+                assertEquals(4, requests.size)
+            } finally { release.complete(Unit) }
+        }
+    }
+
+    @Test fun folderSubfolderQueueSongAndPlaylistMenusDownloadOnlyTheirOwnSongs() =
+        withOfflineDownloads { model, _, tracks, requests, _ ->
+            val source = app.repository.library.value.sources.single()
+            val playlist = runBlocking(Dispatchers.IO) {
+                app.repository.update {
+                    LibraryEdits.addToPlaylist(LibraryEdits.createPlaylist(it, "offline-menu", "Offline fixture"),
+                        "offline-menu", tracks.map { song -> song.id })
+                }.playlists.single()
+            }
+            onView(withId(R.id.nav_folders)).perform(click())
+            onView(withContentDescription(app.text(R.string.options_for, app.repository.documents.displayName(source))))
+                .perform(click())
+            onView(withText(R.string.lyrics_download)).inRoot(isDialog()).perform(click())
+            assertDownloadsFinished(model, 2, 2, 0)
+            assertEquals(4, requests.size)
+            closeDownloads(model)
+            onView(withText(app.repository.documents.displayName(source))).perform(click())
+            await { !model.browser.value.loading && model.browser.value.entries.isNotEmpty() }
+            val folder = model.browser.value.entries.first { it.isDirectory }
+            val file = model.browser.value.entries.first { !it.isDirectory }
+            onView(withContentDescription(app.text(R.string.options_for, folder.name))).perform(click())
+            onView(withText(R.string.lyrics_download)).inRoot(isDialog()).perform(click())
+            assertDownloadsFinished(model, 1, 0, 1)
+            closeDownloads(model)
+            onView(withContentDescription(app.text(R.string.options_for, file.name))).perform(click())
+            onView(withText(R.string.lyrics_download)).inRoot(isDialog()).perform(click())
+            assertDownloadsFinished(model, 1, 0, 1)
+            closeDownloads(model)
+            onView(withId(R.id.nav_queue)).perform(click())
+            onView(allOf(withContentDescription(app.text(R.string.options_for, tracks[0].title)),
+                isDescendantOfA(withId(R.id.queueList)))).perform(click())
+            onView(withText(R.string.lyrics_download)).inRoot(isDialog()).perform(click())
+            assertDownloadsFinished(model, 1, 0, 1)
+            closeDownloads(model)
+            onView(withId(R.id.nav_playlists)).perform(click())
+            onView(withContentDescription(app.text(R.string.options_for, playlist.name))).perform(click())
+            onView(withText(R.string.lyrics_download)).inRoot(isDialog()).perform(click())
+            assertDownloadsFinished(model, 2, 0, 2)
+            closeDownloads(model)
+            onView(withText(playlist.name)).perform(click())
+            onView(allOf(withContentDescription(app.text(R.string.options_for, tracks[1].title)),
+                isDescendantOfA(withId(R.id.playlistList)))).perform(click())
+            onView(withText(R.string.lyrics_download)).inRoot(isDialog()).perform(click())
+            assertDownloadsFinished(model, 1, 0, 1)
+            closeDownloads(model)
+            assertEquals("Already available lyrics must not be downloaded again", 4, requests.size)
+        }
+
+    @Test fun cancellingBulkLyricsKeepsCompletedSongsAndRestartSkipsThem() {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var secondTitle = ""
+        withOfflineDownloads(before = { url ->
+            if ("lyrics.kugou.com/search" in url &&
+                Uri.parse(url).getQueryParameter("keyword") == secondTitle) {
+                entered.complete(Unit)
+                release.await()
+            }
+        }) { model, _, tracks, requests, _ ->
+            try {
+                secondTitle = LyricQueries.keyword(LyricQueries.candidates(LyricQuery.from(tracks[1]), tracks[1].fileName).first(), true)
+                onView(withId(R.id.nav_queue)).perform(click())
+                onView(withId(R.id.queueDownloadLyrics)).perform(scrollTo(), click())
+                runBlocking { withTimeout(10_000) { entered.await() } }
+                assertEquals(1, model.lyricDownloads.value!!.saved)
+                assertEquals(3, requests.size)
+                val generation = app.lyrics.cache.generation
+                onMain {
+                    model.clearLyricCache()
+                    model.downloadLyrics("Duplicate request", tracks)
+                }
+                assertEquals(generation, app.lyrics.cache.generation)
+                assertEquals(3, requests.size)
+                onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click())
+                await { model.lyricDownloads.value?.phase == LyricDownloadPhase.CANCELLED && !model.lyricDownloadsBusy }
+                assertEquals(1, model.lyricDownloads.value!!.saved)
+                assertEquals(0, model.lyricDownloads.value!!.failed)
+                assertEquals(1L, runBlocking { app.lyrics.cache.inspect().files })
+                assertEquals(3, requests.size)
+                screenshot("lyric-download-cancelled")
+                closeDownloads(model)
+                release.complete(Unit)
+                onView(withId(R.id.queueDownloadLyrics)).perform(scrollTo(), click())
+                assertDownloadsFinished(model, 2, 1, 1)
+                assertEquals(5, requests.size)
+                closeDownloads(model)
+            } finally { release.complete(Unit) }
+        }
+    }
+
+    private fun assertDownloadsFinished(model: MusicViewModel, total: Int, saved: Int, kept: Int) {
+        await { model.lyricDownloads.value?.phase == LyricDownloadPhase.COMPLETE && !model.lyricDownloadsBusy }
+        val state = model.lyricDownloads.value!!
+        assertEquals(total, state.total)
+        assertEquals(total, state.completed)
+        assertEquals(saved, state.saved)
+        assertEquals(kept, state.kept)
+        assertEquals(0, state.unmatched)
+        assertEquals(0, state.failed)
+        onView(withId(R.id.lyricsDownloadCounts)).inRoot(isDialog()).check(matches(withText(
+            app.text(R.string.lyrics_download_counts, saved, kept, 0, 0, total, total))))
+    }
+
+    private fun closeDownloads(model: MusicViewModel) {
+        onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click())
+        await { model.lyricDownloads.value == null }
+    }
+
+    private fun withOfflineDownloads(
+        before: suspend (String) -> Unit = {},
+        action: (MusicViewModel, MediaController, List<Track>, List<String>, ActivityScenario<MainActivity>) -> Unit,
+    ) {
+        lyricMode("missing")
+        val tracks = fixtureTracks()
+        runBlocking { app.lyrics.cache.useInternal(); app.lyrics.cache.clear() }
+        val field = LyricsRepository::class.java.getDeclaredField("client").apply { isAccessible = true }
+        val previous = field.get(app.lyrics)
+        val requests = java.util.concurrent.CopyOnWriteArrayList<String>()
+        field.set(app.lyrics, OnlineLyricsClient({ url, _, _ ->
+            requests.add(url)
+            before(url)
+            when {
+                "lyrics.kugou.com/search" in url -> {
+                    val title = kotlinx.serialization.json.JsonPrimitive(Uri.parse(url).getQueryParameter("keyword").orEmpty())
+                    """{"status":200,"candidates":[{"id":"42","accesskey":"test-only","song":$title,"singer":"","duration":60000}]}"""
+                }
+                "lyrics.kugou.com/download" in url -> {
+                    val data = android.util.Base64.encodeToString(
+                        syntheticOnlineLyrics("[00:01]Synthetic offline download").toByteArray(), android.util.Base64.NO_WRAP)
+                    """{"status":200,"content":"$data"}"""
+                }
+                else -> throw AssertionError("A suitable first provider should stop this fixture: $url")
+            }
+        }) { _, error -> throw AssertionError(error) })
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+                val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+                val controller = future.get(20, TimeUnit.SECONDS)
+                try {
+                    onMain {
+                        controller.pause()
+                        controller.setMediaItems(tracks.map(Track::toMediaItem), 0, 12_000)
+                        controller.prepare()
+                    }
+                    await { onMainResult { controller.playbackState == Player.STATE_READY } }
+                    val model = onMainResult { ViewModelProvider(resumedActivity())[MusicViewModel::class.java] }
+                    awaitPlayerFrame()
+                    action(model, controller, tracks, requests, scenario)
+                } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
+            }
+        } finally {
+            field.set(app.lyrics, previous)
+            runBlocking { app.lyrics.cache.clear() }
+        }
+    }
+
     private fun chooseOnlineMatch(id: String) {
         val label = "Synthetic $id match - Fixture singer"
         onView(withContentDescription(app.text(R.string.lyrics_online_use, label, app.text(R.string.provider_qq))))
@@ -4018,8 +4535,8 @@ class MusicIntegrationTest {
                 "lyrics.kugou.com/search" in url -> """{"status":200,"candidates":[]}"""
                 "mobilecdn.kugou.com" in url -> """{"status":1,"data":{"info":[]}}"""
                 "client_search_cp" in url -> """{"code":0,"data":{"song":{"list":[
-                    {"songname":"Synthetic first match","singer":[{"name":"Fixture singer"}],"songmid":"first"},
-                    {"songname":"Synthetic second match","singer":[{"name":"Fixture singer"}],"songmid":"second"},
+                    {"songname":"Synthetic first match","singer":[{"name":"Fixture singer"}],"songmid":"first","interval":61},
+                    {"songname":"Synthetic second match","singer":[{"name":"Fixture singer"}],"songmid":"second","interval":62},
                     {"songname":"Synthetic third match","singer":[{"name":"Fixture singer"}],"songmid":"third"}]}}}"""
                 "fcg_query_lyric_new" in url -> {
                     if ("songmid=third" in url) throw java.io.IOException("Synthetic selected download failure")
@@ -4048,7 +4565,14 @@ class MusicIntegrationTest {
                     await { onMainResult { controller.playbackState == Player.STATE_READY } }
                     onMain { controller.seekTo(12_000) }
                     val model = onMainResult { ViewModelProvider(resumedActivity())[MusicViewModel::class.java] }
-                    await { !model.lyrics.value.loading && model.lyrics.value.result?.origin == LyricOrigin.LOCAL_FILE }
+                    await { onMainResult {
+                        val button = resumedActivity().findViewById<View>(R.id.nextLyrics)
+                        val lyrics = model.lyrics.value
+                        !lyrics.loading && lyrics.result?.origin == LyricOrigin.LOCAL_FILE &&
+                            lyrics.trackId == controller.currentMediaItem?.mediaId &&
+                            controller.currentPosition == 12_000L && button.isShown && button.isEnabled
+                    } }
+                    awaitPlayerFrame()
                     requests.clear()
                     action(model, controller, requests, scenario)
                 } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
@@ -4109,6 +4633,10 @@ class MusicIntegrationTest {
     }
 
     private fun assertLyricPickerRows(model: MusicViewModel, checkLayout: Boolean = false) {
+        val duration = requireNotNull(model.lyricChoices.value).trackDurationMs
+        assertTrue(duration > 0)
+        onView(withId(R.id.lyricsTrackDuration)).inRoot(isDialog())
+            .check(matches(withText(app.text(R.string.lyrics_music_duration, TimeText.format(duration)))))
         onView(withId(R.id.lyricsVersionsList)).inRoot(isDialog()).check { view, missing ->
             if (missing != null) throw missing
             val list = view as RecyclerView
@@ -4119,6 +4647,9 @@ class MusicIntegrationTest {
                 val choose = row.findViewById<MaterialButton>(R.id.lyricsVersionChoose)
                 val best = row.findViewById<MaterialButton>(R.id.lyricsVersionBest)
                 val source = row.findViewById<TextView>(R.id.lyricsVersionSource)
+                val time = row.findViewById<TextView>(R.id.lyricsVersionTime)
+                assertEquals(choice.lastTimestampMs?.let { app.text(R.string.lyrics_last_timestamp, TimeText.format(it)) }
+                    ?: app.text(R.string.lyrics_untimed), time.text.toString())
                 val selected = state.currentKey == choice.key
                 assertEquals(selected, choose.isSelected)
                 assertEquals(selected, row.isActivated)
@@ -4135,15 +4666,151 @@ class MusicIntegrationTest {
                     assertEquals("The version and status must share the first rendered line", 0,
                         choose.layout.getLineForOffset(header.length - 1))
                     val density = choose.resources.displayMetrics.density
-                    assertEquals((4 * density).roundToInt(), source.left - best.right)
                     assertTrue("Short source names must not reserve the old fixed-width column", source.width < 68 * density)
                     val more = row.findViewById<View>(R.id.lyricsVersionMore)
                     assertTrue(more.width >= 48 * density && more.height >= 48 * density)
-                    assertTrue(more.left >= choose.right && more.right <= best.left)
-                    assertTrue(choose.width >= list.width - 192 * density)
+                    assertTrue(choose.width >= list.width - 105 * density)
+                    assertLyricCellLayout(row)
                 }
             }
         }
+    }
+
+    private fun assertLyricCellLayout(row: View) {
+        val choose = row.findViewById<MaterialButton>(R.id.lyricsVersionChoose)
+        val source = row.findViewById<TextView>(R.id.lyricsVersionSource)
+        val time = row.findViewById<TextView>(R.id.lyricsVersionTime)
+        val more = bounds(row.findViewById(R.id.lyricsVersionMore))
+        val best = bounds(row.findViewById(R.id.lyricsVersionBest))
+        val cell = bounds(choose)
+        val density = row.resources.displayMetrics.density
+        assertTrue(more.right < cell.left && best.left > cell.right)
+        for (button in listOf(more, best)) {
+            assertEquals("Buttons and lyric cells must align at the top", cell.top, button.top)
+            assertEquals("Buttons and lyric cells must align at the bottom", cell.bottom, button.bottom)
+        }
+        assertSame(row.findViewById(R.id.lyricsVersionCell), source.parent.parent)
+        assertTrue("Source belongs inside the lyric cell", cell.contains(bounds(source)))
+        assertTrue("Time belongs inside the lyric cell", cell.contains(bounds(time)))
+        assertEquals(cell.right - choose.paddingEnd, bounds(source).right)
+        assertEquals(android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL, source.gravity)
+        assertEquals(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12f, row.resources.displayMetrics),
+            source.textSize, 0.1f)
+        if ((source.parent as LinearLayout).orientation == LinearLayout.HORIZONTAL)
+            assertTrue(bounds(time).right + 7 * density <= bounds(source).left)
+        else assertTrue(bounds(time).bottom <= bounds(source).top)
+        for (line in 0 until time.layout.lineCount) assertEquals("Time must be fully readable", 0, time.layout.getEllipsisCount(line))
+        assertTrue(time.height >= time.layout.height)
+        val contentHeight = choose.height - choose.compoundPaddingTop - choose.compoundPaddingBottom
+        val textBottom = cell.top + choose.compoundPaddingTop + maxOf(0, (contentHeight - choose.layout.height) / 2) + choose.layout.height
+        assertTrue("The preview must not overlap the source/time footer", textBottom <= bounds(time).top)
+        if (choose.isSelected) for (text in listOf(source, time)) {
+            assertTrue("Active row details must remain readable",
+                androidx.core.graphics.ColorUtils.calculateContrast(text.currentTextColor,
+                    requireNotNull(choose.backgroundTintList).defaultColor) >= 4.5)
+        }
+    }
+
+    @Test fun lyricCellsKeepAlignedControlsReadableTimesAndStyledCloseAcrossFontsAndLanguages() {
+        ActivityScenario.launch(MainActivity::class.java).use {
+            val styles = listOf(null) + BlockStyle.entries.filter { it != BlockStyle.NONE }
+            for (language in listOf("en", "zh")) for (scale in listOf(1f, 2f)) for (style in styles) {
+                val blocks = style != null
+                lateinit var picker: com.macarmusic.app.ui.LyricVersionsDialog
+                val selected = mutableListOf<String>()
+                val preferred = mutableListOf<String>()
+                onMain {
+                    val context = ContextThemeWrapper(resumedActivity(), R.style.Theme_ManaPlayer).apply {
+                        applyOverrideConfiguration(Configuration().apply {
+                            setLocale(java.util.Locale.forLanguageTag(language))
+                            fontScale = scale
+                        })
+                    }
+                    val options = DisplayOptions(controlBlocks = blocks, blockOutline = BlockOutline(
+                        style ?: BlockStyle.SOLID, "+"))
+                    picker = com.macarmusic.app.ui.LyricVersionsDialog(context, { options },
+                        { selected.add(it) }, { preferred.add(it) }, { error("Not deleting fixture") }, {})
+                    picker.show()
+                    picker.update(com.macarmusic.app.lyrics.LyricChoices("song", choices = listOf(
+                        com.macarmusic.app.lyrics.LyricChoice("version", context.getString(R.string.lyrics_version_number, 1),
+                            LyricOrigin.LOCAL_FILE, cached = true, preview = "Synthetic words",
+                            lastTimestampMs = if (blocks) 221_500 else null)),
+                        currentKey = "version", loading = false, trackDurationMs = 245_000))
+                    val dialog = picker.javaClass.getDeclaredField("dialog").apply { isAccessible = true }
+                        .get(picker) as com.macarmusic.app.ui.PlayerDialog
+                    dialog.window!!.setLayout(((if (scale == 2f) 300 else 480) * context.resources.displayMetrics.density).roundToInt(), -2)
+                }
+                try {
+                    awaitPlayerFrame()
+                    onView(withId(R.id.lyricsVersionsList)).inRoot(isDialog()).check { view, _ ->
+                        val row = (view as RecyclerView).getChildAt(0)
+                        assertNotNull(row)
+                        assertLyricCellLayout(row)
+                        assertEquals(3, (view.parent as ViewGroup).childCount)
+                        val visible = Rect()
+                        assertTrue(view.getLocalVisibleRect(visible))
+                        assertEquals("The list must fit above the dialog buttons", view.height, visible.height())
+                        view.scrollBy(0, (bounds(row.findViewById(R.id.lyricsVersionSource)).bottom - bounds(view).bottom)
+                            .coerceAtLeast(0))
+                    }
+                    awaitPlayerFrame()
+                    onView(withId(R.id.lyricsVersionTime)).inRoot(isDialog()).perform(click())
+                    onView(withId(R.id.lyricsVersionSource)).inRoot(isDialog()).perform(click())
+                    assertEquals(listOf("version", "version"), selected)
+                    onView(withId(R.id.lyricsVersionBest)).inRoot(isDialog()).perform(clickVisibleCenter())
+                    await { onMainResult { preferred == listOf("version") } }
+                    assertEquals(listOf("version"), preferred)
+                    onView(withId(R.id.lyricsVersionSource)).inRoot(isDialog()).perform(longClick())
+                    onView(withId(R.id.lyricsVersionActions)).inRoot(isDialog()).check(matches(isDisplayed()))
+                    onView(withId(android.R.id.button2)).inRoot(isDialog()).check { view, _ ->
+                        assertDialogButtonBorder(view, blocks)
+                    }.perform(click())
+                    screenshot("lyric-cell-$language-$scale-${style ?: "unframed"}")
+                    onView(withId(android.R.id.button2)).inRoot(isDialog()).check { view, _ ->
+                        assertDialogButtonBorder(view, blocks)
+                    }.perform(click())
+                } finally {
+                    if (selected.size < 2 || preferred.isEmpty())
+                        screenshot("lyric-cell-unreachable-$language-$scale-${style ?: "unframed"}")
+                    onMain { picker.dismiss() }
+                }
+            }
+        }
+    }
+
+    private fun clickVisibleCenter() = object : androidx.test.espresso.ViewAction {
+        override fun getConstraints() = isDisplayed()
+        override fun getDescription() = "Tap the visible center of a full-height row button"
+        override fun perform(controller: androidx.test.espresso.UiController, view: View) {
+            val visible = Rect()
+            assertTrue(view.getLocalVisibleRect(visible))
+            assertTrue("The real tap must stay inside the visible viewport",
+                visible.contains(view.width / 2, view.height / 2))
+            click().perform(controller, view)
+            controller.loopMainThreadUntilIdle()
+        }
+    }
+
+    private fun assertDialogButtonBorder(view: View, framed: Boolean) {
+        val border = view.foreground
+        assertEquals(framed, border is PlayerBlockDrawable)
+        if (!framed) return
+        requireNotNull(border)
+        val visible = Rect()
+        assertTrue(view.getLocalVisibleRect(visible))
+        assertEquals("Dialog button text must not scroll its border out of the viewport", 0, view.scrollX)
+        assertEquals("Dialog button text must not scroll its top border out of the viewport", 0, view.scrollY)
+        assertEquals("The full dialog button border must be visible", Rect(0, 0, view.width, view.height), visible)
+        assertEquals(Rect(0, 0, view.width, view.height), border.bounds)
+        assertFalse("${view.javaClass.name}: border=${border.bounds}, gravity=${view.foregroundGravity}, size=${view.width}x${view.height}",
+            border.bounds.isEmpty)
+        val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+        try {
+            border.draw(Canvas(bitmap))
+            val pixels = IntArray(view.width * view.height)
+            bitmap.getPixels(pixels, 0, view.width, 0, 0, view.width, view.height)
+            assertTrue("The dialog button border must actually paint visible pixels", pixels.any { Color.alpha(it) > 0 })
+        } finally { bitmap.recycle() }
     }
 
     @Test fun downloadedBestKeepsTheSameVisibleRowAndVersionNumber() = withDownloadedLyricVersions { model, _, _, _ ->
@@ -4424,8 +5091,7 @@ class MusicIntegrationTest {
                         val best = row.findViewById<MaterialButton>(R.id.lyricsVersionBest)
                         val choose = row.findViewById<MaterialButton>(R.id.lyricsVersionChoose)
                         assertEquals(app.text(R.string.lyrics_source_local), source.text.toString())
-                        assertTrue(source.left >= best.right)
-                        assertTrue(best.left >= choose.right)
+                        assertLyricCellLayout(row)
                         assertTrue(choose.foreground is PlayerBlockDrawable)
                         assertTrue(best.foreground is PlayerBlockDrawable)
                         val surface = com.google.android.material.color.MaterialColors.getColor(choose,
@@ -4545,7 +5211,7 @@ class MusicIntegrationTest {
             for (palette in listOf(SpectrumPalette.FIRE, SpectrumPalette.CLASSIC)) {
                 for (style in FireStyle.entries) {
                     view.configure(SpectrumOptions(enabled = true, palette = palette, fireStyle = style, barStyle = style,
-                        bands = 16, peaks = false, classicColors = colors, fireColors = colors))
+                        bands = 16, peaks = false, colors = colors))
                     view.setPlaybackActive(false)
                     view.setPlaybackActive(true)
                     view.submit(SpectrumFrame(levels, true, 44_100))
@@ -4621,7 +5287,7 @@ class MusicIntegrationTest {
                     onMain {
                         view.configure(SpectrumOptions(enabled = true, palette = paletteType,
                             fireStyle = style, barStyle = style, bands = 16, peaks = false,
-                            fireColors = palette, classicColors = palette))
+                            colors = palette))
                         view.setPlaybackActive(false)
                         view.setPlaybackActive(true)
                         view.postOnAnimation { view.postOnAnimation { drawn.countDown() } }

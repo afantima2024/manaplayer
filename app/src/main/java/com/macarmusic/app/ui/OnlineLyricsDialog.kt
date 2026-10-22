@@ -4,7 +4,6 @@ import android.content.Context
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -28,11 +27,18 @@ internal class OnlineLyricsDialog(
     dismissed: () -> Unit,
 ) {
     private var state: OnlineLyricSearch? = null
+    private var buttons: BlockButtonStyler? = null
     private val adapter = MatchesAdapter()
     private val song = TextView(context).apply {
         textSize = 14f
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
+        setPadding(dp(4), 0, dp(4), dp(4))
+        setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
+    }
+    private val duration = TextView(context).apply {
+        id = R.id.lyricsTrackDuration
+        textSize = 14f
         setPadding(dp(4), 0, dp(4), dp(4))
         setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
     }
@@ -51,6 +57,7 @@ internal class OnlineLyricsDialog(
         orientation = LinearLayout.VERTICAL
         setPadding(dp(12), 0, dp(12), 0)
         addView(song, LinearLayout.LayoutParams(-1, -2))
+        addView(duration, LinearLayout.LayoutParams(-1, -2))
         addView(TextView(context).apply {
             setText(R.string.lyrics_online_help)
             textSize = 14f
@@ -67,19 +74,28 @@ internal class OnlineLyricsDialog(
         }, LinearLayout.LayoutParams(-1, 0, 1f))
     }
     private val dialog = AccentTheme.dialog(context).setTitle(R.string.lyrics_online)
-        .setView(FrameLayout(context).apply {
-            addView(body, FrameLayout.LayoutParams(-1, dp((resources.configuration.screenHeightDp - 200).coerceIn(160, 440))))
-        }).setNegativeButton(R.string.close, null).create().apply {
+        .setView(lyricDialogContent(body, (context.resources.configuration.screenHeightDp - 200).coerceIn(160, 440)))
+        .setNegativeButton(R.string.close, null).create().apply {
             setOnDismissListener { dismissed() }
         }
 
-    fun show() = dialog.show()
+    fun show() {
+        dialog.show()
+        buttons = BlockButtonStyler.dialogButtons(dialog).also {
+            val options = display()
+            it.apply(options.controlBlocks, options.blockOutline)
+        }
+    }
     fun dismiss() = dialog.dismiss()
 
     fun update(value: OnlineLyricSearch) {
         val previous = state
         state = value
         song.text = value.title
+        duration.text = context.getString(R.string.lyrics_music_duration,
+            value.trackDurationMs.takeIf { it > 0 }?.let(TimeText::format) ?: context.getString(R.string.lyrics_time_unknown))
+        val options = display()
+        buttons?.apply(options.controlBlocks, options.blockOutline)
         progress.isVisible = value.searching || value.busyKey != null
         progress.progress = value.completed.size
         status.text = buildList {
@@ -139,8 +155,8 @@ internal class OnlineLyricsDialog(
             val search = checkNotNull(state)
             val candidate = search.candidates[position]
             val title = listOf(candidate.title, candidate.artist).filter(String::isNotBlank).joinToString(" - ")
-            choose.text = listOf(title, candidate.durationMs.takeIf { it > 0 }?.let(TimeText::format))
-                .filterNotNull().joinToString("\n")
+            choose.text = context.getString(R.string.setting_value, title, context.getString(R.string.lyrics_provider_duration,
+                candidate.durationMs.takeIf { it > 0 }?.let(TimeText::format) ?: context.getString(R.string.lyrics_time_unknown)))
             val provider = context.getString(routeLabel(candidate.key.route))
             choose.contentDescription = context.getString(R.string.lyrics_online_use, title, provider)
             choose.isEnabled = search.busyKey == null

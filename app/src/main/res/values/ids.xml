@@ -1,4 +1,12 @@
 <resources>
+    <item name="playerDialogPanel" type="id" />
+    <item name="playerDialogTitle" type="id" />
+    <item name="playerDialogList" type="id" />
+    <item name="lyricsDownloadProgress" type="id" />
+    <item name="lyricsDownloadStatus" type="id" />
+    <item name="lyricsDownloadCurrent" type="id" />
+    <item name="lyricsDownloadCounts" type="id" />
+    <item name="queueDownloadLyrics" type="id" />
     <item name="onlineLyricsProgress" type="id" />
     <item name="onlineLyricsStatus" type="id" />
     <item name="onlineLyricsList" type="id" />
@@ -6,6 +14,9 @@
     <item name="onlineLyricsSource" type="id" />
     <item name="lyricsVersionsList" type="id" />
     <item name="lyricsVersionsStatus" type="id" />
+    <item name="lyricsTrackDuration" type="id" />
+    <item name="lyricsVersionCell" type="id" />
+    <item name="lyricsVersionTime" type="id" />
     <item name="lyricsVersionChoose" type="id" />
     <item name="lyricsVersionMore" type="id" />
     <item name="lyricsVersionActions" type="id" />

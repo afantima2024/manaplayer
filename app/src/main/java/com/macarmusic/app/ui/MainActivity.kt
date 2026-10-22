@@ -36,7 +36,7 @@ import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.app.AlertDialog
+import android.content.DialogInterface
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.os.LocaleListCompat
@@ -78,6 +78,7 @@ import com.macarmusic.app.lyrics.LyricState
 import com.macarmusic.app.lyrics.CachedLyric
 import com.macarmusic.app.lyrics.LyricTiming
 import com.macarmusic.app.lyrics.LyricChoices
+import com.macarmusic.app.lyrics.LyricDownloadState
 import com.macarmusic.app.lyrics.OnlineLyricsClient
 import com.macarmusic.app.lyrics.LyricSearchRoute
 import com.macarmusic.app.model.AudioFiles
@@ -180,14 +181,15 @@ class MainActivity : AppCompatActivity() {
     private var optionalContentStarted = false
     private var coreReported = false
     private var parkedNoticeShown = false
-    private var deviceMusicDialog: AlertDialog? = null
-    private var lyricTimingDialog: AlertDialog? = null
+    private var deviceMusicDialog: PlayerDialog? = null
+    private var lyricTimingDialog: PlayerDialog? = null
     private var lyricVersionsDialog: LyricVersionsDialog? = null
     private var onlineLyricsDialog: OnlineLyricsDialog? = null
+    private var lyricDownloadsDialog: LyricDownloadsDialog? = null
     private var timingTrackId: String? = null
     private var timingDocument: CachedLyric? = null
     private var renderedDeviceMusic: DeviceMusicPicker? = null
-    private var backupDialog: AlertDialog? = null
+    private var backupDialog: PlayerDialog? = null
     private var shownBackup: PreparedBackup? = null
     private var artworkJob: Job? = null
     private val slideshow by lazy {
@@ -481,6 +483,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         lyricVersionsDialog?.dismiss()
         onlineLyricsDialog?.dismiss()
+        lyricDownloadsDialog?.dismiss()
         lyricTimingDialog?.dismiss()
         deviceMusicDialog?.dismiss()
         deviceMusicDialog = null
@@ -581,6 +584,14 @@ class MainActivity : AppCompatActivity() {
                 launch { model.lyrics.collect(::renderLyrics) }
                 launch { model.lyricChoices.collect(::renderLyricChoices) }
                 launch { model.onlineLyrics.collect(::renderOnlineLyrics) }
+                launch {
+                    var wasRunning = false
+                    model.lyricDownloads.collect {
+                        renderLyricDownloads(it)
+                        val running = it?.running == true
+                        if (running != wasRunning) { wasRunning = running; renderLyricCache() }
+                    }
+                }
                 launch { model.importingBackground.collect { renderSettings() } }
                 launch { model.lyricCacheBusy.collect { renderLyricCache() } }
                 launch { model.deviceMusic.collect(::renderDeviceMusicPicker) }
@@ -653,11 +664,9 @@ class MainActivity : AppCompatActivity() {
                             delay(1_000)
                             model.app.displaySettings.options.distinctUntilChanged { old, next ->
                                 old.customTheme == next.customTheme && old.imageVersion == next.imageVersion &&
-                                    old.imageIds == next.imageIds && old.blur == next.blur && old.slideshow == next.slideshow &&
-                                    old.lightMode == next.lightMode
+                                    old.imageIds == next.imageIds && old.blur == next.blur && old.slideshow == next.slideshow
                             }.collectLatest { display ->
-                                val effective = display.effective()
-                                slideshow.show(effective, model.backgroundIndex(effective.imageVersion, effective.backgroundImages.size))
+                                slideshow.show(display, model.backgroundIndex(display.imageVersion, display.backgroundImages.size))
                             }
                         }
                         launch { model.app.spectrum.frames.collect { now.controls.spectrum.submit(it) } }
@@ -700,6 +709,9 @@ class MainActivity : AppCompatActivity() {
         TooltipCompat.setTooltipText(now.cover.lyricsTiming, getString(R.string.lyrics_timing))
         now.controls.spectrum.setOnClickListener {
             model.app.displaySettings.update { it.copy(spectrum = it.spectrum.nextMode()) }
+        }
+        now.controls.spectrum.onOriginDoubleTap = {
+            model.app.displaySettings.update { it.copy(spectrum = it.spectrum.copy(origin = it.spectrum.origin.clockwise())) }
         }
     }
 
@@ -882,6 +894,9 @@ class MainActivity : AppCompatActivity() {
         queuePanel = ListPanel(this, compactChrome)
         queuePanel.list.id = R.id.queueList
         queuePanel.actionRow(
+            queuePanel.action(R.string.lyrics_download) {
+                model.downloadLyrics(getString(R.string.queue), queueTracks)
+            }.apply { id = R.id.queueDownloadLyrics },
             queuePanel.action(R.string.save_queue) {
                 if (queueTracks.isEmpty()) model.app.inform(getString(R.string.no_tracks_to_play))
                 else newPlaylistDialog(queueTracks)
@@ -988,9 +1003,6 @@ class MainActivity : AppCompatActivity() {
             label = { settings.widgetTransparencyValue.text = getString(R.string.widget_transparency_value, it) },
             save = { value -> model.app.displaySettings.update { it.copy(widgetTransparency = value) } },
         ))
-        settings.settingsLightMode.setOnCheckedChangeListener { _, checked ->
-            model.app.displaySettings.update { it.copy(lightMode = checked) }
-        }
         settings.settingsTheme.setOnClickListener { themeDialog() }
         settings.settingsAccent.setOnClickListener { accentDialog() }
         settings.settingsControlBlocks.setOnCheckedChangeListener { _, checked ->
@@ -1032,7 +1044,7 @@ class MainActivity : AppCompatActivity() {
         settings.lyricsCacheClear.setOnClickListener {
             val cache = model.app.lyrics.cache.info.value
             val location = if (cache.invalidLocation) getString(R.string.lyrics_cache_unavailable)
-                else cache.folder?.name ?: cache.internalPath
+                else cache.folder?.name ?: getString(R.string.lyrics_cache_internal_locations, cache.internalPath, cache.downloadPath)
             AccentTheme.dialog(this).setTitle(R.string.lyrics_cache_clear)
                 .setMessage(getString(R.string.lyrics_cache_clear_confirm, location))
                 .setNegativeButton(R.string.cancel, null)
@@ -1185,8 +1197,7 @@ class MainActivity : AppCompatActivity() {
             button.setOnClickListener { spectrumColorDialog(index) }
         }
         fields.spectrumResetColors.setOnClickListener {
-            val palette = model.app.displaySettings.options.value.spectrum.palette
-            changeSpectrumColors(palette) { if (palette == SpectrumPalette.FIRE) SpectrumColors.FIRE else SpectrumColors.CLASSIC }
+            changeSpectrumColors { SpectrumColors.FIRE }
         }
         choices(fields.spectrumBands, SpectrumOptions.BAND_COUNTS, spectrum.bands,
             { getString(R.string.spectrum_band_count, it) }) { value ->
@@ -1219,11 +1230,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun spectrumColorDialog(index: Int) {
         val spectrum = model.app.displaySettings.options.value.spectrum
-        val colors = if (spectrum.palette == SpectrumPalette.FIRE) spectrum.fireColors else spectrum.classicColors
+        val colors = spectrum.colors
         val color = listOf(colors.low, colors.middle, colors.high)[index]
         val label = listOf(R.string.spectrum_color_low, R.string.spectrum_color_middle, R.string.spectrum_color_high)[index]
         ColorSwatchDialog.show(this, getString(label), color) { selected ->
-            changeSpectrumColors(spectrum.palette) {
+            changeSpectrumColors {
                 when (index) {
                     0 -> it.copy(low = selected)
                     1 -> it.copy(middle = selected)
@@ -1293,7 +1304,7 @@ class MainActivity : AppCompatActivity() {
         val dialog = AccentTheme.dialog(this).setTitle(R.string.block_character)
             .setView(input).setPositiveButton(R.string.apply, null).setNegativeButton(R.string.cancel, null).create()
         dialog.setOnShowListener {
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
                 val value = field.text?.toString().orEmpty()
                 if (!BlockOutline.isValidCharacter(value)) input.error = getString(R.string.block_character_invalid)
                 else {
@@ -1305,14 +1316,10 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun changeSpectrumColors(palette: SpectrumPalette, edit: (SpectrumColors) -> SpectrumColors) {
+    private fun changeSpectrumColors(edit: (SpectrumColors) -> SpectrumColors) {
         model.app.displaySettings.update { display ->
             val spectrum = display.spectrum
-            display.copy(spectrum = when (palette) {
-                SpectrumPalette.CLASSIC -> spectrum.copy(classicColors = edit(spectrum.classicColors))
-                SpectrumPalette.FIRE -> spectrum.copy(fireColors = edit(spectrum.fireColors))
-                SpectrumPalette.THEME -> spectrum
-            })
+            display.copy(spectrum = spectrum.copy(colors = edit(spectrum.colors)))
         }
     }
 
@@ -1336,7 +1343,6 @@ class MainActivity : AppCompatActivity() {
         settings.settingsBackupStatus.isVisible = model.backupBusy.value
         settings.settingsTheme.text = getString(R.string.setting_value, getString(R.string.theme), getString(theme))
         val display = model.app.displaySettings.options.value
-        settings.settingsLightMode.isChecked = display.lightMode
         if (!settings.widgetTransparency.isPressed) {
             settings.widgetTransparency.progress = display.widgetTransparency
             settings.widgetTransparencyValue.text = getString(R.string.widget_transparency_value, display.widgetTransparency)
@@ -1358,11 +1364,11 @@ class MainActivity : AppCompatActivity() {
         settings.settingsBlockShadow.isVisible = display.blockOutline.hasBorder
         settings.settingsLyrics.isChecked = display.lyricsEnabled
         settings.settingsOnlineLyrics.isChecked = display.onlineLyrics
-        settings.settingsOnlineLyrics.isEnabled = display.lyricsEnabled && !display.lightMode
+        settings.settingsOnlineLyrics.isEnabled = display.lyricsEnabled
         settings.settingsLyricDragSeek.isChecked = display.lyricsDragSeek
         settings.settingsLyricDragSeek.isEnabled = display.lyricsEnabled
         settings.settingsLyricSmoothScroll.isChecked = display.lyricsSmoothScroll
-        settings.settingsLyricSmoothScroll.isEnabled = display.lyricsEnabled && !display.lightMode
+        settings.settingsLyricSmoothScroll.isEnabled = display.lyricsEnabled
         settings.lyricsCacheInternalExpiry.setSelection(display.internalLyricExpiry.ordinal, false)
         settings.lyricsCachePortableExpiry.setSelection(display.portableLyricExpiry.ordinal, false)
         settings.lyricsLandscapePosition.setSelection(display.landscapeLyrics.ordinal, false)
@@ -1395,7 +1401,7 @@ class MainActivity : AppCompatActivity() {
             ))
         }.joinToString("\n")
         settings.lyricsProviderOrder.text = getString(R.string.lyrics_provider_order, providers,
-            getString(if (display.lyricsEnabled && display.effective().onlineLyrics) R.string.lyrics_online_enabled else R.string.lyrics_online_disabled))
+            getString(if (display.lyricsEnabled && display.onlineLyrics) R.string.lyrics_online_enabled else R.string.lyrics_online_disabled))
         settings.settingsBackgroundPanel.isVisible = display.customTheme
         settings.settingsBackgroundImage.isEnabled = !model.importingBackground.value && !model.backupBusy.value
         settings.settingsBackgroundImage.setText(
@@ -1418,11 +1424,7 @@ class MainActivity : AppCompatActivity() {
             settings.backgroundDurationValue.text = getString(R.string.background_duration_value,
                 (display.slideshow.durationMs / 1_000.0).toString())
         }
-        settings.backgroundDuration.isEnabled = !display.lightMode && display.slideshow.transition != TransitionStyle.NONE
-        settings.backgroundInterval.isEnabled = !display.lightMode
-        settings.backgroundTransition.isEnabled = !display.lightMode
-        settings.backgroundBlur.isEnabled = !display.lightMode
-        settings.settingsTransition.isEnabled = !display.lightMode
+        settings.backgroundDuration.isEnabled = display.slideshow.transition != TransitionStyle.NONE
         settings.backgroundTransition.setSelection(display.slideshow.transition.ordinal, false)
         settings.settingsTransition.setSelection(display.settingsTransition.ordinal, false)
         settings.settingsTimeMode.setSelection(display.timeMode.ordinal, false)
@@ -1438,7 +1440,7 @@ class MainActivity : AppCompatActivity() {
             spectrumFireStyle.setSelection(display.spectrum.rendering.ordinal, false)
             fireStyleControls.isVisible = display.spectrum.style == SpectrumStyle.BARS
             spectrumColorControls.isVisible = display.spectrum.palette != SpectrumPalette.THEME
-            val colors = if (display.spectrum.palette == SpectrumPalette.FIRE) display.spectrum.fireColors else display.spectrum.classicColors
+            val colors = display.spectrum.colors
             val labels = listOf(R.string.spectrum_color_low, R.string.spectrum_color_middle, R.string.spectrum_color_high)
             val values = listOf(colors.low, colors.middle, colors.high)
             listOf(spectrumColorLow, spectrumColorMiddle, spectrumColorHigh).forEachIndexed { index, button ->
@@ -1486,11 +1488,11 @@ class MainActivity : AppCompatActivity() {
     private fun renderLyricCache() {
         if (!::settings.isInitialized) return
         val state = model.app.lyrics.cache.info.value
-        val busy = state.busy || model.lyricCacheBusy.value
+        val busy = state.busy || model.lyricCacheBusy.value || model.lyricDownloadsBusy
         val location = when {
             state.invalidLocation -> getString(R.string.lyrics_cache_unavailable)
             state.folder != null -> state.folder.name
-            else -> state.internalPath
+            else -> getString(R.string.lyrics_cache_internal_locations, state.internalPath, state.downloadPath)
         }
         val size = state.size?.let {
             "\n" + getString(R.string.lyrics_cache_size, it.files,
@@ -1527,7 +1529,7 @@ class MainActivity : AppCompatActivity() {
             AboutContent.configureBorder(settings.settingsAboutPanel, appearance.controlBlocks, appearance.blockOutline)
         }
         if (category == SettingsCategory.LYRICS && !model.lyricCacheBusy.value &&
-            !model.backupBusy.value && model.scan.value == null) {
+            !model.backupBusy.value && model.scan.value == null && !model.lyricDownloadsBusy) {
             val display = model.app.displaySettings.options.value
             val expiry = if (model.app.lyrics.cache.info.value.internal) display.internalLyricExpiry else display.portableLyricExpiry
             if (expiry != LyricCacheExpiry.NEVER) model.inspectLyricCache()
@@ -1557,7 +1559,7 @@ class MainActivity : AppCompatActivity() {
             }
             visibleScreen = target
             if (target !== now.root) lyricScrolling.stop()
-            val transition = model.app.displaySettings.options.value.effective().settingsTransition
+            val transition = model.app.displaySettings.options.value.settingsTransition
             if (previous != null && ::settings.isInitialized &&
                 (target === settings.root || previous === settings.root) &&
                 transition != TransitionStyle.NONE && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
@@ -1953,7 +1955,7 @@ class MainActivity : AppCompatActivity() {
     private fun updatePlayer() {
         val player = controller
         val ready = player != null && model.app.playbackReady.value
-        backupDialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = ready && !model.backupBusy.value
+        backupDialog?.getButton(DialogInterface.BUTTON_POSITIVE)?.isEnabled = ready && !model.backupBusy.value
         val track = currentTrack()
         val title = track?.title?.ifBlank { track.fileName } ?: getString(R.string.no_track)
         val artist = track?.artist?.ifBlank { getString(R.string.unknown_artist) } ?: getString(R.string.no_track_hint)
@@ -2118,7 +2120,7 @@ class MainActivity : AppCompatActivity() {
         val lyrics = result?.lyrics.takeIf { enabled }
         val changed = lyrics != lyricsAdapter.lyrics || state.trackId != renderedLyricTrackId
         renderedLyricTrackId = state.trackId
-        val display = model.app.displaySettings.options.value.effective()
+        val display = model.app.displaySettings.options.value
         val resized = lyricsAdapter.configure(display.lyricAppearance)
         now.root.configureLyrics(display.landscapeLyrics, display.portraitLyrics)
         lyricScrolling.configure(display.lyricsDragSeek, display.lyricsSmoothScroll)
@@ -2131,7 +2133,7 @@ class MainActivity : AppCompatActivity() {
         now.cover.lyricVersions.isVisible = enabled
         now.cover.lyricVersions.isEnabled = !state.loading
         now.cover.nextLyrics.isVisible = enabled
-        now.cover.nextLyrics.isEnabled = display.onlineLyrics && !display.lightMode
+        now.cover.nextLyrics.isEnabled = display.onlineLyrics
         now.cover.lyricsTiming.isVisible = enabled && lyrics?.timed == true && result?.document != null
         now.cover.lyricsTiming.isEnabled = !state.loading
         if (lyricTimingDialog != null && (!enabled || timingTrackId != state.trackId ||
@@ -2204,6 +2206,28 @@ class MainActivity : AppCompatActivity() {
                 if (!isChangingConfigurations) model.closeOnlineLyrics()
             }.also {
                 onlineLyricsDialog = it
+                it.show()
+            }
+        dialog.update(state)
+    }
+
+    private fun renderLyricDownloads(state: LyricDownloadState?) {
+        if (state == null) {
+            lyricDownloadsDialog?.dismiss()
+            return
+        }
+        val dialog = lyricDownloadsDialog ?: LyricDownloadsDialog(this,
+            { model.app.displaySettings.options.value },
+            {
+                val cache = model.app.lyrics.cache.info.value
+                if (cache.invalidLocation) getString(R.string.lyrics_cache_unavailable)
+                else cache.folder?.name ?: getString(R.string.lyrics_download_internal)
+            },
+            model::cancelLyricDownloads) {
+                lyricDownloadsDialog = null
+                if (!isChangingConfigurations) model.closeLyricDownloads()
+            }.also {
+                lyricDownloadsDialog = it
                 it.show()
             }
         dialog.update(state)
@@ -2573,7 +2597,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(R.string.backup_restore) { _, _ ->
                 withController { it.pause(); model.restoreBackup() }
             }.show().also {
-                it.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = controller != null && model.app.playbackReady.value
+                it.getButton(DialogInterface.BUTTON_POSITIVE).isEnabled = controller != null && model.app.playbackReady.value
             }
     }
 
@@ -2722,8 +2746,8 @@ class MainActivity : AppCompatActivity() {
             if (!choice.loading && !choice.browse) {
                 val dialog = checkNotNull(deviceMusicDialog)
                 choice.folders.forEachIndexed { index, source -> dialog.listView.setItemChecked(index, source.uri in choice.selected) }
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = choice.selected.isNotEmpty()
-                dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setText(
+                dialog.getButton(DialogInterface.BUTTON_POSITIVE).isEnabled = choice.selected.isNotEmpty()
+                dialog.getButton(DialogInterface.BUTTON_NEUTRAL).setText(
                     if (choice.selected.size == choice.folders.size) R.string.deselect_all_folders else R.string.select_all_folders)
             }
             renderedDeviceMusic = choice
@@ -2750,8 +2774,8 @@ class MainActivity : AppCompatActivity() {
         renderedDeviceMusic = choice
         deviceMusicDialog = builder.show().also {
             if (!choice.loading && !choice.browse) {
-                it.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = choice.selected.isNotEmpty()
-                it.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { model.selectAllDeviceMusicFolders() }
+                it.getButton(DialogInterface.BUTTON_POSITIVE).isEnabled = choice.selected.isNotEmpty()
+                it.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener { model.selectAllDeviceMusicFolders() }
             }
         }
     }
@@ -2775,6 +2799,7 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.rescan) to { model.scanFolders(listOf(source)) },
             getString(R.string.rescan_full) to { model.scanFolders(listOf(source), forceMetadata = true) },
             getString(R.string.play_recursively) to { model.scanFolders(listOf(source), play = true) },
+            getString(R.string.lyrics_download) to { model.downloadFolderLyrics(source) },
             getString(R.string.restore_position) to {
                 model.restorePosition(PlaybackCollection(CollectionKind.FOLDER, source.uri)); Unit
             },
@@ -2811,17 +2836,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun documentMenu(entry: DocumentEntry) {
         if (entry.isDirectory) {
+            val source = currentSource() ?: return
+            val parent = model.browser.value.path.lastOrNull()?.relativePath.orEmpty()
+            val location = BrowserLocation(source.uri, entry.id, entry.name,
+                listOf(parent, entry.name).filter(String::isNotEmpty).joinToString("/"))
             choiceDialog(entry.name, listOf(
                 getString(R.string.browse) to { model.openDirectory(entry) },
                 getString(R.string.play_recursively) to {
-                    val source = currentSource()
-                    if (source != null) {
-                        val parent = model.browser.value.path.lastOrNull()?.relativePath.orEmpty()
-                        val location = BrowserLocation(source.uri, entry.id, entry.name,
-                            listOf(parent, entry.name).filter(String::isNotEmpty).joinToString("/"))
-                        model.scanFolders(listOf(source), location, play = true)
-                    }
+                    model.scanFolders(listOf(source), location, play = true)
                 },
+                getString(R.string.lyrics_download) to { model.downloadFolderLyrics(source, location) },
             ))
         } else {
             val source = currentSource() ?: return
@@ -2844,6 +2868,7 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.add_queue) to { model.requestPlay(listOf(track), mode = QueueMode.APPEND) },
             getString(if (track.id in model.library.value.favorites) R.string.unfavorite else R.string.favorite) to { model.favorite(track); Unit },
             getString(R.string.add_playlist) to { choosePlaylist(listOf(track)) },
+            getString(R.string.lyrics_download) to { model.downloadLyrics(track.title, listOf(track)) },
             getString(R.string.details) to { detailsDialog(track) },
         )
         if (BackupEdits.unavailable(track.uri)) actions.add(0, getString(R.string.reconnect_track) to { launchReconnectTrack(track) })
@@ -2873,6 +2898,7 @@ class MainActivity : AppCompatActivity() {
             withController { if (index < it.mediaItemCount) it.removeMediaItem(index) }
         })
         actions.add(getString(R.string.add_playlist) to { choosePlaylist(listOf(track)) })
+        actions.add(getString(R.string.lyrics_download) to { model.downloadLyrics(track.title, listOf(track)) })
         actions.add(getString(R.string.details) to { detailsDialog(track) })
         choiceDialog(track.title, actions)
     }
@@ -2883,6 +2909,7 @@ class MainActivity : AppCompatActivity() {
                 model.requestPlay(LibraryEdits.playlistTracks(model.library.value, playlist.id),
                     collection = PlaybackCollection.playlist(playlist.id))
             },
+            getString(R.string.lyrics_download) to { model.downloadPlaylistLyrics(playlist) },
             getString(R.string.restore_position) to { model.restorePosition(PlaybackCollection.playlist(playlist.id)); Unit },
             getString(R.string.add_songs) to { model.playlist(playlist.id); addSongsDialog() },
             getString(R.string.edit_playlist_songs) to { addSongsDialog(edit = playlist) },
@@ -2919,7 +2946,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle(if (rename == null) R.string.create_playlist else R.string.rename_playlist).setView(field)
             .setNegativeButton(R.string.cancel, null).setPositiveButton(if (rename == null) R.string.create else R.string.save, null).create()
         dialog.setOnShowListener {
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
                 val text = name.text?.toString().orEmpty().trim()
                 if (text.isEmpty() || text.length > 80 ||
                     model.library.value.playlists.any { it.id != rename?.id && it.name.equals(text, true) }) {
@@ -2957,7 +2984,7 @@ class MainActivity : AppCompatActivity() {
         AccentTheme.dialog(this).setTitle(if (edit == null) R.string.add_songs else R.string.edit_playlist_songs)
             .setMultiChoiceItems(tracks.map { "${it.title} · ${it.artist}" }.toTypedArray(), selected) { dialog, which, checked ->
                 if (!checked && tracks[which].id in original && LibraryEdits.isPinned(model.library.value, tracks[which])) {
-                    (dialog as AlertDialog).listView.setItemChecked(which, true)
+                    (dialog as PlayerDialog).listView.setItemChecked(which, true)
                     selected[which] = true
                     model.app.inform(getString(R.string.unpin_first))
                 } else selected[which] = checked
@@ -3011,7 +3038,7 @@ class MainActivity : AppCompatActivity() {
                         existing[index]
                     ) {
                         selected[index] = true
-                        (dialog as AlertDialog).listView.setItemChecked(index, true)
+                        (dialog as PlayerDialog).listView.setItemChecked(index, true)
                         model.app.inform(getString(R.string.unpin_first))
                     } else selected[index] = checked
                 }
@@ -3185,7 +3212,7 @@ class MainActivity : AppCompatActivity() {
             }.toTypedArray(), selected) { dialog, index, checked ->
                 if (!checked && sources[index].pinned) {
                     selected[index] = true
-                    (dialog as AlertDialog).listView.setItemChecked(index, true)
+                    (dialog as PlayerDialog).listView.setItemChecked(index, true)
                     model.app.inform(getString(R.string.unpin_first))
                 } else selected[index] = checked
             }

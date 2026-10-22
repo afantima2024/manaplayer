@@ -14,6 +14,7 @@ data class LyricLine(val timeMs: Long?, val text: String)
 
 data class Lyrics(val lines: List<LyricLine>) {
     val timed: Boolean get() = lines.firstOrNull()?.timeMs != null
+    val lastTimestampMs: Long? get() = lines.lastOrNull()?.timeMs
 
     fun activeLine(positionMs: Long): Int {
         if (!timed) return -1
@@ -91,7 +92,16 @@ object LyricsParser {
 }
 
 object LyricFiles {
+    private val order = compareBy<DocumentEntry> { !it.name.endsWith(".lrc", ignoreCase = true) }.thenBy { it.name }
     fun accepts(name: String): Boolean = name.substringAfterLast('.', "").lowercase(Locale.ROOT) in setOf("lrc", "txt")
+
+    internal fun index(entries: List<DocumentEntry>): Map<String, List<DocumentEntry>> =
+        entries.filter { !it.isDirectory && !it.isVirtual && accepts(it.name) }
+            .groupBy { normalize(it.name.substringBeforeLast('.')) }
+            .mapValues { (_, files) -> files.sortedWith(order) }
+
+    internal fun matching(track: Track, index: Map<String, List<DocumentEntry>>): List<DocumentEntry> =
+        index[normalize(track.fileName.substringBeforeLast('.', track.fileName))].orEmpty()
 
     fun matching(track: Track, entries: List<DocumentEntry>, includeVersions: Boolean = false): List<DocumentEntry> {
         val stem = normalize(track.fileName.substringBeforeLast('.', track.fileName))
@@ -102,7 +112,7 @@ object LyricFiles {
             !it.isDirectory && !it.isVirtual && accepts(it.name) &&
                 stems.any { base -> name == base || (includeVersions && name.startsWith(base) &&
                     name.substring(base.length).trimStart().firstOrNull() in listOf('.', '-', '_', '(', '[', '（', '【')) }
-        }.sortedWith(compareBy<DocumentEntry> { !it.name.endsWith(".lrc", ignoreCase = true) }.thenBy { it.name })
+        }.sortedWith(order)
     }
 
     private fun normalize(value: String): String =
@@ -243,6 +253,18 @@ object LyricMatch {
         return wantedArtists.isNotEmpty() && candidates.containsAll(wantedArtists)
     }
 
+    fun durationMatches(trackMs: Long, candidateMs: Long): Boolean =
+        trackMs <= 0 || candidateMs <= 0 || kotlin.math.abs(trackMs - candidateMs) <= durationTolerance(trackMs)
+
+    fun timingMatches(trackMs: Long, lyrics: Lyrics): Boolean {
+        if (trackMs <= 0) return true
+        val end = lyrics.lastTimestampMs ?: return false
+        // Last-line starts are not song lengths: allow an outro, but not a short preview of a full song.
+        return end in (trackMs - minOf(trackMs / 4, 60_000))..(trackMs + durationTolerance(trackMs))
+    }
+
+    private fun durationTolerance(trackMs: Long): Long = (trackMs / 10).coerceIn(10_000, 30_000)
+
     fun score(query: LyricQuery, title: String, artist: String, durationMs: Long = 0, index: Int = 0): Int {
         fun similarity(first: String, second: String): Int {
             val a = searchPunctuation.replace(first.lowercase(Locale.ROOT), "").trim()
@@ -277,7 +299,8 @@ data class LyricResult(
     val document: CachedLyric? = null,
 ) {
     val availableOffline: Boolean get() = origin == null || origin == LyricOrigin.LOCAL_FILE ||
-        origin == LyricOrigin.EMBEDDED || document?.offlineSelected == true || document?.bestVersionId != null
+        origin == LyricOrigin.EMBEDDED || document?.offlineSelected == true || document?.bestVersionId != null ||
+        document?.downloaded == true
 }
 
 data class LyricState(

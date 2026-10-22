@@ -63,11 +63,11 @@ class ListPanel @JvmOverloads constructor(context: Context, private val compact:
     }
 
     fun action(label: Int, click: () -> Unit): MaterialButton =
-        MaterialButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+        PlayerTextButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             setText(label)
             isAllCaps = false
             gravity = Gravity.CENTER
-            iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+            iconGravity = MaterialButton.ICON_GRAVITY_START
             minHeight = dp(if (compact) 48 else 56)
             setOnClickListener { click() }
         }

@@ -155,7 +155,7 @@ class VisualOptionsTest {
 
     @Test fun tappingCyclesSixModesIncludingOffWithoutChangingOtherSpectrumPreferences() {
         val start = SpectrumOptions(enabled = true, style = SpectrumStyle.LINE, bands = 16, refreshRate = 15,
-            classicColors = SpectrumColors(0, 0x808080, 0xffffff))
+            colors = SpectrumColors(0, 0x808080, 0xffffff))
         val expected = listOf(
             Triple(SpectrumStyle.BARS, SpectrumPalette.CLASSIC, FireStyle.SMOOTH),
             Triple(SpectrumStyle.BARS, SpectrumPalette.CLASSIC, FireStyle.LED),
@@ -171,7 +171,7 @@ class VisualOptionsTest {
                 assertEquals(style, options.style)
                 assertEquals(palette, options.palette)
                 assertEquals(rendering, options.rendering)
-                assertEquals(start.classicColors, options.classicColors)
+                assertEquals(start.colors, options.colors)
                 assertEquals(16, options.bands)
                 assertEquals(15, options.refreshRate)
                 assertTrue(options.enabled)
@@ -189,12 +189,14 @@ class VisualOptionsTest {
         assertEquals(SpectrumStyle.LINE, SpectrumOptions(palette = SpectrumPalette.THEME).nextMode().style)
     }
 
-    @Test fun palettesAndRenderingRemainIndependent() {
+    @Test fun classicAndFireShareColorsWithoutChangingTheirRenderingChoices() {
         val customized = SpectrumColors(0x112233, 0x445566, 0x778899)
-        val options = SpectrumOptions(fireColors = customized, fireStyle = FireStyle.SMOOTH)
-        assertEquals(SpectrumColors.CLASSIC, options.classicColors)
-        assertEquals(customized, options.fireColors)
-        assertEquals(customized, options.copy(fireStyle = FireStyle.LED).fireColors)
+        val options = SpectrumOptions(colors = customized, fireStyle = FireStyle.SMOOTH)
+        assertEquals(SpectrumColors.FIRE, SpectrumOptions().colors)
+        for (palette in SpectrumPalette.entries) {
+            assertEquals(customized, options.copy(palette = palette).colors)
+            assertEquals(customized, options.copy(palette = palette).withRendering(FireStyle.LED).colors)
+        }
     }
 
     @Test(expected = IllegalArgumentException::class) fun paletteRejectsNonRgbColor() {

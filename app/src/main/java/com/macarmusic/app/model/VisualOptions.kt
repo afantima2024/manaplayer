@@ -2,12 +2,22 @@ package com.macarmusic.app.model
 
 import kotlin.math.roundToInt
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 
 enum class TransitionStyle { FADE, SLIDE, ZOOM, NONE }
 enum class PlaybackTimeMode { ELAPSED, REMAINING }
 enum class NavigationPosition { BOTTOM, LEFT, RIGHT, TOP }
 enum class SpectrumPosition { LEFT, RIGHT }
-enum class SpectrumOrigin { BOTTOM, LEFT, RIGHT, TOP }
+enum class SpectrumOrigin {
+    BOTTOM, LEFT, RIGHT, TOP;
+
+    fun clockwise(): SpectrumOrigin = when (this) {
+        BOTTOM -> LEFT
+        LEFT -> TOP
+        TOP -> RIGHT
+        RIGHT -> BOTTOM
+    }
+}
 enum class SpectrumStyle { BARS, LINE, OFF }
 enum class SpectrumPalette { CLASSIC, FIRE, THEME }
 enum class FireStyle { LED, SMOOTH }
@@ -131,8 +141,7 @@ data class SpectrumOptions(
     val peakFalloff: SpectrumDecay = SpectrumDecay.SLOW,
     val refreshRate: Int = DEFAULT_REFRESH_RATE,
     val fireStyle: FireStyle = FireStyle.LED,
-    val classicColors: SpectrumColors = SpectrumColors.CLASSIC,
-    val fireColors: SpectrumColors = SpectrumColors.FIRE,
+    @SerialName("fireColors") val colors: SpectrumColors = SpectrumColors.FIRE,
     val barStyle: FireStyle = FireStyle.SMOOTH,
     val origin: SpectrumOrigin = SpectrumOrigin.BOTTOM,
 ) {

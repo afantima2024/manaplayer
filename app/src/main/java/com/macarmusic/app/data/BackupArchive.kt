@@ -8,9 +8,15 @@ import com.macarmusic.app.model.Library
 import com.macarmusic.app.model.PlaybackCollection
 import com.macarmusic.app.model.PlaybackOptions
 import com.macarmusic.app.model.SortOrder
+import com.macarmusic.app.model.SpectrumColors
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonObject
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -130,7 +136,7 @@ object BackupArchive {
         return ZipInputStream(input).use { zip ->
             require(zip.nextEntry?.name == MANIFEST) { "Not a ManaMusicPlayer backup" }
             val bytes = BoundedInput.read(zip, MAX_METADATA_BYTES, checkCancelled)
-            val backup = json.decodeFromString<BackupManifest>(bytes.toString(Charsets.UTF_8))
+            val backup = decodeManifest(bytes.toString(Charsets.UTF_8))
             validate(backup)
             val remaining = backup.settings.display.imageIds.toMutableSet()
             while (true) {
@@ -146,6 +152,24 @@ object BackupArchive {
             require(remaining.isEmpty()) { "Backup background images are missing" }
             backup
         }
+    }
+
+    private fun decodeManifest(text: String): BackupManifest {
+        val root = json.parseToJsonElement(text).jsonObject
+        val settings = root["settings"] as? JsonObject ?: return json.decodeFromJsonElement(root)
+        val display = settings["display"] as? JsonObject ?: return json.decodeFromJsonElement(root)
+        val migrated = display.toMutableMap()
+        // Accept the two retired version-1 fields without allowing arbitrary unknown settings.
+        migrated.remove("lightMode")?.let {
+            require(it is JsonPrimitive && !it.isString && it.booleanOrNull != null) { "Invalid legacy Light mode value" }
+        }
+        val spectrum = display["spectrum"] as? JsonObject
+        if (spectrum != null && "classicColors" in spectrum) {
+            json.decodeFromJsonElement<SpectrumColors>(spectrum.getValue("classicColors"))
+            migrated["spectrum"] = JsonObject(spectrum - "classicColors")
+        }
+        return json.decodeFromJsonElement(JsonObject(root +
+            ("settings" to JsonObject(settings + ("display" to JsonObject(migrated))))))
     }
 
     private fun copyBounded(input: InputStream, output: OutputStream, limit: Int, checkCancelled: () -> Unit) {

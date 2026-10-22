@@ -9,7 +9,7 @@
         android:layout_height="wrap_content"
         android:text="@string/spectrum_position"
         android:labelFor="@id/spectrumPosition" />
-    <Spinner
+    <com.macarmusic.app.ui.PlayerSpinner
         android:id="@+id/spectrumPosition"
         style="@style/SettingChoice"
         android:layout_width="match_parent"
@@ -20,7 +20,7 @@
         android:layout_height="wrap_content"
         android:text="@string/spectrum_origin"
         android:labelFor="@id/spectrumOrigin" />
-    <Spinner
+    <com.macarmusic.app.ui.PlayerSpinner
         android:id="@+id/spectrumOrigin"
         style="@style/SettingChoice"
         android:layout_width="match_parent"
@@ -31,7 +31,7 @@
         android:layout_height="wrap_content"
         android:text="@string/spectrum_style"
         android:labelFor="@id/spectrumStyle" />
-    <Spinner
+    <com.macarmusic.app.ui.PlayerSpinner
         android:id="@+id/spectrumStyle"
         style="@style/SettingChoice"
         android:layout_width="match_parent"
@@ -42,7 +42,7 @@
         android:layout_height="wrap_content"
         android:text="@string/spectrum_band_width"
         android:labelFor="@id/spectrumBands" />
-    <Spinner
+    <com.macarmusic.app.ui.PlayerSpinner
         android:id="@+id/spectrumBands"
         style="@style/SettingChoice"
         android:layout_width="match_parent"
@@ -53,7 +53,7 @@
         android:layout_height="wrap_content"
         android:text="@string/spectrum_colors"
         android:labelFor="@id/spectrumPalette" />
-    <Spinner
+    <com.macarmusic.app.ui.PlayerSpinner
         android:id="@+id/spectrumPalette"
         style="@style/SettingChoice"
         android:layout_width="match_parent"
@@ -99,7 +99,7 @@
             android:layout_height="wrap_content"
             android:text="@string/spectrum_fire_style"
             android:labelFor="@id/spectrumFireStyle" />
-        <Spinner
+        <com.macarmusic.app.ui.PlayerSpinner
             android:id="@+id/spectrumFireStyle"
             style="@style/SettingChoice"
             android:layout_width="match_parent"
@@ -119,7 +119,7 @@
         android:layout_height="wrap_content"
         android:text="@string/spectrum_falloff"
         android:labelFor="@id/spectrumFalloff" />
-    <Spinner
+    <com.macarmusic.app.ui.PlayerSpinner
         android:id="@+id/spectrumFalloff"
         style="@style/SettingChoice"
         android:layout_width="match_parent"
@@ -130,7 +130,7 @@
         android:layout_height="wrap_content"
         android:text="@string/spectrum_peak_falloff"
         android:labelFor="@id/spectrumPeakFalloff" />
-    <Spinner
+    <com.macarmusic.app.ui.PlayerSpinner
         android:id="@+id/spectrumPeakFalloff"
         style="@style/SettingChoice"
         android:layout_width="match_parent"
@@ -141,7 +141,7 @@
         android:layout_height="wrap_content"
         android:text="@string/spectrum_refresh"
         android:labelFor="@id/spectrumRefreshRate" />
-    <Spinner
+    <com.macarmusic.app.ui.PlayerSpinner
         android:id="@+id/spectrumRefreshRate"
         style="@style/SettingChoice"
         android:layout_width="match_parent"

@@ -14,7 +14,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
+import android.content.DialogInterface
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatSeekBar
 import androidx.appcompat.widget.AppCompatTextView
@@ -172,7 +172,7 @@ object ColorSwatchDialog {
         val dialog = builder.create()
         var pending: Job? = null
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
                 if (pending?.isActive == true) return@setOnClickListener
                 pending = context.lifecycleScope.launch {
                     dialog.setCancelable(false)
@@ -266,7 +266,7 @@ object ColorSwatchDialog {
             .setView(ScrollView(context).apply { addView(content) })
             .setPositiveButton(R.string.color_use, null).setNegativeButton(R.string.cancel, null).create()
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
                 val color = ColorHex.parse(field.text.toString())
                 if (color == null) input.error = context.getString(R.string.custom_color_invalid)
                 else {

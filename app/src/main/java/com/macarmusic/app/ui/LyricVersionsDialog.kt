@@ -15,7 +15,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
+import android.content.DialogInterface
 import androidx.core.view.ViewCompat
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -38,12 +38,19 @@ internal class LyricVersionsDialog(
     dismissed: () -> Unit,
 ) {
     private var state = LyricChoices("")
-    private var menu: AlertDialog? = null
-    private var confirmation: AlertDialog? = null
+    private var menu: PlayerDialog? = null
+    private var confirmation: PlayerDialog? = null
+    private var buttons: BlockButtonStyler? = null
+    private val duration = TextView(context).apply {
+        id = R.id.lyricsTrackDuration
+        textSize = 14f
+        setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
+        setPadding(dp(4), dp(4), dp(4), dp(8))
+    }
     private val status = TextView(context).apply {
         id = R.id.lyricsVersionsStatus
         textSize = 14f
-        maxLines = 3
+        maxLines = 4
         ellipsize = TextUtils.TruncateAt.END
         setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
         setPadding(dp(4), dp(4), dp(4), dp(8))
@@ -52,12 +59,7 @@ internal class LyricVersionsDialog(
     private val body = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(12), 0, dp(12), 0)
-        addView(TextView(context).apply {
-            setText(R.string.lyrics_versions_help)
-            textSize = 14f
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
-            setPadding(dp(4), dp(4), dp(4), dp(8))
-        }, LinearLayout.LayoutParams(-1, -2))
+        addView(duration, LinearLayout.LayoutParams(-1, -2))
         addView(status, LinearLayout.LayoutParams(-1, -2))
         addView(RecyclerView(context).apply {
             id = R.id.lyricsVersionsList
@@ -67,9 +69,8 @@ internal class LyricVersionsDialog(
         }, LinearLayout.LayoutParams(-1, 0, 1f))
     }
     private val dialog = AccentTheme.dialog(context).setTitle(R.string.lyrics_versions)
-        .setView(FrameLayout(context).apply {
-            addView(body, FrameLayout.LayoutParams(-1, dp((resources.configuration.screenHeightDp - 240).coerceIn(120, 440))))
-        }).setNegativeButton(R.string.close, null).create().apply {
+        .setView(lyricDialogContent(body, (context.resources.configuration.screenHeightDp - 240).coerceIn(120, 440)))
+        .setNegativeButton(R.string.close, null).create().apply {
             setOnDismissListener {
                 menu?.dismiss()
                 confirmation?.dismiss()
@@ -77,11 +78,21 @@ internal class LyricVersionsDialog(
             }
         }
 
-    fun show() = dialog.show()
+    fun show() {
+        dialog.show()
+        buttons = BlockButtonStyler.dialogButtons(dialog).also {
+            val options = display()
+            it.apply(options.controlBlocks, options.blockOutline)
+        }
+    }
     fun dismiss() = dialog.dismiss()
 
     fun update(value: LyricChoices) {
         state = value
+        duration.text = context.getString(R.string.lyrics_music_duration,
+            value.trackDurationMs.takeIf { it > 0 }?.let(TimeText::format) ?: context.getString(R.string.lyrics_time_unknown))
+        val options = display()
+        buttons?.apply(options.controlBlocks, options.blockOutline)
         if (value.loading || value.busy) menu?.dismiss()
         val message = when {
             value.loading -> R.string.lyrics_loading
@@ -133,6 +144,7 @@ internal class LyricVersionsDialog(
         }
         menu = actionsDialog
         actionsDialog.show()
+        BlockButtonStyler.dialogButtons(actionsDialog).apply(options.controlBlocks, options.blockOutline)
     }
 
     private fun confirmRemoval(choice: LyricChoice, name: String) {
@@ -146,6 +158,8 @@ internal class LyricVersionsDialog(
             .create().apply {
                 setOnDismissListener { confirmation = null }
                 show()
+                val options = display()
+                BlockButtonStyler.dialogButtons(this).apply(options.controlBlocks, options.blockOutline)
             }
     }
 
@@ -154,7 +168,7 @@ internal class LyricVersionsDialog(
             id = R.id.lyricsVersionChoose
             minHeight = dp(56)
             isAllCaps = false
-            maxLines = 4
+            maxLines = 3
             ellipsize = TextUtils.TruncateAt.END
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
             textSize = 14f
@@ -166,11 +180,54 @@ internal class LyricVersionsDialog(
         val best = iconButton(R.id.lyricsVersionBest)
         val source = TextView(context).apply {
             id = R.id.lyricsVersionSource
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            maxLines = 3
-            maxWidth = dp(76)
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
             textSize = 12f
             setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+        }
+        val time = TextView(context).apply {
+            id = R.id.lyricsVersionTime
+            textSize = 12f
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+        }
+        private val footer = object : LinearLayout(context) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                val available = MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight
+                val oneLine = time.paint.measureText(time.text.toString()) +
+                    source.paint.measureText(source.text.toString()) + dp(8)
+                val stacked = MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED && oneLine > available
+                val next = if (stacked) VERTICAL else HORIZONTAL
+                if (orientation != next) {
+                    orientation = next
+                    time.layoutParams = LayoutParams(if (stacked) -1 else 0, -2, if (stacked) 0f else 1f)
+                    source.layoutParams = LayoutParams(-2, -2).apply {
+                        gravity = Gravity.END
+                        marginStart = if (stacked) 0 else dp(8)
+                    }
+                }
+                super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            }
+        }.apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(time, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(source, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+        }
+        val cell = object : FrameLayout(context) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                footer.setPaddingRelative(choose.paddingStart, 0, choose.paddingEnd, 0)
+                footer.measure(getChildMeasureSpec(widthMeasureSpec, 0, -1),
+                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+                choose.setPaddingRelative(choose.paddingStart, choose.paddingTop, choose.paddingEnd,
+                    footer.measuredHeight + dp(8) + choose.insetBottom)
+                (footer.layoutParams as FrameLayout.LayoutParams).bottomMargin =
+                    (choose.layoutParams as FrameLayout.LayoutParams).bottomMargin + dp(4) + choose.insetBottom
+                super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            }
+        }.apply {
+            id = R.id.lyricsVersionCell
+            addView(choose, FrameLayout.LayoutParams(-1, -2))
+            addView(footer, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         }
         val styler: BlockButtonStyler
         val normalBackground: ColorStateList?
@@ -179,10 +236,9 @@ internal class LyricVersionsDialog(
         init {
             row.orientation = LinearLayout.HORIZONTAL
             row.gravity = Gravity.CENTER_VERTICAL
-            row.addView(choose, LinearLayout.LayoutParams(0, -2, 1f))
-            row.addView(more, LinearLayout.LayoutParams(dp(48), dp(56)).apply { marginStart = dp(4) })
-            row.addView(best, LinearLayout.LayoutParams(dp(48), dp(56)).apply { marginStart = dp(4) })
-            row.addView(source, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(4) })
+            row.addView(more, LinearLayout.LayoutParams(dp(48), -1))
+            row.addView(cell, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(4) })
+            row.addView(best, LinearLayout.LayoutParams(dp(48), -1).apply { marginStart = dp(4) })
             AccentTheme.tintControls(row)
             normalBackground = choose.backgroundTintList
             normalText = choose.textColors
@@ -202,7 +258,6 @@ internal class LyricVersionsDialog(
                 if (active) setSpan(StyleSpan(Typeface.BOLD), 0, heading.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
             choose.contentDescription = context.getString(R.string.lyrics_version_use, name)
-            ViewCompat.setStateDescription(choose, labels)
             choose.isSelected = active
             row.isActivated = active
             choose.isEnabled = !state.loading && !state.busy
@@ -223,7 +278,14 @@ internal class LyricVersionsDialog(
             best.setOnClickListener { best(choice.key) }
             best.setOnLongClickListener(hold)
             source.isEnabled = choose.isEnabled
+            source.setOnClickListener { select(choice.key) }
             source.setOnLongClickListener(hold)
+            time.isEnabled = choose.isEnabled
+            time.setOnClickListener { select(choice.key) }
+            time.setOnLongClickListener(hold)
+            time.text = choice.lastTimestampMs?.let {
+                context.getString(R.string.lyrics_last_timestamp, TimeText.format(it))
+            } ?: context.getString(R.string.lyrics_untimed)
             source.setText(when (choice.origin) {
                 LyricOrigin.LOCAL_FILE -> R.string.lyrics_source_local
                 LyricOrigin.EMBEDDED -> R.string.lyrics_source_embedded
@@ -232,6 +294,7 @@ internal class LyricVersionsDialog(
                 LyricOrigin.QQ -> R.string.lyrics_source_qq
                 LyricOrigin.KUWO -> R.string.lyrics_source_kuwo
             })
+            ViewCompat.setStateDescription(choose, listOf(labels, time.text, source.text).filter { it.isNotBlank() }.joinToString(", "))
             val options = display()
             styler.apply(options.controlBlocks, options.blockOutline)
             choose.backgroundTintList = if (active) ColorStateList.valueOf(
@@ -240,6 +303,10 @@ internal class LyricVersionsDialog(
                 else normalBackground
             if (active) choose.setTextColor(AccentTheme.color(choose, com.google.android.material.R.attr.colorOnPrimaryContainer))
             else choose.setTextColor(normalText)
+            val detailColor = if (active) choose.currentTextColor
+                else MaterialColors.getColor(choose, com.google.android.material.R.attr.colorOnSurfaceVariant)
+            source.setTextColor(detailColor)
+            time.setTextColor(detailColor)
         }
     }
 

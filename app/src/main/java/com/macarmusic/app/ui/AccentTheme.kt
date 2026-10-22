@@ -13,12 +13,9 @@ import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
 import androidx.core.graphics.ColorUtils
-import androidx.core.view.doOnLayout
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.textfield.TextInputLayout
 import com.macarmusic.app.MaCarMusicApp
@@ -135,11 +132,7 @@ object AccentTheme {
         visit(root)
     }
 
-    fun dialog(context: Context): MaterialAlertDialogBuilder = object : MaterialAlertDialogBuilder(context) {
-        override fun create(): AlertDialog = super.create().also { dialog ->
-            if (customColor(context) != null) dialog.window?.decorView?.doOnLayout { tintControls(it) }
-        }
-    }
+    fun dialog(context: Context) = PlayerDialog.Builder(context)
 
     private fun customColor(context: Context): Int? =
         (context.applicationContext as? MaCarMusicApp)?.displaySettings?.options?.value?.customAccentColor?.or(Color.BLACK)

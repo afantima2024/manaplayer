@@ -95,21 +95,6 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
-                    <com.google.android.material.materialswitch.MaterialSwitch
-                        android:id="@+id/settingsLightMode"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:minHeight="64dp"
-                        android:text="@string/light_mode"
-                        android:textColor="?attr/colorOnSurface"
-                        android:textSize="18sp" />
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:paddingBottom="12dp"
-                        android:text="@string/light_mode_help"
-                        android:textColor="?attr/colorOnSurfaceVariant"
-                        android:textSize="16sp" />
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/settingsLanguage"
                         style="@style/SettingButton"
@@ -128,7 +113,7 @@
                         android:layout_height="wrap_content"
                         android:text="@string/settings_transition"
                         android:labelFor="@id/settingsTransition" />
-                    <Spinner
+                    <com.macarmusic.app.ui.PlayerSpinner
                         android:id="@+id/settingsTransition"
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"
@@ -196,7 +181,7 @@
                                 android:layout_height="wrap_content"
                                 android:text="@string/background_transition"
                                 android:labelFor="@id/backgroundTransition" />
-                            <Spinner
+                            <com.macarmusic.app.ui.PlayerSpinner
                                 android:id="@+id/backgroundTransition"
                                 style="@style/SettingChoice"
                                 android:layout_width="match_parent"
@@ -264,7 +249,7 @@
                         android:layout_height="wrap_content"
                         android:text="@string/navigation_position"
                         android:labelFor="@id/settingsNavigationPosition" />
-                    <Spinner
+                    <com.macarmusic.app.ui.PlayerSpinner
                         android:id="@+id/settingsNavigationPosition"
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"
@@ -288,7 +273,7 @@
                             android:layout_height="wrap_content"
                             android:text="@string/block_style"
                             android:labelFor="@id/settingsBlockStyle" />
-                        <Spinner
+                        <com.macarmusic.app.ui.PlayerSpinner
                             android:id="@+id/settingsBlockStyle"
                             style="@style/SettingChoice"
                             android:layout_width="match_parent"
@@ -428,7 +413,7 @@
                         android:layout_height="wrap_content"
                         android:text="@string/mini_time_mode"
                         android:labelFor="@id/settingsTimeMode" />
-                    <Spinner
+                    <com.macarmusic.app.ui.PlayerSpinner
                         android:id="@+id/settingsTimeMode"
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"
@@ -439,7 +424,7 @@
                         android:layout_height="wrap_content"
                         android:text="@string/main_time_mode"
                         android:labelFor="@id/settingsMainTimeMode" />
-                    <Spinner
+                    <com.macarmusic.app.ui.PlayerSpinner
                         android:id="@+id/settingsMainTimeMode"
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"
@@ -483,7 +468,7 @@
                         android:layout_height="wrap_content"
                         android:text="@string/lyrics_landscape_position"
                         android:labelFor="@id/lyricsLandscapePosition" />
-                    <Spinner
+                    <com.macarmusic.app.ui.PlayerSpinner
                         android:id="@+id/lyricsLandscapePosition"
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"
@@ -494,7 +479,7 @@
                         android:layout_height="wrap_content"
                         android:text="@string/lyrics_portrait_position"
                         android:labelFor="@id/lyricsPortraitPosition" />
-                    <Spinner
+                    <com.macarmusic.app.ui.PlayerSpinner
                         android:id="@+id/lyricsPortraitPosition"
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"
@@ -591,7 +576,7 @@
                         android:layout_height="wrap_content"
                         android:labelFor="@id/lyricsCacheInternalExpiry"
                         android:text="@string/lyrics_cache_expiry_internal" />
-                    <Spinner
+                    <com.macarmusic.app.ui.PlayerSpinner
                         android:id="@+id/lyricsCacheInternalExpiry"
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"
@@ -603,7 +588,7 @@
                         android:layout_height="wrap_content"
                         android:labelFor="@id/lyricsCachePortableExpiry"
                         android:text="@string/lyrics_cache_expiry_portable" />
-                    <Spinner
+                    <com.macarmusic.app.ui.PlayerSpinner
                         android:id="@+id/lyricsCachePortableExpiry"
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"

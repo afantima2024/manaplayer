@@ -7,6 +7,7 @@ import com.macarmusic.app.data.BoundedInput
 import com.macarmusic.app.data.MediaStoreAccess
 import com.macarmusic.app.data.MusicRepository
 import com.macarmusic.app.model.Track
+import com.macarmusic.app.model.DocumentEntry
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
@@ -14,14 +15,36 @@ import java.io.IOException
 import java.util.ArrayDeque
 
 class LocalLyricsLoader(private val context: Context, private val music: MusicRepository) {
-    suspend fun load(track: Track): LyricResult {
+    suspend fun load(track: Track): LyricResult = load(track) { source, parent ->
+        LyricFiles.matching(track, music.documents.children(source, parent, includeLyrics = true))
+    }
+
+    internal fun batchLookup(): suspend (Track) -> LyricResult {
+        var folder: Pair<String, String>? = null
+        var index = emptyMap<String, List<DocumentEntry>>()
+        return { track ->
+            load(track) { source, parent ->
+                val key = source to parent
+                if (folder == key) LyricFiles.matching(track, index)
+                else {
+                    val entries = music.documents.children(source, parent, includeLyrics = true)
+                        .filter { !it.isDirectory && !it.isVirtual && LyricFiles.accepts(it.name) }
+                    // Keep only one small folder index for this explicit batch, never a library of lyric bodies.
+                    folder = key.takeIf { entries.size <= 4_096 }
+                    index = if (folder != null) LyricFiles.index(entries) else emptyMap()
+                    if (folder != null) LyricFiles.matching(track, index) else LyricFiles.matching(track, entries)
+                }
+            }
+        }
+    }
+
+    private suspend fun load(track: Track, matches: suspend (String, String) -> List<DocumentEntry>): LyricResult {
         var failed = false
         for ((source, _) in track.sourceUris.entries.sortedBy { it.value != track.uri }) {
             if (MediaStoreAccess.folder(Uri.parse(source)) != null) continue
             try {
                 val parent = track.sourceParents[source] ?: findParent(source, track) ?: continue
-                val entries = music.documents.children(source, parent, includeLyrics = true)
-                for (entry in LyricFiles.matching(track, entries).take(4)) {
+                for (entry in matches(source, parent).take(4)) {
                     try {
                         return readFile(entry.uri, entry.name).result()
                     } catch (error: CancellationException) {
@@ -101,9 +124,10 @@ class LocalLyricsLoader(private val context: Context, private val music: MusicRe
                     try {
                         val document = readFile(entry.uri, entry.name)
                         val version = document.version()
-                        val preview = document.result().lyrics?.lines?.firstOrNull { it.text.isNotBlank() }?.text.orEmpty()
+                        val parsed = document.result().lyrics
+                        val preview = parsed?.lines?.firstOrNull { it.text.isNotBlank() }?.text.orEmpty()
                         choices[version.id] = LyricChoice(version.id, entry.name, LyricOrigin.LOCAL_FILE,
-                            uri = entry.uri, preview = preview.take(160))
+                            uri = entry.uri, preview = preview.take(160), lastTimestampMs = parsed?.lastTimestampMs)
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: IOException) {
@@ -137,7 +161,8 @@ class LocalLyricsLoader(private val context: Context, private val music: MusicRe
             if (parsed != null) {
                 val version = LyricVersion(text, LyricOrigin.EMBEDDED, name = track.fileName.take(512))
                 choices[version.id] = LyricChoice(version.id, version.name, version.origin, version,
-                    preview = parsed.lines.firstOrNull { it.text.isNotBlank() }?.text.orEmpty().take(160))
+                    preview = parsed.lines.firstOrNull { it.text.isNotBlank() }?.text.orEmpty().take(160),
+                    lastTimestampMs = parsed.lastTimestampMs)
             }
         } catch (error: CancellationException) { throw error }
         catch (error: IOException) { failed = true; Log.w(TAG, "Cannot read embedded lyric version", error) }

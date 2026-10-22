@@ -60,7 +60,6 @@ data class DisplayOptions(
     val portraitLyrics: LyricSide = LyricSide.START,
     val themeAccent: ThemeAccent = ThemeAccent.DEFAULT,
     val customAccentColor: Int? = null,
-    val lightMode: Boolean = false,
     val widgetTransparency: Int = 50,
     val internalLyricExpiry: LyricCacheExpiry = LyricCacheExpiry.THIRTY_DAYS,
     val portableLyricExpiry: LyricCacheExpiry = LyricCacheExpiry.NEVER,
@@ -76,20 +75,12 @@ data class DisplayOptions(
     fun normalized(): DisplayOptions = if (blockOutline.style == BlockStyle.NONE)
         copy(controlBlocks = false, blockOutline = blockOutline.copy(style = BlockStyle.SOLID)) else this
 
-    fun effective(): DisplayOptions = if (!lightMode) this else copy(
-        onlineLyrics = false,
-        imageIds = imageIds.take(1),
-        blur = 0,
-        settingsTransition = TransitionStyle.NONE,
-        lyricsSmoothScroll = false,
-    )
 }
 
 class DisplaySettings(private val context: Context, private val themeChanged: () -> Unit) {
     private val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val interval = preferences.getInt("backgroundIntervalSeconds", 5).coerceIn(1, 120)
     private val mutableOptions = MutableStateFlow(DisplayOptions(
-        lightMode = preferences.getBoolean("lightMode", false),
         lyricsEnabled = preferences.getBoolean("lyricsEnabled", true),
         onlineLyrics = preferences.getBoolean("onlineLyrics", true),
         customTheme = preferences.getBoolean("customTheme", false),
@@ -141,8 +132,7 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
                 .takeIf { it in setOf(15, 30, 60) } ?: SpectrumOptions.DEFAULT_REFRESH_RATE,
             fireStyle = choice("spectrumFireStyle", FireStyle.LED),
             barStyle = choice("spectrumBarStyle", FireStyle.SMOOTH),
-            classicColors = colors("classic", SpectrumColors.CLASSIC),
-            fireColors = colors("fire", SpectrumColors.FIRE),
+            colors = colors("fire", SpectrumColors.FIRE),
         ),
     ).normalized())
     val options = mutableOptions.asStateFlow()
@@ -189,7 +179,7 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
     internal fun write(options: DisplayOptions): SharedPreferences.Editor {
         val next = options.normalized()
         return preferences.edit()
-            .putBoolean("lightMode", next.lightMode)
+            .remove("lightMode")
             .putInt("widgetTransparency", next.widgetTransparency)
             .putString("internalLyricExpiry", next.internalLyricExpiry.name)
             .putString("portableLyricExpiry", next.portableLyricExpiry.name)
@@ -235,12 +225,12 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
             .putInt("spectrumRefreshRate", next.spectrum.refreshRate)
             .putString("spectrumFireStyle", next.spectrum.fireStyle.name)
             .putString("spectrumBarStyle", next.spectrum.barStyle.name)
-            .putInt("classicColorLow", next.spectrum.classicColors.low)
-            .putInt("classicColorMiddle", next.spectrum.classicColors.middle)
-            .putInt("classicColorHigh", next.spectrum.classicColors.high)
-            .putInt("fireColorLow", next.spectrum.fireColors.low)
-            .putInt("fireColorMiddle", next.spectrum.fireColors.middle)
-            .putInt("fireColorHigh", next.spectrum.fireColors.high)
+            .remove("classicColorLow")
+            .remove("classicColorMiddle")
+            .remove("classicColorHigh")
+            .putInt("fireColorLow", next.spectrum.colors.low)
+            .putInt("fireColorMiddle", next.spectrum.colors.middle)
+            .putInt("fireColorHigh", next.spectrum.colors.high)
     }
 
     private inline fun <reified T : Enum<T>> choice(key: String, fallback: T): T =

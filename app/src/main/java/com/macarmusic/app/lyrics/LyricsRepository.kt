@@ -99,24 +99,24 @@ class LyricsRepository(
             return it.result(cached = true)
         }
         val localResult = local.load(track)
-        if (localResult.lyrics != null || !online) return localResult
+        val downloaded = initial.value?.takeIf { it.downloaded }?.let { automaticResult(track, it) }
+        if (localResult.lyrics != null &&
+            (downloaded == null || LyricMatch.timingMatches(track.durationMs, localResult.lyrics))) return localResult
+        if (!online) return downloaded ?: localResult
         currentCoroutineContext().ensureActive()
         var cacheUnavailable = initial.unavailable
         suspend fun cached(): LyricResult? {
             val read = cache.read(key)
             cacheUnavailable = cacheUnavailable || read.unavailable
-            return read.value?.takeIf { it.automatic }?.let {
-                it.preferred().result(cached = true, issue = localResult.issue)
-            }
+            return read.value?.let { automaticResult(track, it, localResult.issue) }
         }
         fun issue(fallback: LyricIssue?): LyricIssue? = when {
             localResult.issue == LyricIssue.LOCAL_UNREADABLE -> localResult.issue
             cacheUnavailable -> LyricIssue.CACHE_UNAVAILABLE
             else -> localResult.issue ?: fallback
         }
-        if (!refresh || !allowNetwork) initial.value?.takeIf { it.automatic }?.let {
-            return it.result(cached = true, issue = localResult.issue)
-        }
+        if (!refresh || !allowNetwork) initial.value?.let { automaticResult(track, it, localResult.issue) }
+            ?.let { return it }
         if (!allowNetwork) return localResult.copy(issue = issue(null))
         return networkMutex.withLock {
             if (!refresh) {
@@ -150,6 +150,70 @@ class LyricsRepository(
             } catch (error: IOException) {
                 failed(key, localResult, error, generation)
             }
+        }
+    }
+
+    private fun protected(document: CachedLyric): Boolean =
+        document.selected || document.bestVersionId != null || !document.automatic
+
+    private fun automaticResult(track: Track, document: CachedLyric, issue: LyricIssue? = null): LyricResult? {
+        if (!document.automatic && !document.downloaded && document.bestVersionId == null) return null
+        val result = document.preferred().result(cached = true, issue = issue)
+        return result.takeIf { protected(document) || it.lyrics?.let { words ->
+            LyricMatch.timingMatches(track.durationMs, words)
+        } == true }
+    }
+
+    internal fun offlineDownloader(): suspend (Track) -> LyricDownloadResult {
+        val localLookup = local.batchLookup()
+        return { downloadOffline(it, localLookup) }
+    }
+
+    suspend fun downloadOffline(track: Track): LyricDownloadResult = downloadOffline(track, local::load)
+
+    private suspend fun downloadOffline(
+        track: Track, localLookup: suspend (Track) -> LyricResult,
+    ): LyricDownloadResult = withContext(Dispatchers.IO) {
+        val query = LyricQuery.from(track)
+        val key = key(query, track.fileName)
+        suspend fun keepExisting(generation: Long): LyricDownloadResult? {
+            val read = cache.read(key)
+            if (read.unavailable) throw IOException("The lyric storage is unavailable")
+            val document = read.value ?: return null
+            val words = document.preferred().result().lyrics ?: return null
+            if (!protected(document) && !LyricMatch.timingMatches(track.durationMs, words)) return null
+            if (!document.downloaded && cache.retainOffline(key, generation) == null) {
+                throw IOException("Existing lyrics could not be retained for offline use")
+            }
+            return LyricDownloadResult.KEPT
+        }
+        keepExisting(cache.generation)?.let { return@withContext it }
+        val localResult = localLookup(track)
+        if (localResult.lyrics?.let { LyricMatch.timingMatches(track.durationMs, it) } == true) {
+            return@withContext LyricDownloadResult.KEPT
+        }
+        networkMutex.withLock {
+            val generation = cache.generation
+            keepExisting(generation)?.let { return@withLock it }
+            val found = try {
+                withTimeout(45_000) { client.find(query, track.fileName, routeTimeoutMs = 8_000) }
+            } catch (error: TimeoutCancellationException) {
+                currentCoroutineContext().ensureActive()
+                Log.w(TAG, "Offline lyric download timed out", error)
+                return@withLock LyricDownloadResult.SEARCH_FAILED
+            } catch (error: IOException) {
+                Log.w(TAG, "Offline lyric search failed", error)
+                return@withLock if (error is LyricSearchFailure && error.answeredRoute)
+                    LyricDownloadResult.PARTIAL_FAILURE else LyricDownloadResult.SEARCH_FAILED
+            } ?: return@withLock LyricDownloadResult.NO_MATCH
+            currentCoroutineContext().ensureActive()
+            val document = CachedLyric(found.text, found.origin, nowMs().coerceAtLeast(0),
+                history = found.history, downloaded = true)
+            if (cache.retain(key, document, generation) == null) {
+                throw IOException("Downloaded lyrics could not be saved; check storage or retry after the cache operation")
+            }
+            misses.remove(key)
+            LyricDownloadResult.SAVED
         }
     }
 
@@ -228,9 +292,10 @@ class LyricsRepository(
         var cacheIssue = saved.unavailable
         fun add(version: LyricVersion, cached: Boolean) {
             try {
-                val parsed = LyricsParser.parse(version.text) ?: throw IOException("Empty saved lyric version")
+                val parsed = LyricsParser.parse(version.text, version.offsetMs) ?: throw IOException("Empty saved lyric version")
                 val preview = parsed.lines.firstOrNull { it.text.isNotBlank() }?.text.orEmpty().take(160)
-                choices[version.id] = LyricChoice(version.id, version.name, version.origin, version, cached = cached, preview = preview)
+                choices[version.id] = LyricChoice(version.id, version.name, version.origin, version,
+                    cached = cached, preview = preview, lastTimestampMs = parsed.lastTimestampMs)
             } catch (error: IOException) {
                 cacheIssue = true
                 Log.w(TAG, "Cannot read a saved lyric version", error)
@@ -247,7 +312,7 @@ class LyricsRepository(
         val ordered = known?.choices.orEmpty().mapNotNull { choices.remove(it.key) } + choices.values
         LyricChoices(track.id, ordered, currentVersion?.id, saved.value?.bestVersionId,
             loading = false, issue = if (cacheIssue) LyricIssue.CACHE_UNAVAILABLE else localChoices.issue,
-            generation = generation)
+            generation = generation, trackDurationMs = track.durationMs)
     }
 
     private suspend fun resolve(track: Track, choice: LyricChoice, generation: Long): CachedLyric {
@@ -359,7 +424,8 @@ class LyricsRepository(
     private fun withStoredVersions(document: CachedLyric, saved: CachedLyric?): CachedLyric {
         val id = document.version().id
         return document.copy(history = saved?.history ?: document.history, bestVersionId = saved?.bestVersionId,
-            versions = (listOfNotNull(saved?.version()) + saved?.versions.orEmpty()).filterNot { it.id == id })
+            versions = (listOfNotNull(saved?.version()) + saved?.versions.orEmpty()).filterNot { it.id == id },
+            downloaded = saved?.downloaded ?: document.downloaded)
     }
 
     private fun failed(key: String, local: LyricResult, error: Exception, generation: Long): LyricResult {

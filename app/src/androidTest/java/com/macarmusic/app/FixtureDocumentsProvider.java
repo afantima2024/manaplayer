@@ -37,6 +37,7 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
     private final AtomicInteger activeLyricReads = new AtomicInteger();
     private final AtomicInteger lyricReads = new AtomicInteger();
     private final AtomicInteger audioReads = new AtomicInteger();
+    private final AtomicInteger childReads = new AtomicInteger();
     private final AtomicInteger deleteRequests = new AtomicInteger();
     private final AtomicInteger activeAudioReads = new AtomicInteger();
     private volatile long audioDelayMs;
@@ -157,6 +158,7 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
     @Override public Cursor queryChildDocuments(String parent, String[] projection, String sortOrder)
             throws FileNotFoundException {
         checkAvailable();
+        childReads.incrementAndGet();
         MatrixCursor cursor = new MatrixCursor(projection != null ? projection : COLUMNS);
         if (parent.equals("music")) {
             documentRow(cursor, "music/album");
@@ -235,11 +237,13 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
                 audioDelayMs = Math.max(0, Math.min(10000, extras.getLong("audioDelayMs")));
                 if (extras.getBoolean("resetReads")) {
                     audioReads.set(0);
+                    childReads.set(0);
                     deleteRequests.set(0);
                 }
             }
             Bundle result = new Bundle();
             result.putInt("audioReads", audioReads.get());
+            result.putInt("childReads", childReads.get());
             result.putInt("activeAudioReads", activeAudioReads.get());
             result.putInt("deleteRequests", deleteRequests.get());
             return result;

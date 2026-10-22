@@ -13,6 +13,7 @@ class LyricCacheFilesTest {
         val parsed = LyricCacheFiles.decode(data)
         assertEquals(0L, parsed.savedAtMs)
         assertEquals(LyricOrigin.KUGOU, parsed.origin)
+        assertFalse(parsed.downloaded)
         assertNotNull(LyricsParser.parse(parsed.text))
     }
 
@@ -21,6 +22,13 @@ class LyricCacheFilesTest {
             val value = CachedLyric("[00:01.00]Synthetic \"quoted\" lyric\n[00:02.00]Second", origin, 10_000)
             assertEquals(value, LyricCacheFiles.decode(LyricCacheFiles.encode(value)))
         }
+    }
+
+    @Test fun explicitDownloadsRoundTripAndAreAvailableWithoutAutomaticOnlineLookup() {
+        val value = CachedLyric("[00:01]Synthetic\n[02:50]Last marker", LyricOrigin.QQ, 10_000, downloaded = true)
+        assertEquals(value, LyricCacheFiles.decode(LyricCacheFiles.encode(value)))
+        assertTrue(value.result(cached = true).availableOffline)
+        assertFalse(value.copy(downloaded = false).result(cached = true).availableOffline)
     }
 
     @Test fun cacheNamesNeverIncludeLocalLyricsOrUnrelatedFiles() {

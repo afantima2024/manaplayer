@@ -93,7 +93,20 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
                 includeFontPadding = false
                 importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
             }
-            val button = LinearLayout(context).apply {
+            val button = object : LinearLayout(context) {
+                override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+                    super.onLayout(changed, left, top, right, bottom)
+                    if (orientation == HORIZONTAL) {
+                        val iconLeft = if (layoutDirection == LAYOUT_DIRECTION_RTL)
+                            width - paddingRight - icon.measuredWidth else paddingLeft
+                        val iconTop = (height - icon.measuredHeight) / 2
+                        icon.layout(iconLeft, iconTop, iconLeft + icon.measuredWidth, iconTop + icon.measuredHeight)
+                        val labelLeft = (width - label.measuredWidth) / 2
+                        val labelTop = (height - label.measuredHeight) / 2
+                        label.layout(labelLeft, labelTop, labelLeft + label.measuredWidth, labelTop + label.measuredHeight)
+                    }
+                }
+            }.apply {
                 id = entry.itemId
                 isBaselineAligned = false
                 gravity = Gravity.CENTER
@@ -163,7 +176,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
                 else icon + dp(2) + item.label.lineHeight
             val verticalInset = minOf(itemInset, ((height - minimumContent) / 2).coerceAtLeast(0))
             item.view.setPadding(itemInset, verticalInset, itemInset, verticalInset)
-            item.label.maxWidth = (width - itemInset * 2 - if (labelsBesideIcons) icon + dp(8) else 0).coerceAtLeast(1)
+            item.label.maxWidth = (width - itemInset * 2 - if (labelsBesideIcons) 2 * (icon + dp(8)) else 0).coerceAtLeast(1)
             if (!labelsBesideIcons) {
                 val room = height - verticalInset * 2 - icon - dp(2)
                 item.label.maxLines = if (room >= ceil(item.label.paint.fontSpacing * 2).toInt()) 2 else 1

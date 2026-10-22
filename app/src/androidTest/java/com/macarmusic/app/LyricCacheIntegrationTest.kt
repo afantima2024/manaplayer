@@ -19,6 +19,8 @@ import com.macarmusic.app.lyrics.LyricCacheFiles
 import com.macarmusic.app.lyrics.LyricOrigin
 import com.macarmusic.app.lyrics.LyricIssue
 import com.macarmusic.app.lyrics.LyricRemovalFailure
+import com.macarmusic.app.lyrics.LyricDownloadResult
+import com.macarmusic.app.lyrics.LyricQuery
 import com.macarmusic.app.lyrics.LocalLyricsLoader
 import com.macarmusic.app.lyrics.LyricsRepository
 import com.macarmusic.app.lyrics.OnlineLyricsClient
@@ -44,7 +46,7 @@ import java.io.IOException
 import java.util.Locale
 
 internal fun syntheticOnlineLyrics(first: String): String = first + "\n" +
-    (2..8).joinToString("\n") { "[00:0$it]Synthetic fixture marker $it" }
+    (2..8).joinToString("\n") { "[00:${it * 7}]Synthetic fixture marker $it" }
 
 @RunWith(AndroidJUnit4::class)
 class LyricCacheIntegrationTest {
@@ -52,12 +54,14 @@ class LyricCacheIntegrationTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = object : ContextWrapper(app) {
         override fun getCacheDir() = File(app.cacheDir, "lyric-cache-tests")
+        override fun getFilesDir() = File(app.filesDir, "lyric-cache-tests")
         override fun getSharedPreferences(name: String, mode: Int) =
             app.getSharedPreferences("lyric-cache-tests-$name", mode)
     }
     private val now = System.currentTimeMillis()
     private val directory get() = File(context.cacheDir, "lyrics")
-    private val internal get() = InternalLyricCache(directory, { now })
+    private val internal get() = InternalLyricCache(directory, { now }, { internalExpiry },
+        File(context.filesDir, "downloaded-lyrics"))
     private var internalExpiry = LyricCacheExpiry.THIRTY_DAYS
     private var portableExpiry = LyricCacheExpiry.NEVER
     private val root = tree("root")
@@ -121,6 +125,204 @@ class LyricCacheIntegrationTest {
         assertEquals(before, cache.clear())
         assertTrue(internal.keys().isEmpty())
         preserved.forEach { assertEquals("Synthetic original ${it.name}", it.readText()) }
+    }
+
+    @Test fun explicitDownloadsSurviveAutomaticEvictionButRespectExpiryAndClear() = runBlocking(Dispatchers.IO) {
+        for (number in 1..105) internal.write(key(number), lyric(number).copy(downloaded = true))
+        for (number in 201..310) seed(number)
+        assertEquals(205L, cache.inspect().files)
+        for (number in 1..105) {
+            assertEquals(lyric(number).copy(downloaded = true), cache.read(key(number)).value)
+            assertTrue(File(context.filesDir, "downloaded-lyrics/${key(number)}.json").isFile)
+            assertFalse(File(directory, "${key(number)}.json").exists())
+        }
+        internal.write(key(500), lyric(500).copy(downloaded = true, savedAtMs = now - 31L * 86_400_000))
+        assertNull(cache.read(key(500)).value)
+        assertEquals(205L, cache.clear().files)
+        assertTrue(internal.keys().isEmpty())
+        assertEquals(0L, cache.inspect().files)
+    }
+
+    @Test fun bulkKeepsGoodCachedLyricsAndPromotesThemForOfflineUseWithoutAnotherRequest() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val calls = mutableListOf<String>()
+        val repository = selectionRepository(track, calls)
+        cache = repository.cache
+        val original = repository.load(track, online = true)
+        val count = calls.size
+        assertTrue(File(directory, "${trackKey(track)}.json").isFile)
+        assertEquals(LyricDownloadResult.KEPT, repository.downloadOffline(track))
+        assertEquals(count, calls.size)
+        assertFalse(File(directory, "${trackKey(track)}.json").exists())
+        val retained = cache.read(trackKey(track)).value!!
+        assertEquals(original.document!!.copy(downloaded = true), retained)
+        val restarted = LyricsRepository(context, app.repository, app.applicationScope,
+            OnlineLyricsClient({ _, _, _ -> error("Offline downloads must not use the network") }) { _, _ -> })
+        val offline = restarted.load(track, online = false, allowNetwork = false)
+        assertTrue(offline.cached)
+        assertTrue(offline.availableOffline)
+        assertEquals(retained, offline.document)
+        assertEquals(original.lyrics, offline.lyrics)
+    }
+
+    @Test fun bulkRepairsShortAutomaticLyricsButNeverReplacesManualTimingOrBest() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val calls = mutableListOf<String>()
+        val repository = selectionRepository(track, calls)
+        cache = repository.cache
+        val short = CachedLyric("[00:01]Synthetic truncated version\n[00:10]End", LyricOrigin.QQ, now)
+        assertTrue(cache.write(trackKey(track), short, cache.generation))
+        assertNull(repository.load(track, online = true, allowNetwork = false).lyrics)
+        val displayed = repository.latest.value
+        assertEquals(LyricDownloadResult.SAVED, repository.downloadOffline(track))
+        assertEquals(displayed, repository.latest.value)
+        val repaired = repository.load(track, online = false, allowNetwork = false)
+        assertEquals(50_000L, repaired.lyrics!!.lastTimestampMs)
+        assertTrue(repaired.document!!.downloaded)
+        assertTrue(repaired.document.versions.any { it.id == short.version().id })
+        assertEquals(LyricDownloadResult.KEPT, repository.downloadOffline(track))
+        cache.clear()
+        val edited = repository.saveTiming(track, short, 750)
+        val beforeManual = calls.size
+        assertEquals(LyricDownloadResult.KEPT, repository.downloadOffline(track))
+        assertEquals(beforeManual, calls.size)
+        assertEquals(edited.document!!.copy(downloaded = true), cache.read(trackKey(track)).value)
+        cache.clear()
+        assertTrue(cache.write(trackKey(track), short, cache.generation))
+        val available = repository.available(track, null)
+        repository.best(track, available.choices.single(), null, available.generation)
+        val best = cache.read(trackKey(track)).value!!
+        assertEquals(LyricDownloadResult.KEPT, repository.downloadOffline(track))
+        assertEquals(beforeManual, calls.size)
+        assertEquals(best.copy(downloaded = true), cache.read(trackKey(track)).value)
+        assertEquals(short.text, repository.load(track, online = false).document!!.text)
+    }
+
+    @Test fun automaticLookupAlsoReplacesOldTruncatedCacheEntries() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val repository = selectionRepository(track, mutableListOf())
+        cache = repository.cache
+        val short = CachedLyric("[00:10]Synthetic old truncated lyrics", LyricOrigin.QQ, now)
+        assertTrue(cache.write(trackKey(track), short, cache.generation))
+        val refreshed = repository.load(track, online = true)
+        assertEquals(50_000L, refreshed.lyrics!!.lastTimestampMs)
+        assertFalse(refreshed.document!!.downloaded)
+        assertNotEquals(short.text, refreshed.document.text)
+    }
+
+    @Test fun retainingManualAlternativesForOfflineDoesNotInvalidateTheActiveVisit() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val calls = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val repository = selectionRepository(track, calls)
+        cache = repository.cache
+        val default = repository.load(track, online = true)
+        val candidate = repository.searchOnline(track).toList().flatMap { it.candidates }.single { it.key.id == "second" }
+        val chosen = requireNotNull(repository.selectOnline(track, candidate, cache.generation))
+        val generation = cache.generation
+        val displayed = repository.latest.value
+        val before = cache.read(trackKey(track)).value!!
+        val count = calls.size
+        assertNotEquals(default.document!!.text, chosen.document!!.text)
+        assertEquals(LyricDownloadResult.KEPT, repository.downloadOffline(track))
+        assertEquals(generation, cache.generation)
+        assertEquals(displayed, repository.latest.value)
+        assertEquals(count, calls.size)
+        assertEquals(before.copy(downloaded = true), cache.read(trackKey(track)).value)
+    }
+
+    @Test fun portableOfflineDownloadsRetainTheirFlagAndNeverRedirectOnUnplug() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val calls = mutableListOf<String>()
+        val repository = selectionRepository(track, calls)
+        cache = repository.cache
+        assertEquals(LyricDownloadResult.SAVED, repository.downloadOffline(track))
+        val stored = cache.read(trackKey(track)).value!!
+        assertTrue(stored.downloaded)
+        assertEquals(1L, cache.moveInternalTo(root, FLAGS).files)
+        assertEquals(stored, cache.read(trackKey(track)).value)
+        assertEquals(LyricDownloadResult.SAVED, repository.downloadOffline(track.copy(id = "second", fileName = "Another copy.wav")))
+        assertTrue(internal.keys().isEmpty())
+        val restarted = LyricsRepository(context, app.repository, app.applicationScope,
+            OnlineLyricsClient({ _, _, _ -> error("Portable offline lyric fetched from network") }) { _, _ -> })
+        assertEquals(stored, restarted.load(track, online = false).document)
+        val before = calls.size
+        faults { putBoolean("unavailable", true) }
+        fails { repository.downloadOffline(track.copy(title = "Another synthetic song")) }
+        assertEquals(before, calls.size)
+        assertFalse(cache.info.value.internal)
+        assertTrue(cache.info.value.unavailable)
+        assertTrue(internal.keys().isEmpty())
+        faults()
+        assertEquals(stored, cache.read(trackKey(track)).value)
+        assertEquals(2L, cache.clear().files)
+    }
+
+    @Test fun offlineDownloadWriteFailureIsReportedAndNeverRedirectedToInternalStorage() = runBlocking(Dispatchers.IO) {
+        cache.moveInternalTo(root, FLAGS)
+        val track = track()
+        val repository = selectionRepository(track, mutableListOf())
+        cache = repository.cache
+        faults { putInt("failAfterWrites", 0); putBoolean("resetCounters", true) }
+        fails { repository.downloadOffline(track) }
+        assertFalse(cache.info.value.internal)
+        assertTrue(problems.isNotEmpty())
+        assertTrue(internal.keys().isEmpty())
+        assertNull(repository.latest.value.result)
+        faults()
+        assertEquals(LyricDownloadResult.SAVED, repository.downloadOffline(track))
+        assertTrue(cache.read(trackKey(track)).value!!.downloaded)
+        assertTrue(internal.keys().isEmpty())
+    }
+
+    @Test fun clearingDuringBulkDownloadRejectsTheLateSave() = runBlocking(Dispatchers.IO) {
+        val track = track()
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val repository = selectionRepository(track, mutableListOf()) {
+            if ("fcg_query_lyric_new" in it) { entered.complete(Unit); release.await() }
+        }
+        cache = repository.cache
+        val pending = async {
+            try { repository.downloadOffline(track); false }
+            catch (_: IOException) { true }
+        }
+        try {
+            withTimeout(5_000) { entered.await() }
+            cache.clear()
+            release.complete(Unit)
+            assertTrue(pending.await())
+            assertEquals(0L, cache.inspect().files)
+            assertNull(repository.latest.value.result)
+        } finally { release.complete(Unit); pending.cancel() }
+    }
+
+    @Test fun aPartialProviderOutageDoesNotPretendTheWholeDownloadConnectionIsOffline() = runBlocking(Dispatchers.IO) {
+        for (responding in listOf(true, false)) {
+            val repository = LyricsRepository(context, app.repository, app.applicationScope,
+                OnlineLyricsClient({ url, _, _ ->
+                    if (responding && "client_search_cp" in url) """{"code":0,"data":{"song":{"list":[]}}}"""
+                    else throw IOException("Synthetic unavailable provider")
+                }) { _, _ -> })
+            cache = repository.cache
+            assertEquals(if (responding) LyricDownloadResult.PARTIAL_FAILURE else LyricDownloadResult.SEARCH_FAILED,
+                repository.downloadOffline(track()))
+            assertEquals(0L, cache.inspect().files)
+            assertFalse(cache.info.value.unavailable)
+        }
+    }
+
+    @Test fun batchLocalLookupListsASharedFolderOnlyOnceAndDoesNotPersistTheIndex() = runBlocking(Dispatchers.IO) {
+        val source = app.repository.addSource(music, 0)
+        val track = app.repository.scan(source, null) {}.tracks.first()
+        app.contentResolver.call(music, "scanFixtureState", null, Bundle().apply { putBoolean("resetReads", true) })
+        val loader = LocalLyricsLoader(context, app.repository)
+        val batch = loader.batchLookup()
+        repeat(5) {
+            assertNull(batch(track.copy(id = "synthetic-$it", fileName = "Synthetic $it.wav")).lyrics)
+        }
+        assertEquals(1, app.contentResolver.call(music, "scanFixtureState", null, null)!!.getInt("childReads"))
+        assertNull(loader.batchLookup()(track).lyrics)
+        assertEquals(2, app.contentResolver.call(music, "scanFixtureState", null, null)!!.getInt("childReads"))
     }
 
     @Test fun migrationVerifiesCopiesRecoversLegacyBackupAndSkipsUncommittedArtifacts() = runBlocking(Dispatchers.IO) {
@@ -1175,7 +1377,7 @@ class LyricCacheIntegrationTest {
                     {"songname":"${track.title}","singer":[{"name":"${track.artist}"}],"songmid":"second"}]}}}"""
                 "fcg_query_lyric_new" in url -> {
                     val name = if ("songmid=first" in url) "Synthetic original" else "Synthetic alternative"
-                    val encoded = android.util.Base64.encodeToString("[00:01]$name\n[00:02]Synthetic next line".toByteArray(),
+                    val encoded = android.util.Base64.encodeToString("[00:01]$name\n[00:50]Synthetic next line".toByteArray(),
                         android.util.Base64.NO_WRAP)
                     """{"code":0,"lyric":"$encoded"}"""
                 }
@@ -1197,6 +1399,12 @@ class LyricCacheIntegrationTest {
     private fun rootDocument(tree: Uri) = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
     private fun track() = Track("cache-fixture", DocumentsContract.buildDocumentUri("com.macarmusic.app.test.documents", "music/one").toString(),
         "Synthetic cache song.wav", "Synthetic cache song", durationMs = 60_000)
+    private fun trackKey(track: Track): String {
+        val query = LyricQuery.from(track)
+        return java.security.MessageDigest.getInstance("SHA-256")
+            .digest("v2\u0000${query.title}\u0000${query.artist}\u0000${query.durationMs}\u0000${track.fileName}".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+    }
 
     private fun faults(edit: Bundle.() -> Unit = {}): Bundle = requireNotNull(
         app.contentResolver.call(root, "cacheFixture", null, Bundle().apply(edit)))

@@ -66,8 +66,9 @@
         android:background="?attr/selectableItemBackgroundBorderless"
         android:padding="12dp"
         android:contentDescription="@string/lyrics_versions"
+        android:scaleType="fitCenter"
         android:visibility="gone"
-        app:srcCompat="@drawable/ic_queue"
+        app:srcCompat="@drawable/ic_lyrics_versions"
         app:tint="?attr/colorPrimary" />
     <TextView
         android:id="@+id/lyricsStatus"
@@ -90,6 +91,7 @@
         android:background="?attr/selectableItemBackgroundBorderless"
         android:padding="12dp"
         android:contentDescription="@string/lyrics_next"
+        android:scaleType="fitCenter"
         android:visibility="gone"
         app:srcCompat="@drawable/ic_lyrics_next"
         app:tint="?attr/colorPrimary" />
@@ -101,6 +103,7 @@
         android:background="?attr/selectableItemBackgroundBorderless"
         android:padding="12dp"
         android:contentDescription="@string/lyrics_timing"
+        android:scaleType="fitCenter"
         android:visibility="gone"
         app:srcCompat="@drawable/ic_lyrics_timing"
         app:tint="?attr/colorPrimary" />

@@ -3,6 +3,14 @@ package com.macarmusic.app.model
 import java.util.Locale
 
 object AudioFiles {
+    private val querySeparator = Regex("\\s+")
+    private class SearchWord(val text: String) {
+        private val initials = text.takeIf { it.all { character -> character in 'a'..'z' } }?.let(PinyinInitials::Query)
+
+        fun matches(value: String): Boolean =
+            value.lowercase(Locale.ROOT).contains(text) || initials?.matches(value) == true
+    }
+
     val extensions = setOf("mp3", "aac", "m4a", "m4b", "flac", "wav", "wave", "ogg", "oga", "opus")
     private val mimeTypes = setOf(
         "audio/mpeg", "audio/mp3", "audio/x-mp3", "audio/mp4", "audio/x-m4a",
@@ -29,11 +37,11 @@ object AudioFiles {
         order: SortOrder,
         favorites: Set<String>? = null,
     ): List<Track> {
-        val words = query.trim().lowercase(Locale.ROOT).split(Regex("\\s+")).filter(String::isNotEmpty)
+        val words = query.trim().lowercase(Locale.ROOT).split(querySeparator).filter(String::isNotEmpty).map(::SearchWord)
         val filtered = tracks.filter { track ->
             (favorites == null || track.id in favorites) && words.all { word ->
-                listOf(track.title, track.artist, track.album, track.fileName, track.genre)
-                    .any { it.lowercase(Locale.ROOT).contains(word) }
+                word.matches(track.title) || word.matches(track.artist) || word.matches(track.album) ||
+                    word.matches(track.fileName) || word.matches(track.genre)
             }
         }
         val byTitle = compareBy<Track> { it.title.lowercase(Locale.ROOT) }.thenBy { it.id }

@@ -28,6 +28,7 @@ data class CachedLyric(
     val bestVersionId: String? = null,
     val offlineSelected: Boolean = false,
     val automatic: Boolean = true,
+    val downloaded: Boolean = false,
 ) {
     fun result(cached: Boolean = false, issue: LyricIssue? = null) =
         LyricResult(LyricsParser.parse(text, offsetMs), origin, cached, issue, this)
@@ -40,7 +41,8 @@ data class CachedLyric(
         val version = versions.firstOrNull { it.id == best }
             ?: throw IOException("The preferred lyric version is missing")
         return version.document().copy(selected = true, history = history, offlineSelected = true,
-            bestVersionId = best, versions = listOf(this.version()) + versions.filter { it.id != best })
+            bestVersionId = best, versions = listOf(this.version()) + versions.filter { it.id != best },
+            downloaded = downloaded)
     }
 }
 
@@ -131,20 +133,25 @@ internal class InternalLyricCache(
     private val directory: File,
     private val nowMs: () -> Long,
     private val expiry: () -> LyricCacheExpiry = { LyricCacheExpiry.THIRTY_DAYS },
+    private val downloads: File = File(directory, "downloads"),
 ) : LyricCacheStore {
     val path: String get() = directory.absolutePath
+    val downloadPath: String get() = downloads.absolutePath
 
-    private fun files(): List<File> {
-        if (!directory.exists()) return emptyList()
-        return directory.listFiles()?.filter { it.isFile && LyricCacheFiles.localKey(it.name) != null }
+    private fun files(folder: File): List<File> {
+        if (!folder.exists()) return emptyList()
+        return folder.listFiles()?.filter { it.isFile && LyricCacheFiles.localKey(it.name) != null }
             ?: throw IOException("Cannot list internal lyric cache")
     }
+
+    private fun files(): List<File> = files(directory) + files(downloads)
 
     fun keys(): Set<String> = files().mapNotNull { LyricCacheFiles.localKey(it.name) }.toSet()
 
     fun stored(key: String): CachedLyric? {
         LyricCacheFiles.requireKey(key)
-        val file = File(directory, "$key.json")
+        val saved = File(downloads, "$key.json")
+        val file = if (saved.exists() || File(saved.path + ".bak").exists()) saved else File(directory, "$key.json")
         val backup = File(file.path + ".bak")
         val modified = (if (backup.exists()) backup else file).lastModified().coerceAtLeast(0)
         if (!file.exists() && !backup.exists()) return null
@@ -167,16 +174,21 @@ internal class InternalLyricCache(
 
     override fun write(key: String, value: CachedLyric) {
         LyricCacheFiles.requireKey(key)
-        if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Cannot create internal lyric cache")
-        AtomicTextStore(File(directory, "$key.json")).write(LyricCacheFiles.encode(value).toString(Charsets.UTF_8))
-        val entries = files().groupBy { checkNotNull(LyricCacheFiles.localKey(it.name)) }.entries
+        val destination = if (value.downloaded) downloads else directory
+        if (!destination.isDirectory && !destination.mkdirs()) throw IOException("Cannot create internal lyric cache")
+        AtomicTextStore(File(destination, "$key.json")).write(LyricCacheFiles.encode(value).toString(Charsets.UTF_8))
+        if (value.downloaded) {
+            removeFrom(directory, key)
+            return
+        }
+        val entries = files(directory).groupBy { checkNotNull(LyricCacheFiles.localKey(it.name)) }.entries
             .sortedBy { it.value.maxOf(File::lastModified) }
         var count = entries.size
         var bytes = entries.sumOf { it.value.sumOf(File::length) }
         for (entry in entries) {
             if (count <= LyricCacheFiles.INTERNAL_FILES && bytes <= LyricCacheFiles.INTERNAL_BYTES) break
             val length = entry.value.sumOf(File::length)
-            remove(entry.key)
+            removeFrom(directory, entry.key)
             count--
             bytes -= length
         }
@@ -184,8 +196,13 @@ internal class InternalLyricCache(
 
     override fun remove(key: String) {
         LyricCacheFiles.requireKey(key)
+        removeFrom(directory, key)
+        removeFrom(downloads, key)
+    }
+
+    private fun removeFrom(folder: File, key: String) {
         for (suffix in listOf(".json.new", ".json.bak", ".json")) {
-            val file = File(directory, key + suffix)
+            val file = File(folder, key + suffix)
             if (file.exists() && !file.delete()) throw IOException("Cannot remove an internal lyric cache record")
         }
     }

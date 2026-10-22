@@ -2,6 +2,7 @@ package com.macarmusic.app.ui
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
@@ -15,6 +16,7 @@ import com.macarmusic.app.model.BrowserState
 import com.macarmusic.app.model.DocumentEntry
 import com.macarmusic.app.model.FolderSource
 import com.macarmusic.app.model.LibraryEdits
+import com.macarmusic.app.model.LocalPlaylist
 import com.macarmusic.app.model.LoopMode
 import com.macarmusic.app.model.PlayOrder
 import com.macarmusic.app.model.PlaybackScope
@@ -42,6 +44,10 @@ import com.macarmusic.app.lyrics.CachedLyric
 import com.macarmusic.app.lyrics.LyricChoices
 import com.macarmusic.app.lyrics.LyricRemovalFailure
 import com.macarmusic.app.lyrics.LyricCandidateId
+import com.macarmusic.app.lyrics.LyricDownloadBatch
+import com.macarmusic.app.lyrics.LyricDownloadPhase
+import com.macarmusic.app.lyrics.LyricDownloadResult
+import com.macarmusic.app.lyrics.LyricDownloadState
 import com.macarmusic.app.lyrics.OnlineLyricSearch
 import com.macarmusic.app.lyrics.OnlineLyricIssue
 import com.macarmusic.app.lyrics.OnlineLyricsClient
@@ -121,13 +127,14 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     private var lyricChoicesJob: Job? = null
     private var onlineSearchJob: Job? = null
     private var onlineSelectionJob: Job? = null
+    private var lyricDownloadJob: Job? = null
     private var onlineSearchToken = 0L
     private var lyricEditTrackId: String? = null
     private var manualLyrics: LyricState? = null
     private var manualCacheGeneration = 0L
     private var manualPlaybackGeneration = 0L
     private var lyricTrack: Track? = null
-    private data class LyricRequest(val track: Track?, val enabled: Boolean, val online: Boolean, val allowNetwork: Boolean)
+    private data class LyricRequest(val track: Track?, val enabled: Boolean, val online: Boolean)
     private var lyricRequest: LyricRequest? = null
     internal var lyricsActive = false
         private set
@@ -137,6 +144,9 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     val lyricChoices = mutableLyricChoices.asStateFlow()
     private val mutableOnlineLyrics = MutableStateFlow<OnlineLyricSearch?>(null)
     val onlineLyrics = mutableOnlineLyrics.asStateFlow()
+    private val mutableLyricDownloads = MutableStateFlow<LyricDownloadState?>(null)
+    val lyricDownloads = mutableLyricDownloads.asStateFlow()
+    val lyricDownloadsBusy: Boolean get() = lyricDownloads.value?.running == true || lyricDownloadJob?.isCompleted == false
     private val mutableImportingBackground = MutableStateFlow(false)
     val importingBackground = mutableImportingBackground.asStateFlow()
     private val mutableLyricCacheBusy = MutableStateFlow(false)
@@ -152,7 +162,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
 
     init {
         viewModelScope.launch {
-            app.displaySettings.options.map { Triple(it.lyricsEnabled, it.onlineLyrics, it.lightMode) }
+            app.displaySettings.options.map { it.lyricsEnabled to it.onlineLyrics }
                 .distinctUntilChanged().collect {
                 requestLyrics(lyricTrack)
             }
@@ -173,8 +183,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         }
         lyricTrack = track
         val settings = app.displaySettings.options.value
-        if (!settings.lyricsEnabled || !settings.onlineLyrics || settings.lightMode) closeOnlineLyrics()
-        val request = LyricRequest(track, lyricsActive && settings.lyricsEnabled, settings.onlineLyrics, !settings.lightMode)
+        if (!settings.lyricsEnabled || !settings.onlineLyrics) closeOnlineLyrics()
+        val request = LyricRequest(track, lyricsActive && settings.lyricsEnabled, settings.onlineLyrics)
         if (!refresh && lyricRequest == request) return
         lyricRequest = request
         lyricJob?.cancel()
@@ -200,7 +210,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         lyricJob = viewModelScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    app.lyrics.load(track, request.online, refresh, allowNetwork = request.allowNetwork)
+                    app.lyrics.load(track, request.online, refresh)
                 }
                 if (lyricRequest == request) mutableLyrics.value = LyricState(track.id, result = result)
             } catch (error: CancellationException) {
@@ -218,10 +228,99 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         mutableLyrics.value = LyricState(track.id, result = LyricResult(issue = LyricIssue.LOOKUP_FAILED))
     }
 
+    fun downloadLyrics(title: String, tracks: List<Track>) = startLyricDownload(title) { tracks }
+
+    fun downloadFolderLyrics(source: FolderSource, location: BrowserLocation? = null) =
+        startLyricDownload(location?.name ?: repository.documents.displayName(source)) { progress ->
+            if (source.needsReconnect) throw IOException(app.text(R.string.reconnect_folder_first))
+            repository.scan(source, location, onProgress = progress).tracks
+        }
+
+    fun downloadPlaylistLyrics(playlist: LocalPlaylist) = startLyricDownload(playlist.name) {
+        val snapshot = library.value
+        if (snapshot.playlists.none { it.id == playlist.id }) throw IOException(app.text(R.string.no_tracks_to_play))
+        LibraryEdits.playlistTracks(snapshot, playlist.id)
+    }
+
+    private fun startLyricDownload(title: String, prepare: suspend ((ScanProgress) -> Unit) -> List<Track>) {
+        if (lyricDownloadsBusy || lyricCacheBusy.value || backupBusy.value || scanJob?.isCompleted == false ||
+            lyricEditTrackId != null || onlineSelectionJob?.isCompleted == false) {
+            app.inform(app.text(R.string.lyrics_download_busy))
+            return
+        }
+        closeOnlineLyrics()
+        closeLyricVersions()
+        var latest = LyricDownloadState(title)
+        mutableLyricDownloads.value = latest
+        var lastEmission = SystemClock.elapsedRealtime()
+        val currentTrackId = lyricTrack?.id
+        var updatedCurrent = false
+        fun progress(value: LyricDownloadState) {
+            latest = value
+            val shown = if (value.running && lyricDownloads.value?.phase == LyricDownloadPhase.CANCELLING)
+                value.copy(phase = LyricDownloadPhase.CANCELLING) else value
+            val now = SystemClock.elapsedRealtime()
+            if (!shown.running || shown.phase != lyricDownloads.value?.phase || now - lastEmission >= 100 ||
+                shown.phase == LyricDownloadPhase.DOWNLOADING && shown.current != lyricDownloads.value?.current) {
+                lastEmission = now
+                mutableLyricDownloads.value = shown
+            }
+        }
+        fun failure(error: Exception) {
+            Log.w(TAG, "Lyric downloads stopped", error)
+            progress(latest.copy(phase = LyricDownloadPhase.FAILED,
+                error = app.text(R.string.operation_failed, error.localizedMessage.orEmpty())))
+        }
+        lyricDownloadJob = viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    repository.awaitReady()
+                    val tracks = prepare { scan ->
+                        progress(latest.copy(current = scan.folderName, found = scan.found))
+                    }
+                    val download = app.lyrics.offlineDownloader()
+                    LyricDownloadBatch.run(tracks, latest, { track ->
+                        download(track).also {
+                            if (track.id == currentTrackId && it == LyricDownloadResult.SAVED) updatedCurrent = true
+                        }
+                    }, ::progress)
+                }
+                progress(result)
+                if (updatedCurrent && lyricTrack?.id == currentTrackId) {
+                    lyricRequest = null
+                    requestLyrics(lyricTrack)
+                }
+            } catch (error: CancellationException) {
+                progress(latest.copy(phase = LyricDownloadPhase.CANCELLED))
+                throw error
+            } catch (error: IOException) {
+                failure(error)
+            } catch (error: SecurityException) {
+                failure(error)
+            } catch (error: IllegalArgumentException) {
+                failure(error)
+            } catch (error: IllegalStateException) {
+                failure(error)
+            }
+        }
+    }
+
+    fun cancelLyricDownloads() {
+        val state = lyricDownloads.value ?: return
+        if (state.running) {
+            mutableLyricDownloads.value = state.copy(phase = LyricDownloadPhase.CANCELLING)
+            lyricDownloadJob?.cancel()
+        }
+    }
+
+    fun closeLyricDownloads() {
+        if (lyricDownloadsBusy) cancelLyricDownloads() else mutableLyricDownloads.value = null
+    }
+
     fun showOnlineLyrics() {
         val track = lyricTrack
         val display = app.displaySettings.options.value
-        if (!display.onlineLyrics || display.lightMode) {
+        if (!display.onlineLyrics) {
             app.inform(app.text(R.string.lyrics_next_disabled))
             return
         }
@@ -229,14 +328,15 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             app.inform(app.text(R.string.lyrics_not_found))
             return
         }
-        if (lyricEditTrackId != null || lyricCacheBusy.value || backupBusy.value) {
+        if (lyricEditTrackId != null || lyricCacheBusy.value || backupBusy.value || lyricDownloadsBusy) {
             app.inform(app.text(R.string.lyrics_cache_busy))
             return
         }
         closeLyricVersions()
         closeOnlineLyrics()
         val token = onlineSearchToken
-        mutableOnlineLyrics.value = OnlineLyricSearch(track.id, track.title, app.lyrics.cache.generation)
+        mutableOnlineLyrics.value = OnlineLyricSearch(track.id, track.title, app.lyrics.cache.generation,
+            trackDurationMs = track.durationMs)
         onlineSearchJob = viewModelScope.launch {
             try {
                 app.lyrics.searchOnline(track).collect { catalog ->
@@ -276,7 +376,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             return
         }
         val display = app.displaySettings.options.value
-        if (!display.lyricsEnabled || !display.onlineLyrics || display.lightMode) {
+        if (!display.lyricsEnabled || !display.onlineLyrics) {
             closeOnlineLyrics()
             app.inform(app.text(R.string.lyrics_next_disabled))
             return
@@ -420,7 +520,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         }
         closeOnlineLyrics()
         lyricChoicesJob?.cancel()
-        mutableLyricChoices.value = LyricChoices(track.id)
+        mutableLyricChoices.value = LyricChoices(track.id, trackDurationMs = track.durationMs)
         lyricChoicesJob = viewModelScope.launch {
             try {
                 val current = lyrics.value.takeIf { it.trackId == track.id }?.result
@@ -519,7 +619,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
 
     private fun lyricChoicesFailure(trackId: String, error: Exception) {
         Log.w(TAG, "Could not list available lyric versions", error)
-        mutableLyricChoices.value = LyricChoices(trackId, loading = false, issue = LyricIssue.LOCAL_UNREADABLE)
+        mutableLyricChoices.value = LyricChoices(trackId, loading = false, issue = LyricIssue.LOCAL_UNREADABLE,
+            trackDurationMs = lyricTrack?.takeIf { it.id == trackId }?.durationMs ?: 0)
         app.report(app.text(R.string.lyrics_versions_failed))
     }
 
@@ -920,7 +1021,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         forceMetadata: Boolean = false,
         completed: (suspend (List<PlaylistFolder>) -> Unit)? = null,
     ) {
-        if (scanJob?.isCompleted == false) {
+        if (scanJob?.isCompleted == false || lyricDownloadsBusy) {
             app.inform(app.text(R.string.scan_busy))
             return
         }
@@ -1209,7 +1310,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     }
 
     private fun lyricCacheOperation(action: suspend () -> Unit) {
-        if (lyricCacheBusy.value) {
+        if (lyricCacheBusy.value || lyricDownloadsBusy) {
             app.inform(app.text(R.string.lyrics_cache_busy))
             return
         }
@@ -1225,7 +1326,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     }
 
     private fun startBackup(): Boolean {
-        if (backupBusy.value || scanJob?.isCompleted == false || importingBackground.value || lyricCacheBusy.value) {
+        if (backupBusy.value || scanJob?.isCompleted == false || importingBackground.value ||
+            lyricCacheBusy.value || lyricDownloadsBusy) {
             app.inform(app.text(R.string.backup_busy))
             return false
         }

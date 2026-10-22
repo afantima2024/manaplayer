@@ -201,4 +201,18 @@ class LyricVersionsTest {
         assertEquals(value, LyricCacheFiles.decode(LyricCacheFiles.encode(value)))
         assertTrue(value.result().availableOffline)
     }
+
+    @Test fun offlineRetentionSurvivesSelectionsRemovalBestAndExpiryWithoutRenewingAge() {
+        val first = lyric(1, saved = now - 40L * 86_400_000).copy(downloaded = true)
+        val second = lyric(2)
+        val merged = LyricVersions.merge(second, first, first.version().id)
+        assertTrue(merged.downloaded)
+        assertTrue(merged.preferred().downloaded)
+        assertTrue(requireNotNull(LyricVersions.remove(merged, merged.version().id)).downloaded)
+        val expired = requireNotNull(LyricVersions.expire(merged, LyricCacheExpiry.THIRTY_DAYS, now))
+        assertTrue(expired.downloaded)
+        assertEquals(second.savedAtMs, expired.savedAtMs)
+        assertNull(LyricVersions.expire(expired, LyricCacheExpiry.THIRTY_DAYS, now + 31L * 86_400_000))
+        assertEquals(expired, LyricCacheFiles.decode(LyricCacheFiles.encode(expired)))
+    }
 }

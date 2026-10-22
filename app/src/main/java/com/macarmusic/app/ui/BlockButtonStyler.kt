@@ -11,6 +11,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Spinner
 import android.widget.ImageButton
+import android.widget.Button
+import android.widget.CompoundButton
 import androidx.core.view.children
 import androidx.appcompat.content.res.AppCompatResources
 import com.google.android.material.button.MaterialButton
@@ -19,7 +21,7 @@ import com.macarmusic.app.model.BlockOutline
 import com.macarmusic.app.model.BlockStyle
 import com.macarmusic.app.R
 
-class BlockButtonStyler(root: ViewGroup) {
+class BlockButtonStyler(root: ViewGroup, private val preserveMargins: Boolean = false) {
     private class Original(val view: View) {
         val background = view.background
         val foreground = view.foreground
@@ -37,7 +39,7 @@ class BlockButtonStyler(root: ViewGroup) {
 
     private val controls = buildList {
         fun collect(view: View) {
-            if (view is MaterialButton || view is Spinner || view is ImageButton) add(Original(view))
+            if ((view is Button && view !is CompoundButton) || view is Spinner || view is ImageButton) add(Original(view))
             else if (view is ViewGroup) view.children.forEach(::collect)
         }
         collect(root)
@@ -64,6 +66,8 @@ class BlockButtonStyler(root: ViewGroup) {
                     else requireNotNull(original.shape)
                 button.insetTop = if (framed) 0 else requireNotNull(original.insetTop)
                 button.insetBottom = if (framed) 0 else requireNotNull(original.insetBottom)
+            } else if (view is Button) {
+                view.background = if (framed) RippleDrawable(ripple, null, ColorDrawable(Color.WHITE)) else original.background
             } else if (view is Spinner) {
                 view.background = if (framed) {
                     val arrow = requireNotNull(AppCompatResources.getDrawable(view.context, R.drawable.ic_expand_more)).mutate()
@@ -85,10 +89,14 @@ class BlockButtonStyler(root: ViewGroup) {
                 if (framed) maxOf(padding.bottom, inset) else padding.bottom,
             )
             val spacing = if (view is ImageButton) 0 else (4 * density).toInt()
-            original.margins.topMargin = if (framed) maxOf(original.topMargin, spacing) else original.topMargin
-            original.margins.bottomMargin = if (framed) maxOf(original.bottomMargin, spacing) else original.bottomMargin
+            original.margins.topMargin = if (framed && !preserveMargins) maxOf(original.topMargin, spacing) else original.topMargin
+            original.margins.bottomMargin = if (framed && !preserveMargins) maxOf(original.bottomMargin, spacing) else original.bottomMargin
             view.layoutParams = original.margins
         }
         applied = enabled to outline
+    }
+
+    companion object {
+        fun dialogButtons(dialog: PlayerDialog): BlockButtonStyler = dialog.buttonStyler
     }
 }

@@ -151,7 +151,11 @@ class OnlineLyricsClient(
             listOf(candidate.key), listOf(LyricSearchHistory.fingerprint(lyrics))))
     }
 
-    suspend fun find(query: LyricQuery, fileName: String = "", alternatives: LyricAlternatives? = null): OnlineLyric? {
+    suspend fun find(
+        query: LyricQuery, fileName: String = "", alternatives: LyricAlternatives? = null,
+        routeTimeoutMs: Long = providerTimeoutMs,
+    ): OnlineLyric? {
+        require(routeTimeoutMs > 0)
         val identity = LyricQueries.candidates(query, fileName).firstOrNull() ?: return null
         if (ROUTES.isEmpty()) throw IOException("No lyric providers are enabled in the project configuration")
         val attempt = SearchAttempt(alternatives)
@@ -159,7 +163,7 @@ class OnlineLyricsClient(
         for (route in ROUTES.drop(start)) {
             currentCoroutineContext().ensureActive()
             try {
-                val found = withTimeout(providerTimeoutMs) {
+                val found = withTimeout(minOf(providerTimeoutMs, routeTimeoutMs)) {
                     findRoute(route, identity, attempt)
                 }
                 if (found != null) return found
@@ -176,7 +180,7 @@ class OnlineLyricsClient(
                 attempt.failure = IOException("Invalid lyric response", error)
             }
         }
-        attempt.failure?.let { throw it }
+        attempt.failure?.let { throw LyricSearchFailure(attempt.answeredRoute, it) }
         return null
     }
 
@@ -198,8 +202,7 @@ class OnlineLyricsClient(
         if (response.number("status") != 200L) throw IOException("Kugou lyric search is unavailable")
         return pick(LyricSearchRoute.KUGOU_DIRECT, attempt, response.requiredArray("candidates"), query,
             "song", { it.text("singer") }, { it.text("id") },
-            // The current lyric endpoint reports milliseconds, unlike the reference's older seconds field.
-            duration = { it.number("duration").takeIf { value -> value in 1..86_400_000 } ?: 0 }, minimumScore = 10) { song ->
+            minimumScore = 10) { song ->
             downloadKugou(song.text("id"), song.text("accesskey"), mobile = false)
         }
     }
@@ -332,13 +335,14 @@ class OnlineLyricsClient(
         return fetched(LyricResponse.decode(text))
     }
 
-    private data class Match(val song: JsonObject, val score: Int)
+    private data class Match(val song: JsonObject, val score: Int, val durationMs: Long)
 
     private class SearchAttempt(alternatives: LyricAlternatives?) {
         val next = alternatives != null
         val candidates = alternatives?.history?.candidates?.toMutableSet() ?: linkedSetOf()
         val contents = alternatives?.history?.contents?.toMutableSet() ?: linkedSetOf()
         var failure: IOException? = null
+        var answeredRoute = false
         var catalog: MutableList<OnlineLyricCandidate>? = null
 
         init { alternatives?.history?.validate() }
@@ -353,7 +357,6 @@ class OnlineLyricsClient(
         titleField: String,
         artist: (JsonObject) -> String,
         identifier: (JsonObject) -> String,
-        duration: (JsonObject) -> Long = { 0 },
         selectable: (JsonObject) -> Boolean = { true },
         minimumScore: Int = Int.MIN_VALUE,
         download: suspend (JsonObject) -> String?,
@@ -361,9 +364,15 @@ class OnlineLyricsClient(
         val ranked = songs.mapIndexedNotNull { index, item ->
             val song = item as? JsonObject ?: throw IOException("Invalid lyric search candidate")
             val title = song.text(titleField).replace("&nbsp;", " ")
-            val score = LyricMatch.score(query, title, artist(song), duration(song), index)
-            if (selectable(song) && (attempt.catalog != null || score >= minimumScore)) Match(song, score) else null
-        }.sortedByDescending { it.score }.take(if (attempt.next || attempt.catalog != null) MAX_CANDIDATES else 1)
+            val duration = catalogDuration(route, song)
+            val score = LyricMatch.score(query, title, artist(song), duration, index)
+            if (selectable(song) && (attempt.catalog != null ||
+                    score >= minimumScore && LyricMatch.durationMatches(query.durationMs, duration))) {
+                Match(song, score, duration)
+            } else null
+        }.sortedByDescending { it.score }.take(
+            if (attempt.next || attempt.catalog != null) MAX_CANDIDATES else MAX_AUTOMATIC_CANDIDATES)
+        attempt.answeredRoute = true
         for (match in ranked) {
             currentCoroutineContext().ensureActive()
             val candidate = LyricCandidateId(route, identifier(match.song))
@@ -374,7 +383,7 @@ class OnlineLyricsClient(
                 if ((route != LyricSearchRoute.KUGOU_DIRECT || key.isNotBlank()) && key.length <= 160) {
                     catalog.add(OnlineLyricCandidate(candidate,
                         song.text(titleField).replace("&nbsp;", " ").take(200).ifBlank { query.title },
-                        artist(song).take(200), catalogDuration(route, song), key))
+                        artist(song).take(200), match.durationMs, key))
                 }
                 attempt.candidates.add(candidate)
             }
@@ -384,10 +393,10 @@ class OnlineLyricsClient(
                 val lyrics = text?.let { LyricsParser.parse(it) }
                 attempt.candidates.add(candidate)
                 if (text == null || lyrics == null) continue
+                if (!LyricMatch.timingMatches(query.durationMs, lyrics)) continue
                 if (!attempt.contents.add(LyricSearchHistory.fingerprint(lyrics))) continue
                 return OnlineLyric(text, route.origin, attempt.history())
             } catch (error: IOException) {
-                if (!attempt.next) throw error
                 reportFailure(route.origin, error)
                 attempt.failure = error
             }
@@ -457,6 +466,7 @@ class OnlineLyricsClient(
         val ROUTES: List<LyricSearchRoute> = LyricProviderConfig.routes
         val PROVIDERS: List<LyricOrigin> = LyricSearchRoute.entries.map { it.origin }.distinct()
         private const val MAX_CANDIDATES = 10
+        private const val MAX_AUTOMATIC_CANDIDATES = 3
         private val TIMED_LINE = Regex("^\\[\\d{1,2}:\\d{2}(?:\\.\\d{1,3})?].*$")
     }
 }

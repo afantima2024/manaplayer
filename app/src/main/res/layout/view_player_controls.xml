@@ -198,7 +198,7 @@
         android:id="@+id/actionRow"
         android:layout_width="match_parent"
         android:layout_height="48dp">
-        <com.google.android.material.button.MaterialButton
+        <com.macarmusic.app.ui.PlayerTextButton
             android:id="@+id/favorite"
             style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="0dp"
@@ -208,7 +208,7 @@
             android:contentDescription="@string/favorite"
             android:text="@string/favorite"
             app:icon="@drawable/ic_favorite_border" />
-        <com.google.android.material.button.MaterialButton
+        <com.macarmusic.app.ui.PlayerTextButton
             android:id="@+id/details"
             style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="0dp"

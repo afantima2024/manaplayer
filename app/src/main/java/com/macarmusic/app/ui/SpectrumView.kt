@@ -1,5 +1,6 @@
 package com.macarmusic.app.ui
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.LinearGradient
@@ -10,7 +11,10 @@ import android.graphics.Shader
 import android.os.Build
 import android.os.SystemClock
 import android.util.AttributeSet
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.View
+import androidx.appcompat.content.res.AppCompatResources
 import com.google.android.material.color.MaterialColors
 import com.macarmusic.app.R
 import com.macarmusic.app.model.SpectrumOptions
@@ -27,6 +31,18 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
+    var onOriginDoubleTap: (() -> Unit)? = null
+    private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onDown(event: MotionEvent) = true
+
+        override fun onSingleTapConfirmed(event: MotionEvent): Boolean =
+            isAttachedToWindow && isShown && isEnabled && performClick()
+
+        override fun onDoubleTap(event: MotionEvent): Boolean {
+            if (isAttachedToWindow && isShown && isEnabled) onOriginDoubleTap?.invoke()
+            return true
+        }
+    })
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val path = Path()
     private val envelope = SpectrumEnvelope()
@@ -57,6 +73,20 @@ class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private val foreground get() = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface)
     private val accent get() = AccentTheme.color(this, com.google.android.material.R.attr.colorPrimary)
     private val themeColors by lazy { (accent and 0xffffff).let { SpectrumColors(it, it, it) } }
+    private val logo by lazy { requireNotNull(AppCompatResources.getDrawable(context, R.drawable.ic_launcher)) }
+
+    @SuppressLint("ClickableViewAccessibility") // performClick is dispatched by onSingleTapConfirmed, not ACTION_UP.
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!isEnabled || !isClickable) return false
+        gestures.onTouchEvent(event)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> isPressed = true
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> isPressed = false
+        }
+        return true
+    }
+
+    override fun performClick(): Boolean = super.performClick()
 
     fun configure(value: SpectrumOptions) {
         if (options == value) return
@@ -129,13 +159,12 @@ class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeS
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (options.style == SpectrumStyle.OFF) {
-            paint.shader = null
-            paint.style = Paint.Style.FILL
-            paint.color = foreground
-            paint.textSize = textSize
-            paint.textAlign = Paint.Align.CENTER
-            canvas.drawText(context.getString(R.string.spectrum_off), width / 2f,
-                height / 2f - (paint.ascent() + paint.descent()) / 2f, paint)
+            val size = minOf(width - paddingLeft - paddingRight, height - paddingTop - paddingBottom,
+                (96 * density).roundToInt()).coerceAtLeast(0)
+            val left = paddingLeft + (width - paddingLeft - paddingRight - size) / 2
+            val top = paddingTop + (height - paddingTop - paddingBottom - size) / 2
+            logo.setBounds(left, top, left + size, top + size)
+            logo.draw(canvas)
             return
         }
         val now = SystemClock.elapsedRealtime()
@@ -207,8 +236,7 @@ class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeS
         val bars = options.style == SpectrumStyle.BARS
         val legacyBars = bars && Build.VERSION.SDK_INT < 29
         val barColors = when (options.palette) {
-            SpectrumPalette.FIRE -> options.fireColors
-            SpectrumPalette.CLASSIC -> options.classicColors
+            SpectrumPalette.FIRE, SpectrumPalette.CLASSIC -> options.colors
             SpectrumPalette.THEME -> themeColors
         }
         val peakColor = foreground
@@ -385,8 +413,7 @@ class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     private fun colors(top: Float, bottom: Float): LinearGradient {
         val palette = when (options.palette) {
-            SpectrumPalette.CLASSIC -> options.classicColors
-            SpectrumPalette.FIRE -> options.fireColors
+            SpectrumPalette.CLASSIC, SpectrumPalette.FIRE -> options.colors
             SpectrumPalette.THEME -> return LinearGradient(0f, top, 0f, bottom, accent, accent, Shader.TileMode.CLAMP)
         }
         val colors = intArrayOf(palette.high, palette.middle, palette.low)

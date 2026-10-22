@@ -29,6 +29,7 @@ data class LyricCacheInfo(
     val busy: Boolean = false,
     val unavailable: Boolean = false,
     val size: LyricCacheSize? = null,
+    val downloadPath: String = "",
 ) {
     val internal: Boolean get() = folder == null && !invalidLocation
 }
@@ -46,7 +47,8 @@ class LyricCache internal constructor(
 ) {
     private val preferences = context.getSharedPreferences("lyric_cache", Context.MODE_PRIVATE)
     private val resolver = context.contentResolver
-    private val internal = InternalLyricCache(File(context.cacheDir, "lyrics"), nowMs, internalExpiry)
+    private val internal = InternalLyricCache(File(context.cacheDir, "lyrics"), nowMs, internalExpiry,
+        File(context.filesDir, "downloaded-lyrics"))
     private val mutex = Mutex()
     private val epoch = AtomicLong()
     private val initial = readLocation()
@@ -56,12 +58,13 @@ class LyricCache internal constructor(
     private var external: SafLyricCache? = null
 
     private fun readLocation(): LyricCacheInfo {
-        val saved = preferences.getString("folder", null) ?: return LyricCacheInfo(internal.path)
+        val info = LyricCacheInfo(internal.path, downloadPath = internal.downloadPath)
+        val saved = preferences.getString("folder", null) ?: return info
         return try {
-            LyricCacheInfo(internal.path, Json.decodeFromString<LyricCacheFolder>(saved))
+            info.copy(folder = Json.decodeFromString<LyricCacheFolder>(saved))
         } catch (error: SerializationException) {
             Log.w(TAG, "Invalid cache location; keeping it unavailable rather than changing storage", error)
-            LyricCacheInfo(internal.path, invalidLocation = true, unavailable = true)
+            info.copy(invalidLocation = true, unavailable = true)
         }
     }
 
@@ -88,6 +91,12 @@ class LyricCache internal constructor(
     internal suspend fun write(key: String, value: CachedLyric, expectedGeneration: Long): Boolean =
         update(key, expectedGeneration) { value } != null
 
+    internal suspend fun retainOffline(key: String, expectedGeneration: Long): CachedLyric? =
+        update(key, expectedGeneration, invalidateSelection = false) { active ->
+            val current = active.read(key) ?: throw IOException("The cached lyric is no longer available")
+            current.copy(downloaded = true)
+        }
+
     internal suspend fun retain(
         key: String, value: CachedLyric, expectedGeneration: Long, best: String? = null, changeBest: Boolean = false,
         preserveActive: Boolean = false,
@@ -108,7 +117,8 @@ class LyricCache internal constructor(
     }
 
     private suspend fun update(
-        key: String, expectedGeneration: Long, value: (LyricCacheStore) -> CachedLyric,
+        key: String, expectedGeneration: Long, invalidateSelection: Boolean = true,
+        value: (LyricCacheStore) -> CachedLyric,
     ): CachedLyric? =
         withContext(Dispatchers.IO) {
             mutex.withLock {
@@ -118,7 +128,8 @@ class LyricCache internal constructor(
                     val document = value(active)
                     currentCoroutineContext().ensureActive()
                     active.write(key, document)
-                    if (document.selected || document.offlineSelected || document.bestVersionId != null) epoch.incrementAndGet()
+                    if (invalidateSelection && (document.selected || document.offlineSelected || document.bestVersionId != null))
+                        epoch.incrementAndGet()
                     healthy()
                     mutableInfo.value = info.value.copy(size = null)
                     document
@@ -219,7 +230,8 @@ class LyricCache internal constructor(
                 adopted = true
                 external = destination
                 epoch.incrementAndGet()
-                mutableInfo.value = LyricCacheInfo(internal.path, folder = destination.folder, busy = true)
+                mutableInfo.value = LyricCacheInfo(internal.path, folder = destination.folder, busy = true,
+                    downloadPath = internal.downloadPath)
                 try { keys.forEach(internal::remove) }
                 catch (error: IOException) {
                     throw ActionFailure(context.getString(R.string.lyrics_cache_move_cleanup_failed), error)
@@ -243,7 +255,7 @@ class LyricCache internal constructor(
             saveLocation(null)
             external = null
             epoch.incrementAndGet()
-            mutableInfo.value = LyricCacheInfo(internal.path, busy = true)
+            mutableInfo.value = LyricCacheInfo(internal.path, busy = true, downloadPath = internal.downloadPath)
             oldFolder?.let { release(Uri.parse(it.treeUri), READ_WRITE) }
         }
     }

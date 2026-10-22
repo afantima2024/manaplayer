@@ -63,6 +63,8 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
     private boolean lyricCacheOnly;
     private boolean spectrumLyricsOnly;
     private boolean queueOnly;
+    private boolean lyricDownloadsOnly;
+    private boolean playerUiOnly;
 
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
@@ -72,6 +74,8 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         lyricCacheOnly = arguments != null && "true".equals(arguments.getString("lyricCacheOnly"));
         spectrumLyricsOnly = arguments != null && "true".equals(arguments.getString("spectrumLyricsOnly"));
         queueOnly = arguments != null && "true".equals(arguments.getString("queueOnly"));
+        lyricDownloadsOnly = arguments != null && "true".equals(arguments.getString("lyricDownloadsOnly"));
+        playerUiOnly = arguments != null && "true".equals(arguments.getString("playerUiOnly"));
         start();
     }
 
@@ -101,7 +105,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             monitor = new ActivityMonitor(audioPicker, new ActivityResult(Activity.RESULT_OK,
                 new Intent().setData(audio).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)), true);
             addMonitor(monitor);
-            if (queueOnly) writeQueueFixture(tree, audio);
+            if (queueOnly || lyricDownloadsOnly || playerUiOnly) writeQueueFixture(tree, audio);
             activity = launchPlayer(audio);
             if (colorPickerOnly) {
                 verifyColorPickers();
@@ -127,6 +131,18 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             });
             check(connected.await(25, TimeUnit.SECONDS) && controller != null, "Media session connection failed");
             await(() -> controller.getPlaybackState() != null);
+            if (playerUiOnly) {
+                verifyPlayerUiImprovements();
+                result.putString("result", "PASS");
+                result.putString("checks", "Exact optimized APK: bundled Chinese initials, real library filtering, owned song/detail/selector panels, clockwise double taps isolated from single taps, Off behavior, Playing label, saved origin and paused recreation");
+                return;
+            }
+            if (lyricDownloadsOnly) {
+                verifyLyricDownloads(tree);
+                result.putString("result", "PASS");
+                result.putString("checks", "Exact optimized APK: queue deduplication, bounded short-lyric rejection, immediate progress, retained rotation, cancellable HTTPS, preserved completed downloads, offline playback, and song/folder/playlist actions without changing playback");
+                return;
+            }
             if (queueOnly) {
                 verifyQueue();
                 result.putString("result", "PASS");
@@ -136,7 +152,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             if (spectrumLyricsOnly) {
                 verifySpectrumAndLyricEdits(tree, audio);
                 result.putString("result", "PASS");
-                result.putString("checks", "Exact optimized APK: uniform 3/8/16/32 bands, all four in-window origins, inline local/downloaded version picker with trailing sources, separate current/Best selection, recreation and next-visit preference, immediate progressive online catalog with selected-only download, timing preview/cancel/save/reset, portable storage and failed-write recovery");
+                result.putString("checks", "Exact optimized APK: uniform 3/8/16/32 bands, all four in-window origins, lyric cells with internal right-aligned sources and timestamps, aligned leading More buttons and styled dialog actions, separate current/Best selection, recreation and next-visit preference, immediate metadata-only online catalog with duration comparisons, selected-only download, timing preview/cancel/save/reset, portable storage and failed-write recovery");
                 return;
             }
             if (lyricCacheOnly) {
@@ -223,6 +239,8 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             await(() -> activity.findViewById(id("settingsPanel")) != null);
             check(activity.findViewById(id("navigation")).isShown(), "Settings must leave navigation available");
             verifySettingsPage("categoryGeneral", "settingsGeneralPanel");
+            check(activity.getResources().getIdentifier("settingsLightMode", "id", PACKAGE) == 0,
+                "The retired Light mode control must not exist");
             verifySystemInformation();
             check(activity.findViewById(id("settingsBackgroundPanel")).getParent() ==
                 activity.findViewById(id("settingsGeneralPanel")), "Custom backgrounds belong in General");
@@ -335,10 +353,10 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         File playback = new File(getTargetContext().getFilesDir(), "playback.json");
         check(!library.exists() && !playback.exists(), "Queue fixture requires fresh test data");
         org.json.JSONArray tracks = new org.json.JSONArray();
-        for (int index = 0; index < 100; index++) {
+        for (int index = 0; index < (lyricDownloadsOnly ? 2 : 100); index++) {
             String title = String.format(java.util.Locale.ROOT, "Queue %03d", index);
             tracks.put(new org.json.JSONObject().put("id", "queue-fixture-" + index)
-                .put("uri", audio.toString()).put("fileName", title + ".wav").put("title", title)
+                .put("uri", audio.toString()).put("fileName", playerUiOnly && index == 42 ? "\u6d88\u9632.mp3" : title + ".wav").put("title", title)
                 .put("artist", "Fixture artist").put("album", "Fixture album").put("durationMs", 60_000)
                 .put("mimeType", "audio/wav").put("sourceUris", new org.json.JSONObject().put(tree.toString(), audio.toString())));
         }
@@ -351,10 +369,100 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         writeFixture(library, new org.json.JSONObject().put("version", 1).put("tracks", tracks)
             .put("sources", new org.json.JSONArray().put(source))
             .put("playlists", new org.json.JSONArray().put(playlist)).toString());
-        writeFixture(playback, new org.json.JSONObject().put("version", 1).put("queue", tracks)
-            .put("index", 76).put("positionMs", 20_000).put("shuffle", false).put("repeat", 0).toString());
+        org.json.JSONArray queue = lyricDownloadsOnly ? new org.json.JSONArray()
+            .put(tracks.getJSONObject(0)).put(tracks.getJSONObject(0)).put(tracks.getJSONObject(1)) : tracks;
+        writeFixture(playback, new org.json.JSONObject().put("version", 1).put("queue", queue)
+            .put("index", lyricDownloadsOnly ? 0 : 76).put("positionMs", lyricDownloadsOnly ? 12_000 : 20_000)
+            .put("shuffle", false).put("repeat", 0).toString());
         check(getTargetContext().getSharedPreferences("settings", 0).edit()
             .putString("playOrder", "SEQUENTIAL").putString("loopMode", "OFF").commit(), "Cannot save fixture playback order");
+    }
+
+    private void verifyPlayerUiImprovements() throws Exception {
+        check("Playing".equals(activity.getString(resource("now_playing", "string"))), "Playing label was not updated");
+        try (ZipFile apk = new ZipFile(getTargetContext().getPackageCodePath())) {
+            check(apk.getEntry("pinyin-initials.bin") != null && apk.getEntry("pinyin-license.txt") != null,
+                "Optimized APK must retain the initials table and license");
+        }
+        await(() -> restoredAt(20_000));
+        tap(() -> activity.findViewById(id("nav_library")));
+        await(() -> visibleEditor(activity.getWindow().getDecorView()) != null);
+        onMain(() -> visibleEditor(activity.getWindow().getDecorView()).setText("XF"));
+        await(() -> {
+            ViewGroup list = activity.findViewById(id("libraryList"));
+            return list != null && list.getChildCount() == 1 && textView(list, "Queue 042") != null;
+        });
+        tap(() -> ((ViewGroup) activity.findViewById(id("libraryList"))).getChildAt(0).findViewById(id("more")));
+        await(() -> ownedPanel() != null);
+        check(restoredAt(20_000), "Searching and opening a menu changed playback");
+        saveScreenshot("owned-library-initial-search.png");
+        tap(() -> windowText(activity.getString(resource("details", "string"))));
+        await(() -> ownedPanel() != null && ownedPanel().findViewById(android.R.id.message) != null);
+        clickDialogAction("close");
+        tap(() -> activity.findViewById(id("action_settings")));
+        verifySettingsPage("categorySpectrum", "settingsSpectrumPanel");
+        tap(() -> activity.findViewById(id("settingsSpectrum")));
+        tap(() -> activity.findViewById(id("spectrumStyle")));
+        await(() -> ownedPanel() != null && ownedPanel().findViewById(id("playerDialogList")) != null);
+        tap(() -> windowText(activity.getString(resource("spectrum_off", "string"))));
+        android.content.SharedPreferences preferences = getTargetContext().getSharedPreferences("settings", 0);
+        await(() -> "OFF".equals(preferences.getString("spectrumStyle", "")));
+        tap(() -> activity.findViewById(id("nav_player")));
+        await(() -> activity.findViewById(id("spectrum")).isShown() &&
+            !activity.findViewById(id("settingsPanel")).isShown());
+        Rect[] original = {null};
+        onMain(() -> original[0] = bounds(activity.findViewById(id("spectrum"))));
+        for (String origin : new String[] {"LEFT", "TOP", "RIGHT", "BOTTOM"}) {
+            doubleTapSpectrum();
+            SystemClock.sleep(android.view.ViewConfiguration.getDoubleTapTimeout() + 80);
+            check(origin.equals(preferences.getString("spectrumOrigin", "")), "Double-tap origin is not clockwise");
+            check("OFF".equals(preferences.getString("spectrumStyle", "")), "Double tap also changed display mode");
+            onMain(() -> check(original[0].equals(bounds(activity.findViewById(id("spectrum")))),
+                "Double tap moved the spectrum window"));
+        }
+        tap(() -> activity.findViewById(id("spectrum")));
+        await(() -> "LINE".equals(preferences.getString("spectrumStyle", "")));
+        check("BOTTOM".equals(preferences.getString("spectrumOrigin", "")), "Single tap changed the origin");
+        doubleTapSpectrum();
+        SystemClock.sleep(android.view.ViewConfiguration.getDoubleTapTimeout() + 80);
+        check("LEFT".equals(preferences.getString("spectrumOrigin", "")), "Origin was not saved");
+        Activity previous = activity;
+        onMain(previous::recreate);
+        await(() -> activity != previous && activity.hasWindowFocus() &&
+            activity.findViewById(id("spectrum")).isShown());
+        check("LEFT".equals(preferences.getString("spectrumOrigin", "")), "Recreation lost the selected origin");
+        await(() -> restoredAt(20_000));
+        saveScreenshot("owned-panels-and-double-tap-restored.png");
+    }
+
+    private View ownedPanel() {
+        for (Object window : windowRoots()) if (window instanceof View) {
+            View panel = ((View) window).findViewById(id("playerDialogPanel"));
+            if (panel != null && panel.isShown() && panel.hasWindowFocus()) return panel;
+        }
+        return null;
+    }
+
+    private void doubleTapSpectrum() {
+        float[] point = new float[2];
+        onMain(() -> {
+            View spectrum = activity.findViewById(id("spectrum"));
+            int[] location = new int[2];
+            spectrum.getLocationOnScreen(location);
+            point[0] = location[0] + spectrum.getWidth() / 2f;
+            point[1] = location[1] + spectrum.getHeight() / 2f;
+        });
+        for (int tap = 0; tap < 2; tap++) {
+            long down = SystemClock.uptimeMillis();
+            for (int action : new int[] {MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP}) {
+                MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, point[0], point[1], 0);
+                event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+                try { sendPointerSync(event); } finally { event.recycle(); }
+                if (action == MotionEvent.ACTION_DOWN) SystemClock.sleep(30);
+            }
+            if (tap == 0) SystemClock.sleep(60);
+        }
+        waitForIdleSync();
     }
 
     private void verifyQueue() throws Exception {
@@ -415,6 +523,176 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         check(savedLibrary().getJSONArray("tracks").length() == 100, "Queue removal changed the library");
         saveScreenshot("optimized-compact-queue-removal.png");
         verifyPlaylistRows();
+    }
+
+    private void verifyLyricDownloads(Uri music) throws Exception {
+        FixtureOfflineDownloads fixture = new FixtureOfflineDownloads();
+        URL.setURLStreamHandlerFactory(protocol -> "https".equals(protocol) ? fixture : null);
+        getTargetContext().getContentResolver().call(music, "setLyricsMode", "missing", null);
+        await(() -> controller.getQueue() != null && controller.getQueue().size() == 3 && restoredAt(12_000));
+        if (activity.getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT) {
+            tap(() -> activity.findViewById(id("action_settings")));
+            verifySettingsPage("categoryGeneral", "settingsGeneralPanel");
+            tap(() -> activity.findViewById(id("settingsLanguage")));
+            tap(() -> windowText(activity.getString(resource("language_chinese", "string"))));
+            await(() -> "zh".equals(activity.getResources().getConfiguration().locale.getLanguage()));
+        }
+        File directory = new File(getTargetContext().getFilesDir(), "downloaded-lyrics");
+        try {
+            tap(() -> activity.findViewById(id("nav_queue")));
+            tap(() -> activity.findViewById(id("queueDownloadLyrics")));
+            await(() -> dialogWith("lyricsDownloadProgress") != null && fixture.searches.get() == 1);
+            onMain(() -> {
+                View dialog = dialogWith("lyricsDownloadProgress");
+                android.widget.ProgressBar bar = dialog.findViewById(id("lyricsDownloadProgress"));
+                check(bar.getMax() == 2 && bar.getProgress() == 0, "Duplicate queue entries need one download");
+                check(dialog.findViewById(android.R.id.button2).getForeground() != null, "Cancel needs the selected outline");
+            });
+            saveScreenshot("offline-download-release-pending.png");
+            Activity previous = activity;
+            onMain(previous::recreate);
+            await(() -> activity != previous && dialogWith("lyricsDownloadProgress") != null);
+            check(fixture.searches.get() == 1, "Rotation restarted the batch");
+            fixture.release.countDown();
+            checkDownloadsFinished(2, 2, 0);
+            check(fixture.downloads.get() == 4, "Each song should reject one short preview and stop at its next good match");
+            check(restoredAt(12_000) && controller.getQueue().size() == 3, "Downloading changed playback or queue");
+            check(!getTargetContext().getSharedPreferences("settings", 0).getBoolean("onlineLyrics", true),
+                "Explicit downloading changed the automatic online setting");
+            File[] retained = directory.listFiles((parent, name) -> name.matches("[0-9a-f]{64}\\.json"));
+            check(retained != null && retained.length == 2, "Explicit downloads must use durable storage");
+            for (File file : retained) {
+                org.json.JSONObject saved = new org.json.JSONObject(fileText(file));
+                check(saved.getBoolean("downloaded") && saved.getString("text").contains("[00:56]"),
+                    "A truncated or non-durable lyric was saved");
+            }
+            clickDialogAction("close");
+            tap(() -> activity.findViewById(id("nav_player")));
+            await(() -> textView(activity.findViewById(id("lyricsList")), "Optimized offline full") != null);
+            check(fixture.searches.get() == 2 && fixture.downloads.get() == 4, "Offline use fetched lyrics again");
+            saveScreenshot("offline-download-release-playback.png");
+            tap(() -> activity.findViewById(id("nav_queue")));
+            check(retained[0].delete(), "Cannot prepare synthetic cancellation cache miss");
+            fixture.release = new CountDownLatch(1);
+            tap(() -> activity.findViewById(id("queueDownloadLyrics")));
+            await(() -> fixture.searches.get() == 3 && dialogWith("lyricsDownloadProgress") != null);
+            tap(() -> dialogButton(activity.getString(resource("cancel", "string"))));
+            await(() -> downloadStatus("lyrics_download_cancelled") && fixture.cancelled.get() > 0);
+            check(fixture.downloads.get() == 4 && retained[1].isFile(), "Cancellation fetched another body or removed completed work");
+            saveScreenshot("offline-download-release-cancelled.png");
+            clickDialogAction("close");
+            fixture.release.countDown();
+            tap(() -> activity.findViewById(id("queueDownloadLyrics")));
+            checkDownloadsFinished(2, 1, 1);
+            check(fixture.searches.get() == 4 && fixture.downloads.get() == 6, "Restart did not reuse the completed song");
+            clickDialogAction("close");
+            tap(() -> firstQueueRow().findViewById(id("more")));
+            tap(() -> windowText(activity.getString(resource("lyrics_download", "string"))));
+            checkDownloadsFinished(1, 0, 1);
+            clickDialogAction("close");
+            tap(() -> activity.findViewById(id("nav_playlists")));
+            tap(() -> descriptionView(activity.getWindow().getDecorView(),
+                activity.getString(resource("options_for", "string"), "Compact playlist")));
+            tap(() -> windowText(activity.getString(resource("lyrics_download", "string"))));
+            checkDownloadsFinished(2, 0, 2);
+            clickDialogAction("close");
+            check(fixture.searches.get() == 4, "Already downloaded playlist triggered network searches");
+            tap(() -> activity.findViewById(id("nav_folders")));
+            tap(() -> descriptionView(activity.getWindow().getDecorView(),
+                activity.getString(resource("options_for", "string"), "Synthetic queue fixture")));
+            tap(() -> windowText(activity.getString(resource("lyrics_download", "string"))));
+            checkDownloadsFinished(2, 2, 0);
+            check(fixture.searches.get() == 6 && fixture.downloads.get() == 10, "Recursive folder download scope changed");
+            check(restoredAt(12_000) && controller.getQueue().size() == 3, "Folder download changed playback");
+            saveScreenshot("offline-download-release-folder-complete.png");
+            clickDialogAction("close");
+        } finally { fixture.release.countDown(); }
+    }
+
+    private boolean downloadStatus(String name) {
+        View dialog = dialogWith("lyricsDownloadProgress");
+        return dialog != null && activity.getString(resource(name, "string")).contentEquals(
+            ((TextView) dialog.findViewById(id("lyricsDownloadStatus"))).getText());
+    }
+
+    private void checkDownloadsFinished(int total, int saved, int kept) {
+        await(() -> downloadStatus("lyrics_download_complete"));
+        onMain(() -> {
+            View dialog = dialogWith("lyricsDownloadProgress");
+            android.widget.ProgressBar bar = dialog.findViewById(id("lyricsDownloadProgress"));
+            check(bar.getMax() == total && bar.getProgress() == total && !bar.isIndeterminate(),
+                "Completed progress is inaccurate");
+            check(activity.getString(resource("lyrics_download_counts", "string"), saved, kept, 0, 0, total, total)
+                .contentEquals(((TextView) dialog.findViewById(id("lyricsDownloadCounts"))).getText()), "Download totals changed");
+            View close = dialog.findViewById(android.R.id.button2);
+            Rect visible = new Rect();
+            check(close.getForeground() != null && close.getGlobalVisibleRect(visible) &&
+                visible.width() == close.getWidth() && visible.height() == close.getHeight(), "Close outline is clipped");
+        });
+    }
+
+    private View descriptionView(View view, String description) {
+        if (!view.isShown()) return null;
+        if (description.contentEquals(view.getContentDescription() == null ? "" : view.getContentDescription())) return view;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int index = 0; index < group.getChildCount(); index++) {
+                View found = descriptionView(group.getChildAt(index), description);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static final class FixtureOfflineDownloads extends URLStreamHandler {
+        volatile CountDownLatch release = new CountDownLatch(1);
+        final AtomicInteger searches = new AtomicInteger();
+        final AtomicInteger downloads = new AtomicInteger();
+        final AtomicInteger cancelled = new AtomicInteger();
+
+        @Override protected URLConnection openConnection(URL address) {
+            return new HttpsURLConnection(address) {
+                private volatile boolean closed;
+                private byte[] body;
+                @Override public void connect() throws IOException {
+                    if (body != null) return;
+                    String url = getURL().toString();
+                    String text;
+                    if (url.contains("lyrics.kugou.com/search")) {
+                        searches.incrementAndGet();
+                        CountDownLatch gate = release;
+                        try {
+                            while (!closed && !gate.await(25, TimeUnit.MILLISECONDS)) { }
+                        } catch (InterruptedException error) {
+                            Thread.currentThread().interrupt();
+                            throw new IOException("Synthetic search interrupted", error);
+                        }
+                        if (closed) { cancelled.incrementAndGet(); throw new IOException("Synthetic search cancelled"); }
+                        String title = org.json.JSONObject.quote(Uri.parse(url).getQueryParameter("keyword"));
+                        text = "{\"status\":200,\"candidates\":[{\"id\":\"short\",\"accesskey\":\"fixture\",\"song\":" +
+                            title + ",\"duration\":60000},{\"id\":\"full\",\"accesskey\":\"fixture\",\"song\":" +
+                            title + ",\"duration\":60000}]}";
+                    } else if (url.contains("lyrics.kugou.com/download")) {
+                        downloads.incrementAndGet();
+                        boolean shortVersion = "short".equals(Uri.parse(url).getQueryParameter("id"));
+                        String words = "[00:00]Optimized offline " + (shortVersion ? "preview" : "full") +
+                            "\n[00:05]One\n[00:10]Two\n[00:15]Three\n[00:20]Four\n[00:25]Five\n[00:30]Six\n" +
+                            (shortVersion ? "[00:40]Preview ends" : "[00:56]Full ending");
+                        text = "{\"status\":200,\"content\":\"" + android.util.Base64.encodeToString(
+                            words.getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP) + "\"}";
+                    } else throw new IOException("Unexpected offline fixture endpoint: " + url);
+                    body = text.getBytes(StandardCharsets.UTF_8);
+                }
+                @Override public int getResponseCode() throws IOException { connect(); return 200; }
+                @Override public InputStream getInputStream() throws IOException { connect(); return new ByteArrayInputStream(body); }
+                @Override public int getContentLength() { return body == null ? -1 : body.length; }
+                @Override public void disconnect() { closed = true; }
+                @Override public boolean usingProxy() { return false; }
+                @Override public String getCipherSuite() { return "Fixture"; }
+                @Override public java.security.cert.Certificate[] getLocalCertificates() { return null; }
+                @Override public java.security.cert.Certificate[] getServerCertificates() { return new java.security.cert.Certificate[0]; }
+            };
+        }
     }
 
     private void verifyPlaylistRows() throws Exception {
@@ -728,6 +1006,13 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         return state != null && state.getState() == PlaybackState.STATE_PAUSED && state.getPosition() == position;
     }
 
+    private boolean restoredAt(long position) {
+        PlaybackState state = controller.getPlaybackState();
+        return state != null && state.getPosition() == position &&
+            (state.getState() == PlaybackState.STATE_NONE || state.getState() == PlaybackState.STATE_STOPPED ||
+                state.getState() == PlaybackState.STATE_PAUSED);
+    }
+
     private Notification mediaNotification() {
         NotificationManager manager = getTargetContext().getSystemService(NotificationManager.class);
         for (android.service.notification.StatusBarNotification item : manager.getActiveNotifications()) {
@@ -1007,6 +1292,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             !dialogWith("lyricsVersionsList").findViewById(id("lyricsVersionsStatus")).isShown());
         revealLyricVersion(originalName);
         onMain(() -> {
+            verifyLyricMusicDuration(dialogWith("lyricsVersionsList"));
             TextView current = lyricVersionRow(originalName).findViewById(id("lyricsVersionChoose"));
             check(current.isSelected() && android.graphics.Color.alpha(current.getBackgroundTintList().getDefaultColor()) != 0,
                 "Current lyrics need a visible selected highlight");
@@ -1023,7 +1309,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             View button = row.findViewById(id("lyricsVersionBest"));
             check(activity.getString(resource("lyrics_source_local", "string")).contentEquals(source.getText()),
                 "Local source missing");
-            check(source.getLeft() >= button.getRight(), "Source must be last in the row");
+            verifyLyricCell(row);
             check(row.findViewById(id("lyricsVersionChoose")).getForeground() != null &&
                 button.getForeground() != null, "Version buttons must share block styling");
         });
@@ -1051,8 +1337,10 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             ViewGroup row = lyricVersionRow("Downloaded QQ");
             TextView source = row.findViewById(id("lyricsVersionSource"));
             check("QQ".contentEquals(source.getText()), "Downloaded QQ source missing");
-            check(source.getLeft() - row.findViewById(id("lyricsVersionBest")).getRight() <=
-                5 * activity.getResources().getDisplayMetrics().density, "Heart must sit next to the source");
+            verifyLyricCell(row);
+            check(activity.getString(resource("lyrics_last_timestamp", "string"), "0:30").contentEquals(
+                ((TextView) row.findViewById(id("lyricsVersionTime"))).getText()),
+                "Saved copies must show their actual final timestamp");
         });
         saveScreenshot("lyric-versions-release-downloaded.png");
         tap(() -> lyricVersionRow("Downloaded QQ").findViewById(id("lyricsVersionChoose")));
@@ -1135,6 +1423,43 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         tap(() -> windowText(activity.getString(resource(action, "string"))));
     }
 
+    private void verifyLyricMusicDuration(View dialog) {
+        long seconds = controller.getMetadata().getLong(android.media.MediaMetadata.METADATA_KEY_DURATION) / 1000;
+        check(seconds > 0 && seconds < 3600, "Synthetic song needs a known, short duration");
+        String time = String.format(java.util.Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60);
+        check(activity.getString(resource("lyrics_music_duration", "string"), time).contentEquals(
+            ((TextView) dialog.findViewById(id("lyricsTrackDuration"))).getText()),
+            "The actual music duration must be visible above lyric results");
+        check(dialog.findViewById(android.R.id.button2).getForeground() != null,
+            "Dialog Close must share the selected block border");
+        check(dialog.findViewById(android.R.id.button2).getScrollX() == 0,
+            "Single-line scrolling must not move the Close border out of view");
+        View close = dialog.findViewById(android.R.id.button2);
+        android.graphics.Rect visible = new android.graphics.Rect();
+        check(close.getScrollY() == 0 && close.getLocalVisibleRect(visible) &&
+            visible.equals(new android.graphics.Rect(0, 0, close.getWidth(), close.getHeight())),
+            "The Close outline must be fully inside the native button panel");
+    }
+
+    private void verifyLyricCell(View row) {
+        TextView choose = row.findViewById(id("lyricsVersionChoose"));
+        TextView source = row.findViewById(id("lyricsVersionSource"));
+        TextView time = row.findViewById(id("lyricsVersionTime"));
+        Rect cell = bounds(choose);
+        Rect more = bounds(row.findViewById(id("lyricsVersionMore")));
+        Rect best = bounds(row.findViewById(id("lyricsVersionBest")));
+        check(more.right < cell.left && best.left > cell.right, "More must precede the lyric cell");
+        check(more.top == cell.top && best.top == cell.top && more.bottom == cell.bottom && best.bottom == cell.bottom,
+            "More, lyrics and Best must keep aligned borders");
+        check(cell.contains(bounds(source)) && cell.contains(bounds(time)), "Source/time must be inside the lyric cell");
+        check(bounds(source).right == cell.right - choose.getPaddingEnd(), "Source must be right-aligned inside the cell");
+        check(source.getParent().getParent() == row.findViewById(id("lyricsVersionCell")),
+            "Source must not occupy a separate row column");
+        check(Math.abs(source.getTextSize() - android.util.TypedValue.applyDimension(
+            android.util.TypedValue.COMPLEX_UNIT_SP, 12, source.getResources().getDisplayMetrics())) < 0.1f,
+            "Source font size must be preserved");
+    }
+
     private void verifyOnlineLyricCatalog(File recordFile) throws Exception {
         FixtureOnlineCatalog fixture = new FixtureOnlineCatalog();
         // Synthetic HTTPS responses are confined to this instrumentation process.
@@ -1158,6 +1483,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             await(() -> dialogWith("onlineLyricsList") != null && fixture.searches.get() > 0);
             onMain(() -> {
                 View dialog = dialogWith("onlineLyricsList");
+                verifyLyricMusicDuration(dialog);
                 check(dialog.findViewById(id("onlineLyricsProgress")).isShown(), "Pending search must be visible");
                 check(!((android.widget.ProgressBar) dialog.findViewById(id("onlineLyricsProgress"))).isIndeterminate(),
                     "Pending catalogs must not require a continuous loading animation");
@@ -1168,13 +1494,18 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
                 "Opening the catalog must not download lyrics or change the cache");
             fixture.release.countDown();
             String match = "Optimized second match - Fixture singer";
+            String matchRow = match + "\n" + activity.getString(resource("lyrics_provider_duration", "string"), "1:02");
             await(() -> dialogWith("onlineLyricsList") != null &&
-                textView(dialogWith("onlineLyricsList"), match) != null);
+                textView(dialogWith("onlineLyricsList"), matchRow) != null);
+            onMain(() -> check(textView(dialogWith("onlineLyricsList"), "Optimized first match\n" +
+                activity.getString(resource("lyrics_provider_duration", "string"),
+                    activity.getString(resource("lyrics_time_unknown", "string")))) != null,
+                "Missing provider durations must be explicitly Unknown"));
             check(fixture.mobileFinished.get() == 0, "Matches must be selectable while another route is pending");
             check(fixture.downloads.get() == 0 && original.equals(fileText(recordFile)),
                 "Catalog results must remain metadata-only");
             saveScreenshot("online-lyrics-release-progressive.png");
-            tap(() -> textView(dialogWith("onlineLyricsList"), match));
+            tap(() -> textView(dialogWith("onlineLyricsList"), matchRow));
             await(() -> dialogWith("onlineLyricsList") == null &&
                 textView(activity.findViewById(id("lyricsList")), "Optimized selected online words") != null);
             check(fixture.downloads.get() == 1, "Only the selected match should be downloaded");
@@ -1239,7 +1570,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
                             text = "{\"status\":1,\"data\":{\"info\":[]}}";
                         } else if (url.contains("client_search_cp")) text =
                             "{\"code\":0,\"data\":{\"song\":{\"list\":[{\"songname\":\"Optimized first match\",\"songmid\":\"optimizedFirst\"}," +
-                            "{\"songname\":\"Optimized second match\",\"singer\":[{\"name\":\"Fixture singer\"}],\"songmid\":\"optimizedSecond\"}]}}}";
+                            "{\"songname\":\"Optimized second match\",\"singer\":[{\"name\":\"Fixture singer\"}],\"songmid\":\"optimizedSecond\",\"interval\":62}]}}}";
                         else if (url.contains("music.163.com")) text = "{\"code\":200,\"result\":{\"songCount\":0}}";
                         else if (url.contains("search.kuwo.cn")) text = "{\"abslist\":[]}";
                         else throw new IOException("Unexpected fixture endpoint: " + url);
@@ -1746,8 +2077,20 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
                 check(button.getOrientation() == (besideIcons ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL),
                     name + " must arrange its icon and text for dock " + position + " and the screen orientation");
                 check(label.isShown(), name + " must show its label");
+                check(Math.abs(bounds(label).exactCenterX() - bounds(button).exactCenterX()) <= 1,
+                    name + " text must stay centered independently of its icon");
+                if (besideIcons) check(icon.getLeft() == button.getPaddingLeft(), name + " icon must stay at the leading edge");
                 check(besideIcons ? bounds(label).left >= bounds(icon).right : bounds(label).top >= bounds(icon).bottom,
                     name + " label overlaps its icon");
+            }
+            for (String name : new String[] {"favorite", "details"}) {
+                TextView button = activity.findViewById(id(name));
+                if (button.getText().length() > 0) {
+                    float center = button.getTotalPaddingLeft() +
+                        (button.getLayout().getLineLeft(0) + button.getLayout().getLineRight(0)) / 2;
+                    check(Math.abs(center - button.getWidth() / 2f) <= 1, name + " label must be independently centered");
+                    check(button.getCompoundDrawablesRelative()[0] != null, name + " needs its leading icon");
+                }
             }
             if (side) {
                 check(activity.findViewById(id("navigation")).getWidth()
@@ -1802,7 +2145,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             for (String anchor : new String[] {"Low", "Middle", "High"}) {
                 verifyColorPicker("spectrumColor" + anchor);
                 verifyCustomColor("spectrumColor" + anchor,
-                    (palette.equals("spectrum_classic") ? "classic" : "fire") + "Color" + anchor, false);
+                    "fireColor" + anchor, false);
             }
         }
         tap(() -> activity.findViewById(id("categoryLyrics")));
