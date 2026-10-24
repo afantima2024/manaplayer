@@ -229,6 +229,18 @@ public class FixtureWidgetHostActivity extends Activity {
         if (view == null) return;
         result.putString(key + kind, view.getText().toString());
         result.putInt(key + "Color" + kind, view.getCurrentTextColor());
+        int spanCount = 0;
+        if (view.getText() instanceof android.text.Spanned) {
+            android.text.Spanned text = (android.text.Spanned) view.getText();
+            android.text.style.ForegroundColorSpan[] spans = text.getSpans(0, text.length(),
+                android.text.style.ForegroundColorSpan.class);
+            spanCount = spans.length;
+            if (spanCount > 0) {
+                result.putInt(key + "SpanColor" + kind, spans[0].getForegroundColor());
+                result.putInt(key + "SpanEnd" + kind, text.getSpanEnd(spans[0]));
+            }
+        }
+        result.putInt(key + "SpanCount" + kind, spanCount);
         result.putFloat(key + "SizeSp" + kind, view.getTextSize() / view.getResources().getDisplayMetrics().scaledDensity);
         result.putInt(key + "Height" + kind, view.getHeight());
         result.putInt(key + "LayoutHeight" + kind, view.getLayout() == null ? 0 : view.getLayout().getHeight());

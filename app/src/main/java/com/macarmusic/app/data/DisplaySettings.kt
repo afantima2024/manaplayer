@@ -113,6 +113,8 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
             otherSizeSp = preferences.getInt("lyricOtherSizeSp", 20).coerceIn(12, 48),
             activeColor = optionalColor("lyricActiveColor"),
             otherColor = optionalColor("lyricOtherColor"),
+            karaoke = preferences.getBoolean("lyricKaraoke", false),
+            karaokeColor = optionalColor("lyricKaraokeColor") ?: LyricAppearance.DEFAULT_KARAOKE_COLOR,
         ),
         landscapeLyrics = choice("landscapeLyrics", LyricSide.START),
         portraitLyrics = choice("portraitLyrics", LyricSide.START),
@@ -209,6 +211,8 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
             .putInt("lyricOtherSizeSp", next.lyricAppearance.otherSizeSp)
             .putInt("lyricActiveColor", next.lyricAppearance.activeColor ?: -1)
             .putInt("lyricOtherColor", next.lyricAppearance.otherColor ?: -1)
+            .putBoolean("lyricKaraoke", next.lyricAppearance.karaoke)
+            .putInt("lyricKaraokeColor", next.lyricAppearance.karaokeColor)
             .putString("landscapeLyrics", next.landscapeLyrics.name)
             .putString("portraitLyrics", next.portraitLyrics.name)
             .putString("themeAccent", next.themeAccent.name)

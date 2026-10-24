@@ -384,7 +384,8 @@ class HomeWidgetIntegrationTest {
         await { status().getInt("height2") == (180 * density).roundToInt() }
         val original = status()
         for (appearance in listOf(
-            LyricAppearance(activeSizeSp = 32, otherSizeSp = 26, activeColor = 0xffd166, otherColor = 0x61cfff),
+            LyricAppearance(activeSizeSp = 32, otherSizeSp = 26, activeColor = 0xffd166, otherColor = 0x61cfff,
+                karaoke = true, karaokeColor = 0xff00aa),
             LyricAppearance(activeSizeSp = 48, otherSizeSp = 48, activeColor = 0x95f5a3, otherColor = 0xffa4cd),
             LyricAppearance(),
         )) {

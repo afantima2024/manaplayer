@@ -1,4 +1,17 @@
 <resources>
+    <item name="explorerRoot" type="id" />
+    <item name="explorerTitle" type="id" />
+    <item name="explorerLocations" type="id" />
+    <item name="explorerUp" type="id" />
+    <item name="explorerRefresh" type="id" />
+    <item name="explorerPath" type="id" />
+    <item name="explorerFilename" type="id" />
+    <item name="explorerProgress" type="id" />
+    <item name="explorerStatus" type="id" />
+    <item name="explorerList" type="id" />
+    <item name="explorerAndroidPicker" type="id" />
+    <item name="explorerCancel" type="id" />
+    <item name="explorerSelect" type="id" />
     <item name="playerDialogPanel" type="id" />
     <item name="playerDialogTitle" type="id" />
     <item name="playerDialogList" type="id" />

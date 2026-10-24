@@ -1137,7 +1137,9 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         app.playback.reconcile(updated)
         if (browser.value.path.firstOrNull()?.sourceUri in sourceUris) showPath(emptyList())
         val errors = withContext(Dispatchers.IO) {
-            repository.documents.releaseReadPermissions(sourceUris)
+            repository.documents.releaseReadPermissions(sourceUris,
+                updated.sources.map { it.uri }.toSet() + updated.tracks.filter { it.standalonePersisted }
+                    .map { it.standaloneUri ?: it.uri })
         }
         errors.forEach {
             Log.w(TAG, "Removed folder references but could not release a grant", it)

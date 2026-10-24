@@ -20,8 +20,9 @@ class MediaStoreAccessTest {
             attributes.getNamedItem("android:name").nodeValue to attributes.getNamedItem("android:maxSdkVersion")?.nodeValue
         }
         assertEquals("32", values["android.permission.READ_EXTERNAL_STORAGE"])
+        assertEquals("28", values["android.permission.WRITE_EXTERNAL_STORAGE"])
         assertTrue(values.containsKey("android.permission.READ_MEDIA_AUDIO"))
-        for (name in listOf("MANAGE_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE", "READ_MEDIA_IMAGES",
+        for (name in listOf("MANAGE_EXTERNAL_STORAGE", "READ_MEDIA_IMAGES",
             "READ_MEDIA_VIDEO", "QUERY_ALL_PACKAGES")) assertFalse(values.containsKey("android.permission.$name"))
     }
 

@@ -238,7 +238,10 @@ class MusicIntegrationTest {
     }
 
     @Test fun fineTuningLegacySettingsMigrateAndNewOptionsRoundTrip() {
-        val context = instrumentation.context
+        val context = object : android.content.ContextWrapper(app) {
+            override fun getSharedPreferences(name: String, mode: Int) =
+                app.getSharedPreferences("legacy-lyric-settings-test-$name", mode)
+        }
         val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
         preferences.edit().clear().putInt("lyricEnlargementPercent", 60)
             .putString("spectrumFireStyle", "LED").commit()
@@ -246,9 +249,11 @@ class MusicIntegrationTest {
             val settings = DisplaySettings(context) {}
             assertEquals(32, settings.options.value.lyricAppearance.activeSizeSp)
             assertEquals(20, settings.options.value.lyricAppearance.otherSizeSp)
+            assertFalse(settings.options.value.lyricAppearance.karaoke)
+            assertEquals(LyricAppearance.DEFAULT_KARAOKE_COLOR, settings.options.value.lyricAppearance.karaokeColor)
             assertEquals(FireStyle.SMOOTH, settings.options.value.spectrum.barStyle)
             settings.update { it.copy(
-                lyricAppearance = LyricAppearance(31, 18, 0x448aff, 0xffffff),
+                lyricAppearance = LyricAppearance(31, 18, 0x448aff, 0xffffff, true, 0x00cc88),
                 landscapeLyrics = LyricSide.END, portraitLyrics = LyricSide.END,
                 themeAccent = ThemeAccent.BLUE, customAccentColor = 0x123abc,
                 blockOutline = BlockOutline(BlockStyle.DASHED_ARC, "+", 36, true),
@@ -314,7 +319,7 @@ class MusicIntegrationTest {
                     val labels = listOf(R.string.block_solid, R.string.block_arc, R.string.block_dashed,
                         R.string.block_dashed_arc, R.string.block_characters).map(activity::getString)
                     assertEquals(labels, (0 until spinner.adapter.count).map { spinner.adapter.getItem(it).toString() })
-                    assertTrue(activity.findViewById<View>(R.id.settingsDefaultPlayer).foreground is PlayerBlockDrawable)
+                    assertTrue(hasBlockBorder(activity.findViewById<View>(R.id.settingsDefaultPlayer).foreground))
                 }
                 setting(R.id.widgetTransparency).perform(scrollTo(), GeneralSwipeAction(Swipe.SLOW,
                     { seekCoordinates(it, 0.2f) }, { seekCoordinates(it, 1f) }, Press.FINGER))
@@ -387,13 +392,13 @@ class MusicIntegrationTest {
                                 .filterIsInstance<ListPanel>().single { it.isShown }
                             fun check(view: View) {
                                 if (view is MaterialButton || view is android.widget.ImageButton) {
-                                    assertTrue("Unstyled page button ${view.id}", view.foreground is PlayerBlockDrawable)
+                                    assertTrue("Unstyled page button ${view.id}", hasBlockBorder(view.foreground))
                                     if (view is MaterialButton) assertEquals(0, view.strokeWidth)
                                 } else if (view is ViewGroup) view.children.forEach(::check)
                             }
                             check(panel.top)
                             for (row in panel.list.children) {
-                                assertTrue(row.findViewById<View>(R.id.more).foreground is PlayerBlockDrawable)
+                                assertTrue(hasBlockBorder(row.findViewById<View>(R.id.more).foreground))
                             }
                         }
                     }
@@ -407,12 +412,12 @@ class MusicIntegrationTest {
                             .filterIsInstance<ListPanel>().single { it.isShown }
                         fun check(view: View) {
                             if (view is MaterialButton || view is android.widget.ImageButton) {
-                                assertFalse(view.foreground is PlayerBlockDrawable)
+                                assertFalse(hasBlockBorder(view.foreground))
                                 if (view is MaterialButton) assertTrue(view.strokeWidth > 0)
                             } else if (view is ViewGroup) view.children.forEach(::check)
                         }
                         check(panel.top)
-                        for (row in panel.list.children) assertFalse(row.findViewById<View>(R.id.more).foreground is PlayerBlockDrawable)
+                        for (row in panel.list.children) assertFalse(hasBlockBorder(row.findViewById<View>(R.id.more).foreground))
                     }
                 }
             }
@@ -589,14 +594,19 @@ class MusicIntegrationTest {
                     awaitPlayerFrame()
                     onMain {
                         val activity = resumedActivity()
+                        for (id in listOf(R.id.shuffle, R.id.previous, R.id.rewind, R.id.play, R.id.forward,
+                            R.id.next, R.id.repeat, R.id.volumeMute, R.id.favorite, R.id.details)) {
+                            assertNotNull("Main control must have a keyboard focus indicator",
+                                activity.findViewById<View>(id).foreground)
+                        }
                         for (id in ids) {
                             val target = activity.findViewById<View>(id)
                             assertEquals("Selection must not change button width", before[id]!!.width(), target.width)
                             assertEquals("Selection must not change button height", before[id]!!.height(), target.height)
                         }
                         val favorite = activity.findViewById<MaterialButton>(R.id.favorite)
-                        assertEquals(content.first * 1.5f, favorite.textSize, 0.01f)
-                        assertEquals((content.second * 1.5f).roundToInt(), favorite.iconSize)
+                        assertEquals(content.first * 1.2f, favorite.textSize, 0.01f)
+                        assertEquals((content.second * 1.2f).roundToInt(), favorite.iconSize)
                         assertEquals(detailsSize, activity.findViewById<MaterialButton>(R.id.details).textSize, 0.01f)
                         for (id in listOf(R.id.favorite, R.id.details)) {
                             val button = activity.findViewById<MaterialButton>(id)
@@ -640,8 +650,8 @@ class MusicIntegrationTest {
                             val pixels = Rect()
                             for (y in 0 until 60) for (x in 0 until 60) if (Color.alpha(bitmap.getPixel(x, y)) > 0)
                                 pixels.union(x, y, x + 1, y + 1)
-                            assertEquals(if (selected) 30 else 20, pixels.width())
-                            assertEquals(if (selected) 30 else 20, pixels.height())
+                            assertEquals(if (selected) 24 else 20, pixels.width())
+                            assertEquals(if (selected) 24 else 20, pixels.height())
                             assertEquals(30f, pixels.exactCenterX(), 0f)
                             assertEquals(30f, pixels.exactCenterY(), 0f)
                             assertEquals(60, button.width)
@@ -650,6 +660,90 @@ class MusicIntegrationTest {
                     }
                 }
             } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
+        }
+    }
+
+    @Test fun transportFocusOrderMatchesWrappedRowsAndSkipsDisabledControls() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val row = com.macarmusic.app.ui.TransportRow(activity)
+                repeat(7) {
+                    row.addView(androidx.appcompat.widget.AppCompatImageButton(activity).apply {
+                        id = View.generateViewId()
+                    })
+                }
+                val density = activity.resources.displayMetrics.density
+                for (width in listOf(280, 640, 160)) {
+                    row.measure(View.MeasureSpec.makeMeasureSpec((width * density).toInt(), View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+                    row.layout(0, 0, row.measuredWidth, row.measuredHeight)
+                    for (line in row.children.groupBy { it.top }.values) {
+                        for ((index, button) in line.withIndex()) {
+                            line.getOrNull(index - 1)?.let { assertSame(it, row.focusSearch(button, View.FOCUS_LEFT)) }
+                            line.getOrNull(index + 1)?.let { assertSame(it, row.focusSearch(button, View.FOCUS_RIGHT)) }
+                            assertEquals(View.NO_ID, button.nextFocusLeftId)
+                            assertEquals(View.NO_ID, button.nextFocusRightId)
+                        }
+                        if (line.size >= 3) {
+                            line[1].isEnabled = false
+                            assertSame(line[2], row.focusSearch(line[0], View.FOCUS_RIGHT))
+                            assertSame(line[0], row.focusSearch(line[2], View.FOCUS_LEFT))
+                            line[1].isEnabled = true
+                            assertSame(line[1], row.focusSearch(line[0], View.FOCUS_RIGHT))
+                        }
+                    }
+                }
+                val moved = row.getChildAt(0)
+                row.removeView(moved)
+                assertEquals(View.NO_ID, moved.nextFocusLeftId)
+                assertEquals("Compact secondary row must not inherit stale links", View.NO_ID, moved.nextFocusRightId)
+            }
+        }
+    }
+
+    @Test fun remoteFocusOutlineIsIndependentOfSelectionAndButtonGeometry() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            awaitPlayerFrame()
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_UP)
+            scenario.onActivity { activity ->
+                val button = activity.findViewById<View>(R.id.nav_library)
+                val navigation = activity.findViewById<View>(R.id.nav_folders)
+                val before = bounds(button)
+                fun focusPixels(): Int {
+                    val foreground = button.foreground
+                    val focus = if (foreground is android.graphics.drawable.LayerDrawable)
+                        foreground.getDrawable(foreground.numberOfLayers - 1) else foreground
+                    focus.bounds = Rect(0, 0, button.width, button.height)
+                    val bitmap = Bitmap.createBitmap(button.width, button.height, Bitmap.Config.ARGB_8888)
+                    return try {
+                        focus.draw(Canvas(bitmap))
+                        var count = 0
+                        for (y in 0 until bitmap.height) for (x in 0 until bitmap.width)
+                            if (Color.alpha(bitmap.getPixel(x, y)) > 0) count++
+                        count
+                    } finally { bitmap.recycle() }
+                }
+                assertTrue(button.requestFocus())
+                assertTrue(button.isFocused)
+                assertTrue("Keyboard focus must be visible", focusPixels() > 0)
+                assertFalse(button.isSelected)
+                assertTrue(navigation.requestFocus())
+                assertEquals("Unfocused control must not keep its focus outline", 0, focusPixels())
+                assertFalse("Moving remote focus must not activate another tab", navigation.isSelected)
+                button.isSelected = true
+                assertEquals("Selection alone must not draw a keyboard focus outline", 0, focusPixels())
+                assertTrue(button.requestFocus())
+                button.isEnabled = false
+                assertEquals("Disabled control must not draw an enabled focus outline", 0, focusPixels())
+                button.isEnabled = true
+                button.isSelected = false
+                assertEquals(before, bounds(button))
+                val artwork = activity.findViewById<View>(R.id.navigationArtwork)
+                assertTrue("Native image button must accept keyboard focus", artwork.requestFocus())
+                val foreground = artwork.foreground
+                assertTrue("Native image-button foreground must receive the focus state",
+                    foreground.state.contains(android.R.attr.state_focused))
+            }
         }
     }
 
@@ -1214,7 +1308,7 @@ class MusicIntegrationTest {
                     screenshot("system-info-$language")
                     onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
                     onMain {
-                        assertTrue(resumedActivity().findViewById<View>(R.id.settingsSystemInfo).foreground is PlayerBlockDrawable)
+                        assertTrue(hasBlockBorder(resumedActivity().findViewById<View>(R.id.settingsSystemInfo).foreground))
                         assertEquals(1, resumedActivity()
                             .findViewById<com.google.android.material.appbar.MaterialToolbar>(R.id.toolbar).menu.size())
                     }
@@ -1359,7 +1453,7 @@ class MusicIntegrationTest {
             Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         val monitor = android.app.Instrumentation.ActivityMonitor(IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
             android.app.Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(cacheTree).addFlags(flags)), true)
-        instrumentation.addMonitor(monitor)
+        var monitorAdded = false
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 rotate(scenario, ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
@@ -1386,11 +1480,17 @@ class MusicIntegrationTest {
                     internal.write(key, record)
                     setting(R.id.lyricsCacheMove).perform(scrollTo(), click())
                     onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click())
-                    assertEquals(0, monitor.hits)
+                    scenario.onActivity { assertTrue(it.findViewById<View>(R.id.settingsLyricsPanel).isShown) }
                     setting(R.id.lyricsCacheMove).perform(scrollTo(), click())
                     onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+                    onView(withId(R.id.explorerAndroidPicker)).check(matches(isDisplayed()))
+                    instrumentation.addMonitor(monitor)
+                    monitorAdded = true
+                    onView(withId(R.id.explorerAndroidPicker)).perform(click())
                     await { app.lyrics.cache.info.value.folder != null && !app.lyrics.cache.info.value.busy }
                     assertEquals(1, monitor.hits)
+                    instrumentation.removeMonitor(monitor)
+                    monitorAdded = false
                     assertTrue(internal.keys().isEmpty())
                     assertEquals(record, runBlocking { app.lyrics.cache.read(key).value })
                     screenshot("cache-portable-landscape")
@@ -1433,7 +1533,7 @@ class MusicIntegrationTest {
                 } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
             }
         } finally {
-            instrumentation.removeMonitor(monitor)
+            if (monitorAdded) instrumentation.removeMonitor(monitor)
             app.contentResolver.call(cacheTree, "cacheFixture", null, Bundle())
             runBlocking { app.lyrics.cache.useInternal(); app.lyrics.cache.clear() }
             app.contentResolver.call(cacheTree, "cacheFixture", null, Bundle().apply { putBoolean("reset", true) })
@@ -1488,7 +1588,8 @@ class MusicIntegrationTest {
                 onView(withId(R.id.action_settings)).perform(click())
                 setting(R.id.settingsLyrics).perform(scrollTo(), click())
                 onView(withId(R.id.nav_player)).perform(click())
-                await { resumedActivity().findViewById<View>(R.id.lyricsList).visibility == View.GONE }
+                await { resumedActivity().findViewById<View>(R.id.lyricsList).visibility == View.GONE &&
+                    resumedActivity().findViewById<View>(R.id.artwork).isShown }
                 onView(withId(R.id.artwork)).check(matches(isDisplayed()))
                 assertEquals(20_000, onMainResult { controller.currentPosition })
                 assertFalse(onMainResult { controller.playWhenReady })
@@ -2706,14 +2807,18 @@ class MusicIntegrationTest {
         }
     }
 
+    private fun hasBlockBorder(drawable: Drawable?): Boolean = drawable is PlayerBlockDrawable ||
+        drawable is android.graphics.drawable.LayerDrawable &&
+        (0 until drawable.numberOfLayers).any { hasBlockBorder(drawable.getDrawable(it)) }
+
     private fun assertNavigationLabels(navigation: PlayerNavigationView, besideIcons: Boolean) {
         val density = navigation.resources.displayMetrics.density
         for (id in listOf(R.id.nav_player, R.id.nav_library, R.id.nav_folders, R.id.nav_queue, R.id.nav_playlists)) {
             val button = navigation.findViewById<LinearLayout>(id)
             val icon = button.getChildAt(0)
             val label = button.getChildAt(1) as TextView
-            val scale = if (button.isSelected) 1.5f else 1f
-            assertEquals((24 * density * scale).toInt(), icon.width)
+            val scale = if (button.isSelected) 1.2f else 1f
+            assertEquals(((24 * density).toInt() * scale).roundToInt(), icon.width)
             assertEquals(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12 * scale,
                 navigation.resources.displayMetrics), label.textSize, 0.1f)
             assertEquals(if (besideIcons) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL, button.orientation)
@@ -2957,7 +3062,7 @@ class MusicIntegrationTest {
                     fun checkSettingsButtons(view: View) {
                         if (view is MaterialButton) {
                             assertTrue("Settings button ${view.id} must use the selected border",
-                                view.foreground is PlayerBlockDrawable)
+                                hasBlockBorder(view.foreground))
                             assertEquals("No duplicate native outline", 0, view.strokeWidth)
                             assertOutlinedWithoutFill(view.foreground)
                         } else if (view is ViewGroup) view.children.forEach(::checkSettingsButtons)
@@ -3041,9 +3146,9 @@ class MusicIntegrationTest {
             assertEquals(outline, DisplaySettings(app) {}.options.value.blockOutline)
             scenario.onActivity { activity ->
                 assertTrue(activity.findViewById<View>(R.id.settingsBlockShadow).isShown)
-                assertTrue(activity.findViewById<View>(R.id.nav_player).foreground is PlayerBlockDrawable)
+                assertTrue(hasBlockBorder(activity.findViewById<View>(R.id.nav_player).foreground))
                 assertTrue(activity.findViewById<View>(R.id.trackInformation).background is PlayerBlockDrawable)
-                assertTrue(activity.findViewById<View>(R.id.settingsLanguage).foreground is PlayerBlockDrawable)
+                assertTrue(hasBlockBorder(activity.findViewById<View>(R.id.settingsLanguage).foreground))
             }
         }
     }
@@ -3881,7 +3986,7 @@ class MusicIntegrationTest {
                 onView(withId(R.id.playerDialogPanel)).inRoot(isDialog()).check(matches(isDisplayed()))
                 onView(withId(R.id.playerDialogList)).inRoot(isDialog()).check { view, _ ->
                     assertTrue((view as android.widget.ListView).getChildAt(0) is android.widget.Checkable)
-                    assertTrue(view.getChildAt(0).foreground is PlayerBlockDrawable)
+                    assertTrue(hasBlockBorder(view.getChildAt(0).foreground))
                 }
                 screenshot("player-owned-library-menu")
                 pressBack()
@@ -4793,7 +4898,7 @@ class MusicIntegrationTest {
 
     private fun assertDialogButtonBorder(view: View, framed: Boolean) {
         val border = view.foreground
-        assertEquals(framed, border is PlayerBlockDrawable)
+        assertEquals(framed, hasBlockBorder(border))
         if (!framed) return
         requireNotNull(border)
         val visible = Rect()
@@ -4941,7 +5046,7 @@ class MusicIntegrationTest {
                 for (id in listOf(R.id.lyricsVersionActivate, R.id.lyricsVersionToggleBest, R.id.lyricsVersionDelete)) {
                     val action = view.findViewById<MaterialButton>(id)
                     assertTrue(action.isEnabled && action.height >= size)
-                    assertTrue(action.foreground is PlayerBlockDrawable)
+                    assertTrue(hasBlockBorder(action.foreground))
                 }
             }
             assertEquals(versions.last().text, model.lyrics.value.result!!.document!!.text)
@@ -5092,8 +5197,8 @@ class MusicIntegrationTest {
                         val choose = row.findViewById<MaterialButton>(R.id.lyricsVersionChoose)
                         assertEquals(app.text(R.string.lyrics_source_local), source.text.toString())
                         assertLyricCellLayout(row)
-                        assertTrue(choose.foreground is PlayerBlockDrawable)
-                        assertTrue(best.foreground is PlayerBlockDrawable)
+                        assertTrue(hasBlockBorder(choose.foreground))
+                        assertTrue(hasBlockBorder(best.foreground))
                         val surface = com.google.android.material.color.MaterialColors.getColor(choose,
                             com.google.android.material.R.attr.colorSurface)
                         assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(choose.currentTextColor, surface) >= 4.5)
@@ -5577,9 +5682,21 @@ class MusicIntegrationTest {
             }
             val monitor = instrumentation.addMonitor(filter, result, true)
             try {
-                setting(R.id.settingsBackgroundImage).perform(scrollTo(), click())
+                setting(R.id.settingsBackgroundImage).perform(scrollTo())
+                onMain {
+                    val button = resumedActivity().findViewById<View>(R.id.settingsBackgroundImage)
+                    assertTrue(button.isShown && button.isEnabled)
+                    assertTrue(button.performClick())
+                }
+                await {
+                    ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<com.macarmusic.app.ui.FileExplorerActivity>().any { it.hasWindowFocus() }
+                }
+                onView(withId(R.id.explorerAndroidPicker)).perform(click())
                 instrumentation.waitForIdleSync()
                 assertEquals("The image picker must be launched exactly once", 1, monitor.hits)
+                if (result.resultCode != Activity.RESULT_OK)
+                    onView(withId(R.id.explorerCancel)).perform(click())
             } finally {
                 instrumentation.removeMonitor(monitor)
             }
@@ -5616,9 +5733,20 @@ class MusicIntegrationTest {
             scenario.onActivity { assertEquals(View.GONE, it.findViewById<View>(R.id.settingsSlideshow).visibility) }
             val single = app.displaySettings.options.value
             choose(Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply {
+                clipData = ClipData.newRawUri("Oversized selection", first).apply {
+                    repeat(20) { addItem(ClipData.Item(first)) }
+                    addItem(ClipData.Item(second))
+                }
+            }))
+            onView(withId(R.id.explorerStatus)).check(matches(
+                withText(app.text(R.string.explorer_selection_limit, BackgroundImages.MAX_COUNT))))
+            onView(withId(R.id.explorerCancel)).perform(click())
+            assertEquals(single, app.displaySettings.options.value)
+            choose(Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply {
                 clipData = ClipData.newPlainText("Invalid selection", "No image URI")
             }))
-            await { app.notice.value?.text == app.text(R.string.picker_no_document) }
+            onView(withId(R.id.explorerStatus)).check(matches(withText(R.string.picker_no_document)))
+            onView(withId(R.id.explorerCancel)).perform(click())
             assertEquals(single, app.displaySettings.options.value)
         }
     }

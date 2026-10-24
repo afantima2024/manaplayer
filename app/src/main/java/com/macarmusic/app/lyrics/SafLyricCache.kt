@@ -5,6 +5,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Log
+import com.macarmusic.app.data.DocumentUris
 import com.macarmusic.app.model.LyricCacheExpiry
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -255,7 +256,7 @@ internal class SafLyricCache(
             if (tree.scheme != "content" || tree.authority.isNullOrBlank() || !isTreeUri(tree)) {
                 throw IOException("Select a writable Android document folder")
             }
-            val root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+            val root = DocumentUris.document(tree)
             val parent = SafLyricCache(resolver, LyricCacheFolder(tree.toString(), root.toString(), ""), nowMs, expiry)
             val rootName = parent.describe(root).name
             val contents = parent.children(root)

@@ -23,6 +23,7 @@ import android.os.Process;
 import android.os.SystemClock;
 import android.provider.DocumentsContract;
 import android.view.InputDevice;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -41,6 +42,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
@@ -55,6 +57,7 @@ import javax.net.ssl.HttpsURLConnection;
 public class OptimizedSmokeInstrumentation extends Instrumentation {
     private static final String PACKAGE = "com.macarmusic.app";
     private volatile Activity activity;
+    private volatile Activity explorer;
     private MediaBrowser browser;
     private MediaController controller;
     private boolean colorPickerOnly;
@@ -65,6 +68,12 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
     private boolean queueOnly;
     private boolean lyricDownloadsOnly;
     private boolean playerUiOnly;
+    private boolean fileExplorerOnly;
+    private boolean karaokeOnly;
+    private boolean explorerStorageSimulation;
+    private boolean remoteNavigationOnly;
+    private String explorerSimulationRoot;
+    private String explorerSimulationVolume;
 
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
@@ -76,12 +85,19 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         queueOnly = arguments != null && "true".equals(arguments.getString("queueOnly"));
         lyricDownloadsOnly = arguments != null && "true".equals(arguments.getString("lyricDownloadsOnly"));
         playerUiOnly = arguments != null && "true".equals(arguments.getString("playerUiOnly"));
+        fileExplorerOnly = arguments != null && "true".equals(arguments.getString("fileExplorerOnly"));
+        karaokeOnly = arguments != null && "true".equals(arguments.getString("karaokeOnly"));
+        explorerStorageSimulation = arguments != null && "true".equals(arguments.getString("explorerStorageSimulation"));
+        remoteNavigationOnly = arguments != null && "true".equals(arguments.getString("remoteNavigationOnly"));
+        explorerSimulationRoot = arguments == null ? null : arguments.getString("explorerSimulationRoot");
+        explorerSimulationVolume = arguments == null ? null : arguments.getString("explorerSimulationVolume");
         start();
     }
 
     @Override public void callActivityOnResume(Activity resumed) {
         super.callActivityOnResume(resumed);
         if ((PACKAGE + ".ui.MainActivity").equals(resumed.getClass().getName())) activity = resumed;
+        if ((PACKAGE + ".ui.FileExplorerActivity").equals(resumed.getClass().getName())) explorer = resumed;
     }
 
     @Override public void onStart() {
@@ -105,7 +121,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             monitor = new ActivityMonitor(audioPicker, new ActivityResult(Activity.RESULT_OK,
                 new Intent().setData(audio).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)), true);
             addMonitor(monitor);
-            if (queueOnly || lyricDownloadsOnly || playerUiOnly) writeQueueFixture(tree, audio);
+            if (queueOnly || lyricDownloadsOnly || playerUiOnly || remoteNavigationOnly) writeQueueFixture(tree, audio);
             activity = launchPlayer(audio);
             if (colorPickerOnly) {
                 verifyColorPickers();
@@ -131,6 +147,35 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             });
             check(connected.await(25, TimeUnit.SECONDS) && controller != null, "Media session connection failed");
             await(() -> controller.getPlaybackState() != null);
+            if (remoteNavigationOnly) {
+                verifyRemoteNavigation(tree);
+                result.putString("result", "PASS");
+                result.putString("checks", "Exact optimized APK: D-pad playback traversal and 10-second seek activation; focusable explorer locations, folders and files without touch or browsing autoplay");
+                return;
+            }
+            if (explorerStorageSimulation) {
+                removeMonitor(monitor);
+                monitor = null;
+                verifyExplorerStorageSimulation(result);
+                result.putString("result", "PASS");
+                result.putString("checks", "Exact delivered APK: internal and virtual removable roots, browse without import/autoplay, recursive folder imports, mixed-folder queue, individual-file playback, ejected-volume error with retained library and uninterrupted internal playback, same-volume remount and playback recovery");
+                return;
+            }
+            if (karaokeOnly) {
+                verifyKaraoke(tree, audio);
+                result.putString("result", "PASS");
+                result.putString("checks", "Exact optimized APK: optional karaoke switch and shared color picker, partial glyph coverage, advancing and paused rendering, backward seek, persisted recreation, cross-UID lyric-widget spans, mute alignment and player-only mute, appearance reset");
+                return;
+            }
+            if (fileExplorerOnly) {
+                removeMonitor(monitor);
+                monitor = null;
+                verifyFileExplorer(tree, audio);
+                result.putString("result", "PASS");
+                result.putString("storageMode", Build.VERSION.SDK_INT <= 28 ? "legacy shared storage" : "scoped SAF subtree");
+                result.putString("checks", "Exact optimized APK: native folder/file selection, real metadata and playback, retained explorer recreation, no browsing autoplay and uninterrupted playback; legacy write rejection or scoped subtree grants as applicable");
+                return;
+            }
             if (playerUiOnly) {
                 verifyPlayerUiImprovements();
                 result.putString("result", "PASS");
@@ -295,11 +340,14 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             onMain(() -> {
                 for (String name : new String[] {"cover", "favorite", "details", "navigationArtwork",
                         "nav_player", "nav_library", "nav_folders", "nav_queue", "nav_playlists"}) {
-                    check(activity.findViewById(id(name)).getForeground() == null, "Disabled blocks remove " + name + " outline");
+                    android.graphics.drawable.Drawable foreground = activity.findViewById(id(name)).getForeground();
+                    check("cover".equals(name) ? foreground == null :
+                        foreground instanceof android.graphics.drawable.StateListDrawable,
+                        "Disabled blocks remove " + name + " frame but retain state-only keyboard focus");
                 }
                 check(!activity.findViewById(id("settingsBlockShadow")).isShown(), "Disabled blocks hide shadow controls");
-                check(activity.findViewById(id("settingsLanguage")).getForeground() == null,
-                    "Settings buttons must also restore standard controls");
+                check(activity.findViewById(id("settingsLanguage")).getForeground() instanceof android.graphics.drawable.StateListDrawable,
+                    "Settings buttons must also restore standard controls with keyboard focus");
             });
             tap(() -> activity.findViewById(id("homeLogo")));
             await(() -> !activity.findViewById(id("settingsPanel")).isShown()
@@ -336,7 +384,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             }
         } finally {
             if (monitor != null) removeMonitor(monitor);
-            if (homeWidgetsOnly) widgetCommand("finish", "");
+            if (homeWidgetsOnly || karaokeOnly) widgetCommand("finish", "");
             onMain(() -> {
                 if (controller != null) controller.getTransportControls().pause();
                 if (browser != null) browser.disconnect();
@@ -376,6 +424,130 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             .put("shuffle", false).put("repeat", 0).toString());
         check(getTargetContext().getSharedPreferences("settings", 0).edit()
             .putString("playOrder", "SEQUENTIAL").putString("loopMode", "OFF").commit(), "Cannot save fixture playback order");
+    }
+
+    private void verifyKaraoke(Uri tree, Uri audio) throws Exception {
+        getTargetContext().getContentResolver().call(tree, "setLyricsMode", "available", null);
+        getTargetContext().getContentResolver().call(tree, "setUnavailable", "false", null);
+        android.content.SharedPreferences preferences = getTargetContext().getSharedPreferences("settings", 0);
+        check(!preferences.getBoolean("lyricKaraoke", false), "Karaoke must default off");
+        tap(() -> activity.findViewById(id("action_settings")));
+        verifySettingsPage("categoryFolders", "settingsFoldersPanel");
+        ActivityMonitor picker = new ActivityMonitor(new IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
+            new ActivityResult(Activity.RESULT_OK, new Intent().setData(tree).addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)), true);
+        try {
+            tap(() -> activity.findViewById(id("settingsAddFolder")));
+            chooseAndroidPicker(picker);
+            await(() -> new File(getTargetContext().getFilesDir(), "library.json").isFile() &&
+                savedLibrary().optJSONArray("sources") != null &&
+                savedLibrary().optJSONArray("sources").length() == 1);
+        } finally { removeMonitor(picker); }
+        getTargetContext().startActivity(new Intent(Intent.ACTION_VIEW).setClassName(PACKAGE, PACKAGE + ".ui.MainActivity")
+            .setDataAndType(audio, "audio/wav").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION));
+        await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        onMain(() -> {
+            controller.getTransportControls().pause();
+            controller.getTransportControls().seekTo(7_500);
+        });
+        await(() -> pausedAt(7_500) && activeLyricText() != null);
+        tap(() -> activity.findViewById(id("action_settings")));
+        verifySettingsPage("categoryLyrics", "settingsLyricsPanel");
+        tap(() -> activity.findViewById(id("settingsLyricKaraoke")));
+        await(() -> preferences.getBoolean("lyricKaraoke", false));
+        tap(() -> activity.findViewById(id("lyricKaraokeColor")));
+        await(() -> colorDialog() != null);
+        tap(() -> ((GridLayout) colorDialog().findViewById(id("colorGrid"))).getChildAt(4));
+        clickDialogAction("apply");
+        int color = preferences.getInt("lyricKaraokeColor", -1) | android.graphics.Color.BLACK;
+        check(color != -1, "Karaoke color was not saved");
+        tap(() -> activity.findViewById(id("nav_player")));
+        await(() -> activeLyricText() != null && activeLyricText().isShown() && lyricColorPixels(color) > 0);
+        onMain(() -> {
+            TextView row = activeLyricText();
+            check(row.getCurrentTextColor() != color, "Overlay must not replace the base text color");
+            check(lyricColorPixels(row.getCurrentTextColor()) > 0, "Partial coverage lost the uncovered text");
+            View mute = activity.findViewById(id("volumeMute"));
+            check(mute.getLeft() == 0, "Mute control does not share its container's leading edge");
+            check(mute.getWidth() == Math.round(48 * activity.getResources().getDisplayMetrics().density),
+                "Mute touch target changed");
+        });
+        Activity previous = activity;
+        onMain(previous::recreate);
+        await(() -> activity != previous && activity.hasWindowFocus() && pausedAt(7_500) &&
+            activeLyricText() != null && lyricColorPixels(color) > 0);
+        check(preferences.getBoolean("lyricKaraoke", false) &&
+            (preferences.getInt("lyricKaraokeColor", -1) | android.graphics.Color.BLACK) == color,
+            "Recreation lost karaoke settings");
+        int[] frozen = {0};
+        onMain(() -> frozen[0] = lyricColorPixels(color));
+        SystemClock.sleep(650);
+        onMain(() -> check(frozen[0] == lyricColorPixels(color), "Paused karaoke continued moving"));
+        onMain(() -> controller.getTransportControls().seekTo(6_000));
+        await(() -> pausedAt(6_000) && lyricColorPixels(color) < frozen[0]);
+        onMain(() -> { frozen[0] = lyricColorPixels(color); controller.getTransportControls().play(); });
+        await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+            activeLyricText() != null && "Synthetic start".contentEquals(activeLyricText().getText()) &&
+            lyricColorPixels(color) > frozen[0]);
+        onMain(() -> {
+            controller.getTransportControls().pause();
+            controller.getTransportControls().seekTo(7_500);
+        });
+        await(() -> pausedAt(7_500));
+        saveScreenshot("karaoke-release-playing.png");
+        android.media.AudioManager audioManager = getTargetContext().getSystemService(android.media.AudioManager.class);
+        int volume = audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC);
+        tap(() -> activity.findViewById(id("volumeMute")));
+        await(() -> preferences.getBoolean("playerMuted", false));
+        check(audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) == volume,
+            "Player mute changed other apps' volume");
+        tap(() -> activity.findViewById(id("volumeMute")));
+        await(() -> !preferences.getBoolean("playerMuted", true));
+        getContext().startActivity(new Intent().setClassName(PACKAGE + ".test",
+            PACKAGE + ".FixtureWidgetHostActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        await(() -> widgetStatus().getInt("count") == 4 && widgetStatus().getInt("lyricSpanCount2") == 1 &&
+            widgetStatus().getInt("lyricSpanEnd2") == 7);
+        Bundle widget = widgetStatus();
+        check(widget.getInt("uid") != Process.myUid() && widget.getInt("lyricSpanColor2") == color,
+            "Karaoke spans did not survive the real widget process boundary");
+        check(widget.getInt("lyricNextSpanCount2") == 0, "A future lyric was colored as current");
+        saveScreenshot("karaoke-release-widget.png");
+        widgetCommand("click", "2:widget_progress");
+        await(() -> activity.hasWindowFocus() && activity.findViewById(id("controls")).isShown());
+        check(pausedAt(7_500), "Opening the widget changed playback");
+        tap(() -> activity.findViewById(id("action_settings")));
+        verifySettingsPage("categoryLyrics", "settingsLyricsPanel");
+        tap(() -> activity.findViewById(id("lyricResetAppearance")));
+        await(() -> !preferences.getBoolean("lyricKaraoke", true) &&
+            preferences.getInt("lyricKaraokeColor", -1) == 0xffd54f);
+        tap(() -> activity.findViewById(id("nav_player")));
+        await(() -> activeLyricText() != null && activeLyricText().isShown() && lyricColorPixels(color) == 0);
+        check(pausedAt(7_500), "Appearance reset changed playback");
+    }
+
+    private TextView activeLyricText() {
+        ViewGroup list = activity.findViewById(id("lyricsList"));
+        if (list == null || !list.isShown()) return null;
+        for (int index = 0; index < list.getChildCount(); index++) {
+            View child = list.getChildAt(index);
+            if (child instanceof TextView && child.isSelected()) return (TextView) child;
+        }
+        return null;
+    }
+
+    private int lyricColorPixels(int color) {
+        TextView row = activeLyricText();
+        if (row == null || row.getWidth() == 0 || row.getHeight() == 0) return 0;
+        android.graphics.Bitmap image = android.graphics.Bitmap.createBitmap(row.getWidth(), row.getHeight(),
+            android.graphics.Bitmap.Config.ARGB_8888);
+        try {
+            row.draw(new android.graphics.Canvas(image));
+            int count = 0;
+            for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
+                if (image.getPixel(x, y) == color) count++;
+            }
+            return count;
+        } finally { image.recycle(); }
     }
 
     private void verifyPlayerUiImprovements() throws Exception {
@@ -793,9 +965,9 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         ActivityMonitor picker = new ActivityMonitor(new IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
             new ActivityResult(Activity.RESULT_OK, new Intent().setData(tree)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)), true);
-        addMonitor(picker);
         try {
             tap(() -> activity.findViewById(id("settingsAddFolder")));
+            chooseAndroidPicker(picker);
             await(() -> new File(getTargetContext().getFilesDir(), "library.json").isFile()
                 && savedLibrary().optJSONArray("tracks") != null && savedLibrary().optJSONArray("tracks").length() == 2
                 && activity.findViewById(id("settingsRemoveAllFolders")).isEnabled());
@@ -924,6 +1096,447 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         return activity;
     }
 
+    private void remoteKey(int code) {
+        long down = SystemClock.uptimeMillis();
+        for (int action : new int[] {KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP})
+            sendKeySync(new KeyEvent(down, SystemClock.uptimeMillis(), action, code, 0, 0,
+                KeyEvent.KEYCODE_UNKNOWN, 0, 0, InputDevice.SOURCE_DPAD));
+        waitForIdleSync();
+    }
+
+    private String focusName(Activity owner) {
+        View focus = owner.getCurrentFocus();
+        if (focus == null) return "none";
+        if (focus.getId() != View.NO_ID) return getTargetContext().getResources().getResourceEntryName(focus.getId());
+        return focus.getClass().getSimpleName() + ":" + focus.getContentDescription();
+    }
+
+    private void verifyRemoteNavigation(Uri tree) throws Exception {
+        StringBuilder trace = new StringBuilder();
+        StringBuilder failures = new StringBuilder();
+        if (activity.getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT) {
+            tap(() -> activity.findViewById(id("action_settings")));
+            verifySettingsPage("categoryGeneral", "settingsGeneralPanel");
+            tap(() -> activity.findViewById(id("settingsLanguage")));
+            tap(() -> windowText(activity.getString(resource("language_chinese", "string"))));
+            await(() -> "zh".equals(activity.getResources().getConfiguration().locale.getLanguage()));
+            tap(() -> activity.findViewById(id("nav_player")));
+            waitForIdleSync();
+        }
+        verifyNavigationLabels();
+        await(() -> controller.getQueue() != null && controller.getQueue().size() == 100);
+        check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING, "Launch must not autoplay");
+        await(() -> !activity.findViewById(id("rewind")).isEnabled() && !activity.findViewById(id("forward")).isEnabled());
+        remoteKey(KeyEvent.KEYCODE_DPAD_UP);
+        onMain(() -> check(activity.findViewById(id("previous")).requestFocus(), "Cannot focus unprepared transport"));
+        remoteKey(KeyEvent.KEYCODE_DPAD_RIGHT);
+        onMain(() -> {
+            trace.append("Unprepared Right -> ").append(focusName(activity)).append('\n');
+            check("play".equals(focusName(activity)), "Disabled seeking must be skipped without blocking Play: " +
+                trace + " rewindFocusable=" + activity.findViewById(id("rewind")).isFocusable() +
+                " rewindEnabled=" + activity.findViewById(id("rewind")).isEnabled());
+        });
+        onMain(() -> controller.getTransportControls().play());
+        await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        onMain(() -> { controller.getTransportControls().pause(); controller.getTransportControls().seekTo(12_000); });
+        await(() -> pausedAt(12_000) && activity.findViewById(id("rewind")).isEnabled()
+            && activity.findViewById(id("forward")).isEnabled());
+        remoteKey(KeyEvent.KEYCODE_DPAD_UP);
+        onMain(() -> {
+            for (String name : new String[] {"shuffle", "previous", "rewind", "play", "forward", "next", "repeat"}) {
+                View button = activity.findViewById(id(name));
+                trace.append(name).append(" enabled=").append(button.isEnabled())
+                    .append(" focusable=").append(button.isFocusable())
+                    .append(" touchFocusable=").append(button.isFocusableInTouchMode()).append('\n');
+            }
+            check(activity.findViewById(id("previous")).requestFocus(), "Cannot start transport focus");
+        });
+        for (String expected : new String[] {"rewind", "play", "forward", "next"}) {
+            remoteKey(KeyEvent.KEYCODE_DPAD_RIGHT);
+            onMain(() -> {
+                String actual = focusName(activity);
+                trace.append("Right -> ").append(actual).append(" expected=").append(expected).append('\n');
+                if (!expected.equals(actual)) failures.append("Transport skips ").append(expected).append("; ");
+            });
+        }
+        if (failures.length() == 0) {
+            remoteKey(KeyEvent.KEYCODE_DPAD_LEFT);
+            remoteKey(KeyEvent.KEYCODE_DPAD_CENTER);
+            await(() -> pausedAt(22_000));
+            remoteKey(KeyEvent.KEYCODE_DPAD_LEFT);
+            remoteKey(KeyEvent.KEYCODE_DPAD_LEFT);
+            remoteKey(KeyEvent.KEYCODE_DPAD_CENTER);
+            await(() -> pausedAt(12_000));
+            saveScreenshot("remote-transport.png");
+        }
+        getTargetContext().getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        onMain(() -> activity.startActivity(new Intent().setClassName(PACKAGE, PACKAGE + ".ui.FileExplorerActivity")
+            .putExtra("explorerMode", "MUSIC_FILE")));
+        await(() -> explorer != null && explorer.hasWindowFocus()
+            && textView(explorer.getWindow().getDecorView(), "Synthetic queue fixture") != null);
+        onMain(() -> {
+            View list = explorer.findViewById(id("explorerList"));
+            View label = textView(list, "Synthetic queue fixture");
+            View row = label;
+            while (row.getParent() != list) row = (View) row.getParent();
+            trace.append("Explorer row clickable=").append(row.isClickable())
+                .append(" focusable=").append(row.isFocusable()).append('\n');
+            check(explorer.findViewById(id("explorerRefresh")).requestFocus(), "Cannot start explorer focus");
+        });
+        remoteKey(KeyEvent.KEYCODE_DPAD_DOWN);
+        boolean[] inside = {false};
+        onMain(() -> {
+            View focus = explorer.getCurrentFocus();
+            View list = explorer.findViewById(id("explorerList"));
+            for (View parent = focus; parent != null && parent != list;
+                parent = parent.getParent() instanceof View ? (View) parent.getParent() : null) {
+                if (parent.getParent() == list) inside[0] = true;
+            }
+            trace.append("Explorer Down -> ").append(focusName(explorer)).append(" rowFocused=").append(inside[0]).append('\n');
+            if (!inside[0]) failures.append("Explorer rows skipped; ");
+        });
+        if (inside[0]) {
+            for (int step = 0; step < 8; step++) {
+                boolean[] chosen = {false};
+                onMain(() -> chosen[0] = textView(explorer.getCurrentFocus(), "Synthetic queue fixture") != null);
+                if (chosen[0]) break;
+                remoteKey(KeyEvent.KEYCODE_DPAD_DOWN);
+            }
+            onMain(() -> check(textView(explorer.getCurrentFocus(), "Synthetic queue fixture") != null,
+                "Remote cannot reach the authorized location"));
+            remoteKey(KeyEvent.KEYCODE_DPAD_CENTER);
+            await(() -> textView(explorer.findViewById(id("explorerList")), "Album") != null);
+            await(() -> textView(explorer.getCurrentFocus(), "Album") != null);
+            onMain(() -> check(textView(explorer.getCurrentFocus(), "Album") != null, "Cannot focus the first folder"));
+            remoteKey(KeyEvent.KEYCODE_DPAD_CENTER);
+            await(() -> textView(explorer.findViewById(id("explorerList")), "02 - Nested.WAV") != null);
+            await(() -> textView(explorer.getCurrentFocus(), "02 - Nested.WAV") != null);
+            check(pausedAt(12_000), "Browsing changed paused playback");
+            saveScreenshot("remote-explorer-folder.png");
+            trace.append("Nested folder/file retained remote focus without returning to toolbar\n");
+            remoteKey(KeyEvent.KEYCODE_BACK);
+            await(() -> textView(explorer.findViewById(id("explorerList")), "Album") != null);
+            await(() -> textView(explorer.getCurrentFocus(), "Album") != null);
+            trace.append("Remote Back returned to parent with focus in the list\n");
+        }
+        File folder = new File(getTargetContext().getExternalFilesDir(null), "test-screenshots");
+        check(folder.isDirectory() || folder.mkdirs(), "Cannot write remote focus trace");
+        try (FileOutputStream output = new FileOutputStream(new File(folder, "remote-focus.txt"))) {
+            output.write(trace.toString().getBytes(StandardCharsets.UTF_8));
+        }
+        onMain(() -> explorer.finish());
+        check(failures.length() == 0, failures.toString());
+    }
+
+    private void verifyFileExplorer(Uri tree, Uri audio) throws Exception {
+        boolean legacy = Build.VERSION.SDK_INT <= 28;
+        File directory = new File(android.os.Environment.getExternalStorageDirectory(), "000-ManaExplorer-optimized");
+        File song = new File(directory, "Native explorer.wav");
+        File backup = new File(directory, "Native backup.zip");
+        ActivityMonitor grant = null;
+        String rootName;
+        if (legacy) {
+            for (String permission : new String[] {
+                "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE"
+            }) {
+                if (Build.VERSION.SDK_INT >= 28) getUiAutomation().grantRuntimePermission(PACKAGE, permission);
+                else try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                    getUiAutomation().executeShellCommand("pm grant " + PACKAGE + " " + permission))) {
+                    check(streamText(input).trim().isEmpty(), "Legacy fixture storage permission failed");
+                }
+            }
+            check(!directory.exists() && directory.mkdir(), "Use a fresh disposable explorer fixture");
+            try (InputStream input = getTargetContext().getContentResolver().openInputStream(audio);
+                 FileOutputStream output = new FileOutputStream(song)) {
+                byte[] bytes = new byte[8192];
+                int count;
+                while ((count = input.read(bytes)) >= 0) output.write(bytes, 0, count);
+            }
+            rootName = activity.getString(resource("device_shared_storage", "string"));
+        } else {
+            Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+            try (android.database.Cursor cursor = getTargetContext().getContentResolver().query(document,
+                new String[] { DocumentsContract.Document.COLUMN_DISPLAY_NAME }, null, null, null)) {
+                check(cursor != null && cursor.moveToFirst(), "Missing SAF fixture folder");
+                rootName = cursor.getString(0);
+            }
+            grant = new ActivityMonitor(new IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
+                new ActivityResult(Activity.RESULT_OK, new Intent().setData(tree).addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)), true);
+        }
+        try {
+            check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING, "Explorer must not autoplay");
+            tap(() -> activity.findViewById(id("nav_folders")));
+            tap(() -> textView(activity.getWindow().getDecorView(), activity.getString(resource("add_folder", "string"))));
+            await(() -> explorer != null && explorer.hasWindowFocus());
+            if (legacy) enterNativeFixture(rootName, directory.getName(), true);
+            else {
+                onMain(() -> check(textView(explorer.getWindow().getDecorView(),
+                    activity.getString(resource("explorer_device_storage", "string"))) == null,
+                    "Scoped Android must not offer raw storage"));
+                addMonitor(grant);
+                tap(() -> textView(explorer.getWindow().getDecorView(),
+                    activity.getString(resource("explorer_add_location", "string"))));
+                tap(() -> textView(explorer.getWindow().getDecorView(), "Album"));
+                removeMonitor(grant);
+            }
+            tap(() -> explorer.findViewById(id("explorerSelect")));
+            await(() -> activity.hasWindowFocus() && savedLibrary().optJSONArray("tracks") != null
+                && savedLibrary().optJSONArray("tracks").length() == 1);
+            check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING,
+                "Adding a native folder started playback");
+            String source = savedLibrary().getJSONArray("sources").getJSONObject(0).getString("uri");
+            check(DocumentsContract.getDocumentId(Uri.parse(source)).endsWith(
+                legacy ? directory.getName() : "music/album"), "Wrong selected subtree");
+            org.json.JSONObject track = savedLibrary().getJSONArray("tracks").getJSONObject(0);
+            check(track.getLong("durationMs") >= 59000, "Native metadata did not read the real WAV");
+            String expectedName = legacy ? song.getName() : "02 - Nested.WAV";
+            onMain(() -> {
+                if (activity.findViewById(id("noticeBar")).isShown())
+                    activity.findViewById(id("dismissNotice")).performClick();
+            });
+            getUiAutomation().waitForIdle(500, 5_000);
+            tap(() -> textView(activity.getWindow().getDecorView(), activity.getString(resource("open_file", "string"))));
+            enterNativeFixture(rootName, legacy ? directory.getName() : "Album", legacy);
+            Activity previous = explorer;
+            onMain(() -> previous.recreate());
+            await(() -> explorer != previous && explorer.hasWindowFocus());
+            tap(() -> textView(explorer.getWindow().getDecorView(), expectedName));
+            await(() -> activity.hasWindowFocus() && controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+            check(controller.getQueue().size() == 1, "Opening a file must play only that file");
+            String selected = controller.getMetadata().getDescription().getMediaId();
+            if (legacy) {
+                check(selected.contains(PACKAGE + ".localdocuments"), "Native storage did not use its content bridge");
+                Uri created = DocumentsContract.createDocument(getTargetContext().getContentResolver(),
+                    Uri.parse(source), "application/zip", backup.getName());
+                check(created != null, "Native backup destination creation failed");
+                try (OutputStream output = getTargetContext().getContentResolver().openOutputStream(created, "wt")) {
+                    output.write("Synthetic native backup".getBytes(StandardCharsets.UTF_8));
+                }
+                check(backup.length() > 0, "Native storage write was not persisted");
+                long songBytes = song.length();
+                boolean allowed = false;
+                try (OutputStream output = getTargetContext().getContentResolver()
+                    .openOutputStream(Uri.parse(track.getString("uri")), "wt")) {
+                    allowed = output != null;
+                } catch (java.io.FileNotFoundException | SecurityException expected) { }
+                check(!allowed && song.length() == songBytes, "The native bridge allowed writing original music");
+            }
+            tap(() -> activity.findViewById(id("nav_folders")));
+            tap(() -> textView(activity.getWindow().getDecorView(), activity.getString(resource("open_file", "string"))));
+            enterNativeFixture(rootName, legacy ? directory.getName() : "Album", legacy);
+            SystemClock.sleep(1200);
+            check(controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+                selected.equals(controller.getMetadata().getDescription().getMediaId()),
+                "Opening or browsing the explorer interrupted playback");
+            saveScreenshot("explorer-release.png");
+            tap(() -> explorer.findViewById(id("explorerCancel")));
+            await(() -> activity.hasWindowFocus());
+        } finally {
+            if (grant != null) removeMonitor(grant);
+            onMain(() -> {
+                if (explorer != null && !explorer.isDestroyed()) explorer.finish();
+                controller.getTransportControls().stop();
+            });
+            if (legacy) {
+                check(!backup.exists() || backup.delete(), "Could not remove the synthetic backup");
+                check(!song.exists() || song.delete(), "Could not remove the synthetic audio");
+                check(!directory.exists() || directory.delete(), "Could not remove the synthetic directory");
+            }
+        }
+    }
+
+    private void enterNativeFixture(String rootName, String folder, boolean legacy) {
+        await(() -> explorer != null && explorer.hasWindowFocus());
+        if (legacy) tap(() -> textView(explorer.getWindow().getDecorView(),
+            activity.getString(resource("explorer_device_storage", "string"))));
+        tap(() -> textView(explorer.getWindow().getDecorView(), rootName));
+        tap(() -> textView(explorer.getWindow().getDecorView(), folder));
+    }
+
+    private void verifyExplorerStorageSimulation(Bundle result) throws Exception {
+        check(Build.VERSION.SDK_INT == 28 && Build.PRODUCT.contains("sdk"),
+            "Storage simulation is restricted to the owned API 28 emulator");
+        check(explorerSimulationRoot != null && explorerSimulationRoot.matches("/storage/[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}") &&
+            explorerSimulationVolume != null && explorerSimulationVolume.matches("public:7,[0-9]+"),
+            "An emulator virtual removable volume must be supplied");
+        check("true".equals(simulationShell("getprop persist.sys.virtual_disk").trim()),
+            "Android virtual-disk mode must be enabled");
+        if (Build.VERSION.SDK_INT >= 28) {
+            getUiAutomation().grantRuntimePermission(PACKAGE, "android.permission.READ_EXTERNAL_STORAGE");
+            getUiAutomation().grantRuntimePermission(PACKAGE, "android.permission.WRITE_EXTERNAL_STORAGE");
+        }
+        File internalRoot = android.os.Environment.getExternalStorageDirectory().getCanonicalFile();
+        File removableRoot = new File(explorerSimulationRoot).getCanonicalFile();
+        android.os.storage.StorageManager storage = (android.os.storage.StorageManager)
+            getTargetContext().getSystemService(android.content.Context.STORAGE_SERVICE);
+        boolean removable = false;
+        if (Build.VERSION.SDK_INT >= 24) {
+            for (android.os.storage.StorageVolume volume : storage.getStorageVolumes()) {
+                if (volume.isRemovable() && removableRoot.getName().equalsIgnoreCase(volume.getUuid()) &&
+                    android.os.Environment.MEDIA_MOUNTED.equals(volume.getState())) removable = true;
+            }
+        }
+        check(removable && removableRoot.canRead(), "The supplied volume is not mounted removable storage");
+        File[] directories = {
+            new File(internalRoot, "000-ManaExplorer-Internal"),
+            new File(removableRoot, "000-ManaExplorer-USB")
+        };
+        String[] labels = {
+            activity.getString(resource("device_shared_storage", "string")),
+            activity.getString(resource("device_storage_volume", "string"), removableRoot.getName())
+        };
+        String[] songs = {"Internal demo.wav", "USB demo.wav"};
+        String[] selected = new String[2];
+        check(!new File(getTargetContext().getFilesDir(), "library.json").exists() ||
+            savedLibrary().optJSONArray("tracks") == null || savedLibrary().getJSONArray("tracks").length() == 0,
+            "Simulation requires an empty disposable app library");
+        for (int index = 0; index < directories.length; index++) {
+            File directory = directories[index];
+            check(directory.isDirectory() && new File(directory, songs[index]).isFile() &&
+                new File(directory, "Album/\u6d88\u9632.wav").isFile() && new File(directory, "notes.txt").isFile(),
+                "Synthetic files must be copied onto both volumes before opening the player: " + directory);
+        }
+        boolean unmounted = false;
+        try {
+            for (int index = 0; index < directories.length; index++) {
+                final int expectedTracks = (index + 1) * 2;
+                final String label = labels[index];
+                final File directory = directories[index];
+                tap(() -> activity.findViewById(id("nav_folders")));
+                tap(() -> textView(activity.getWindow().getDecorView(), activity.getString(resource("add_folder", "string"))));
+                await(() -> explorer != null && explorer.hasWindowFocus());
+                tap(() -> textView(explorer.getWindow().getDecorView(),
+                    activity.getString(resource("explorer_device_storage", "string"))));
+                await(() -> textView(explorer.getWindow().getDecorView(), labels[0]) != null &&
+                    textView(explorer.getWindow().getDecorView(), labels[1]) != null);
+                if (index == 0) saveScreenshot("explorer-sim-01-volumes.png");
+                tap(() -> textView(explorer.getWindow().getDecorView(), label));
+                tap(() -> textView(explorer.getWindow().getDecorView(), directory.getName()));
+                await(() -> textView(explorer.getWindow().getDecorView(), "Album") != null);
+                onMain(() -> check(textView(explorer.getWindow().getDecorView(), "notes.txt") == null,
+                    "Music selection must exclude non-audio files"));
+                org.json.JSONArray imported = new File(getTargetContext().getFilesDir(), "library.json").exists()
+                    ? savedLibrary().optJSONArray("tracks") : null;
+                check((imported == null ? 0 : imported.length()) == index * 2, "Merely browsing imported music");
+                check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING,
+                    "Merely browsing started playback");
+                saveScreenshot(index == 0 ? "explorer-sim-02-internal.png" : "explorer-sim-03-usb.png");
+                tap(() -> explorer.findViewById(id("explorerSelect")));
+                await(() -> activity.hasWindowFocus() && savedLibrary().optJSONArray("tracks") != null &&
+                    savedLibrary().optJSONArray("tracks").length() == expectedTracks);
+                check(savedLibrary().getJSONArray("sources").length() == index + 1,
+                    "The selected folder was not retained");
+                check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING,
+                    "Folder import must remain paused");
+                await(() -> textView(activity.getWindow().getDecorView(),
+                    activity.getString(resource("cancel_scan", "string"))) == null);
+                onMain(() -> {
+                    if (activity.findViewById(id("noticeBar")).isShown())
+                        activity.findViewById(id("dismissNotice")).performClick();
+                });
+                getUiAutomation().waitForIdle(500, 5_000);
+            }
+            org.json.JSONArray tracks = savedLibrary().getJSONArray("tracks");
+            for (int index = 0; index < tracks.length(); index++) {
+                org.json.JSONObject track = tracks.getJSONObject(index);
+                check(track.getLong("durationMs") >= 59_000 && track.getLong("durationMs") <= 61_000,
+                    "Real audio metadata was not read");
+                check(track.getString("uri").contains(PACKAGE + ".localdocuments"),
+                    "Playback references must use the app's content-URI bridge");
+                for (int volume = 0; volume < songs.length; volume++) {
+                    if (songs[volume].equals(track.getString("fileName"))) selected[volume] = track.getString("id");
+                }
+            }
+            check(selected[0] != null && selected[1] != null, "Both source songs must be imported");
+            tap(() -> textView(activity.getWindow().getDecorView(), activity.getString(resource("up_folder", "string"))));
+            await(() -> textView(activity.getWindow().getDecorView(),
+                activity.getString(resource("play_selected_folders", "string"))) != null);
+            saveScreenshot("explorer-sim-04-both-folders.png");
+            tap(() -> textView(activity.getWindow().getDecorView(),
+                activity.getString(resource("play_selected_folders", "string"))));
+            await(() -> controller.getQueue() != null && controller.getQueue().size() == 4 &&
+                controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+            result.putInt("mixedFolderQueueSize", controller.getQueue().size());
+            for (int index = 0; index < directories.length; index++) {
+                final String song = songs[index];
+                final String mediaId = selected[index];
+                browseSimulationFolder(labels[index], directories[index]);
+                await(() -> textView(explorer.getWindow().getDecorView(), song) != null);
+                onMain(() -> check(textView(explorer.getWindow().getDecorView(), "notes.txt") == null,
+                    "Open file must show music, not unrelated documents"));
+                saveScreenshot(index == 0 ? "explorer-sim-05-internal-files.png" : "explorer-sim-06-usb-files.png");
+                tap(() -> textView(explorer.getWindow().getDecorView(), song));
+                await(() -> activity.hasWindowFocus() && controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+                    mediaId.equals(controller.getMetadata().getDescription().getMediaId()));
+                check(controller.getQueue().size() == 1, "Opening one file must not enqueue the entire folder");
+                saveScreenshot(index == 0 ? "explorer-sim-05-internal-playing.png" : "explorer-sim-06-usb-playing.png");
+            }
+            browseSimulationFolder(labels[0], directories[0]);
+            tap(() -> textView(explorer.getWindow().getDecorView(), songs[0]));
+            await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+                selected[0].equals(controller.getMetadata().getDescription().getMediaId()));
+            browseSimulationFolder(labels[1], directories[1]);
+            await(() -> textView(explorer.getWindow().getDecorView(), songs[1]) != null);
+            check(simulationShell("sm unmount " + explorerSimulationVolume).trim().isEmpty(),
+                "Virtual-volume unmount failed");
+            unmounted = true;
+            await(() -> !directories[1].isDirectory());
+            tap(() -> explorer.findViewById(id("explorerRefresh")));
+            await(() -> !explorer.findViewById(id("explorerProgress")).isShown() &&
+                ((TextView) explorer.findViewById(id("explorerStatus"))).getText().length() > 0);
+            onMain(() -> result.putString("unmountedMessage",
+                ((TextView) explorer.findViewById(id("explorerStatus"))).getText().toString()));
+            check(!activity.getString(resource("explorer_empty", "string")).equals(result.getString("unmountedMessage")),
+                "Unavailable storage must not be presented as an ordinary empty folder");
+            check(savedLibrary().getJSONArray("tracks").length() == 4 &&
+                savedLibrary().getJSONArray("sources").length() == 2, "Unavailable storage erased saved music");
+            check(controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+                selected[0].equals(controller.getMetadata().getDescription().getMediaId()),
+                "Removing the virtual USB volume interrupted internal playback");
+            saveScreenshot("explorer-sim-07-usb-unmounted.png");
+            check(simulationShell("sm mount " + explorerSimulationVolume).trim().isEmpty(),
+                "Virtual-volume remount failed");
+            await(() -> directories[1].isDirectory());
+            unmounted = false;
+            tap(() -> explorer.findViewById(id("explorerRefresh")));
+            await(() -> textView(explorer.getWindow().getDecorView(), songs[1]) != null);
+            saveScreenshot("explorer-sim-08-usb-reconnected.png");
+            tap(() -> textView(explorer.getWindow().getDecorView(), songs[1]));
+            await(() -> activity.hasWindowFocus() && controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+                selected[1].equals(controller.getMetadata().getDescription().getMediaId()));
+            check(savedLibrary().getJSONArray("tracks").length() == 4, "Reconnect duplicated saved music");
+            result.putString("internalRoot", internalRoot.getPath());
+            result.putString("removableRoot", removableRoot.getPath());
+            result.putString("removableVolume", explorerSimulationVolume);
+            result.putBoolean("removableRootWritableWithStoragePermission", removableRoot.canWrite());
+            result.putInt("savedSources", savedLibrary().getJSONArray("sources").length());
+            result.putInt("savedTracks", savedLibrary().getJSONArray("tracks").length());
+            result.putBoolean("internalPlaybackSurvivedEject", true);
+            result.putBoolean("remountedPlayback", true);
+        } finally {
+            onMain(() -> {
+                if (explorer != null && !explorer.isDestroyed()) explorer.finish();
+                controller.getTransportControls().stop();
+            });
+            if (unmounted) check(simulationShell("sm mount " + explorerSimulationVolume).trim().isEmpty(),
+                "Could not restore the virtual volume after the simulation");
+        }
+    }
+
+    private void browseSimulationFolder(String rootName, File directory) {
+        tap(() -> activity.findViewById(id("nav_folders")));
+        tap(() -> textView(activity.getWindow().getDecorView(), activity.getString(resource("open_file", "string"))));
+        enterNativeFixture(rootName, directory.getName(), true);
+    }
+
+    private String simulationShell(String command) throws IOException {
+        try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+            getUiAutomation().executeShellCommand(command))) {
+            return streamText(input);
+        }
+    }
+
     private boolean offers(Intent intent) {
         return !getTargetContext().getPackageManager().queryIntentActivities(
             intent.setPackage(PACKAGE), PackageManager.MATCH_DEFAULT_ONLY).isEmpty();
@@ -968,6 +1581,8 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         check((controller.getPlaybackState().getActions() & PlaybackState.ACTION_SKIP_TO_NEXT) != 0,
             "Next command missing for a two-song queue");
         check(controller.getPlaybackState().getCustomActions().size() == 2, "Native seek commands missing");
+        onMain(() -> controller.getTransportControls().skipToQueueItem(controller.getQueue().get(0).getQueueId()));
+        await(() -> first.equals(controller.getMetadata().getDescription().getMediaId()));
         check(getUiAutomation().performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS), "Could not open shade");
         clickSystemButton(activity.getString(resource("pause", "string")));
         await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PAUSED);
@@ -1021,12 +1636,16 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         return null;
     }
 
-    private AccessibilityNodeInfo systemButton(AccessibilityNodeInfo node, String label) {
+    private boolean systemButtonLabel(AccessibilityNodeInfo node, String label) {
         CharSequence description = node.getContentDescription() == null ? node.getText() : node.getContentDescription();
         String text = description == null ? "" : description.toString();
-        if (node.isClickable() && (text.equalsIgnoreCase(label)
+        return text.equalsIgnoreCase(label)
             || text.toLowerCase(java.util.Locale.ROOT).startsWith(label.toLowerCase(java.util.Locale.ROOT) + " ")
-            || label.toLowerCase(java.util.Locale.ROOT).startsWith(text.toLowerCase(java.util.Locale.ROOT) + " "))) return node;
+            || label.toLowerCase(java.util.Locale.ROOT).startsWith(text.toLowerCase(java.util.Locale.ROOT) + " ");
+    }
+
+    private AccessibilityNodeInfo systemButton(AccessibilityNodeInfo node, String label) {
+        if (node.isClickable() && node.isVisibleToUser() && node.isEnabled() && systemButtonLabel(node, label)) return node;
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo child = node.getChild(i);
             AccessibilityNodeInfo found = child == null ? null : systemButton(child, label);
@@ -1036,19 +1655,49 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
     }
 
     private void clickSystemButton(String label) throws Exception {
+        android.accessibilityservice.AccessibilityServiceInfo service = getUiAutomation().getServiceInfo();
+        service.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
+            android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
+        getUiAutomation().setServiceInfo(service);
         long deadline = SystemClock.uptimeMillis() + 15_000;
         do {
-            AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow();
-            if (root != null && "com.android.systemui".equals(String.valueOf(root.getPackageName())) && root.refresh()) {
-                AccessibilityNodeInfo button = systemButton(root, label);
-                if (button != null && button.refresh() && button.isVisibleToUser() && button.isEnabled()
-                    && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
-                if (button != null) button.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+            java.util.List<AccessibilityNodeInfo> roots = new java.util.ArrayList<>();
+            roots.add(getUiAutomation().getRootInActiveWindow());
+            for (android.view.accessibility.AccessibilityWindowInfo window : getUiAutomation().getWindows())
+                roots.add(window.getRoot());
+            for (AccessibilityNodeInfo root : roots) {
+                if (root != null && "com.android.systemui".equals(String.valueOf(root.getPackageName())) && root.refresh()) {
+                    AccessibilityNodeInfo button = systemButton(root, label);
+                    if (button != null && button.refresh() && button.isVisibleToUser() && button.isEnabled()
+                        && systemButtonLabel(button, label)) {
+                        android.util.Log.i("OptimizedSmokeSystem", label + ": " + button.getViewIdResourceName() +
+                            " / " + button.getContentDescription());
+                        if (button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
+                    }
+                    if (button != null) button.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+                }
             }
             Thread.sleep(100);
         } while (SystemClock.uptimeMillis() < deadline);
         saveScreenshot("system-release-shade.png");
+        StringBuilder nodes = new StringBuilder();
+        for (android.view.accessibility.AccessibilityWindowInfo window : getUiAutomation().getWindows())
+            describeSystemNode(window.getRoot(), nodes, 0);
+        File report = new File(getTargetContext().getExternalFilesDir(null), "test-screenshots/system-ui-nodes.txt");
+        try (FileOutputStream output = new FileOutputStream(report)) {
+            output.write(nodes.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
         throw new AssertionError("System media button unavailable: " + label);
+    }
+
+    private void describeSystemNode(AccessibilityNodeInfo node, StringBuilder output, int depth) {
+        if (node == null || depth > 40) return;
+        output.append(depth).append(' ').append(node.getViewIdResourceName()).append(" text=")
+            .append(node.getText()).append(" description=").append(node.getContentDescription())
+            .append(" clickable=").append(node.isClickable()).append(" visible=").append(node.isVisibleToUser())
+            .append(" enabled=").append(node.isEnabled()).append('\n');
+        for (int index = 0; index < node.getChildCount(); index++)
+            describeSystemNode(node.getChild(index), output, depth + 1);
     }
 
     private void saveScreenshot(String name) throws Exception {
@@ -1114,9 +1763,9 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         ActivityMonitor musicPicker = new ActivityMonitor(new IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
             new ActivityResult(Activity.RESULT_OK, new Intent().setData(music).addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)), true);
-        addMonitor(musicPicker);
         try {
             tap(() -> activity.findViewById(id("settingsAddFolder")));
+            chooseAndroidPicker(musicPicker);
             await(() -> new File(getTargetContext().getFilesDir(), "library.json").isFile() &&
                 savedLibrary().optJSONArray("sources") != null &&
                 savedLibrary().optJSONArray("sources").length() == 1);
@@ -1237,12 +1886,12 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             new ActivityResult(Activity.RESULT_OK, new Intent().setData(cacheTree).addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)), true);
-        addMonitor(cachePicker);
         try {
             tap(() -> activity.findViewById(id("action_settings")));
             verifySettingsPage("categoryLyrics", "settingsLyricsPanel");
             tap(() -> activity.findViewById(id("lyricsCacheMove")));
             clickDialogAction("lyrics_cache_choose");
+            chooseAndroidPicker(cachePicker);
             await(() -> !recordFile.exists() && activity.findViewById(id("lyricsCacheMove")).isEnabled());
             org.json.JSONObject location = new org.json.JSONObject(
                 getTargetContext().getSharedPreferences("lyric_cache", 0).getString("folder", ""));
@@ -1709,10 +2358,10 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION;
         ActivityMonitor picker = new ActivityMonitor(new IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
             new ActivityResult(Activity.RESULT_OK, new Intent().setData(tree).addFlags(flags)), true);
-        addMonitor(picker);
         try {
             tap(() -> activity.findViewById(id("lyricsCacheMove")));
             clickDialogAction("lyrics_cache_choose");
+            chooseAndroidPicker(picker);
             await(() -> getTargetContext().getSharedPreferences("lyric_cache", 0).getString("folder", null) != null
                 && activity.findViewById(id("lyricsCacheMove")).isEnabled());
             check(picker.getHits() == 1 && !cached.exists(), "Internal cache was not moved");
@@ -1879,12 +2528,11 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         open.addDataType("*/*");
         ActivityMonitor save = new ActivityMonitor(create, new ActivityResult(Activity.RESULT_OK, new Intent().setData(uri)), true);
         ActivityMonitor restore = new ActivityMonitor(open, new ActivityResult(Activity.RESULT_OK, new Intent().setData(uri)), true);
-        addMonitor(save);
-        addMonitor(restore);
         try {
             tap(() -> activity.findViewById(id("action_settings")));
             tap(() -> activity.findViewById(id("categoryGeneral")));
             tap(() -> activity.findViewById(id("settingsBackup")));
+            chooseAndroidPicker(save);
             await(() -> backup.isFile() && backup.length() > 0
                 && activity.findViewById(id("settingsBackup")).isEnabled());
             try (ZipFile zip = new ZipFile(backup); InputStream input = zip.getInputStream(zip.getEntry("manifest.json"))) {
@@ -1895,6 +2543,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             tap(() -> activity.findViewById(id("settingsControlBlocks")));
             await(() -> getTargetContext().getSharedPreferences("settings", 0).getBoolean("controlBlocks", false));
             tap(() -> activity.findViewById(id("settingsRestore")));
+            chooseAndroidPicker(restore);
             Target confirmRestore = () -> {
                 for (Object root : windowRoots()) {
                     if (!(root instanceof View) || root == activity.getWindow().getDecorView()) continue;
@@ -1922,14 +2571,26 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         return list == null || list.getChildCount() == 0 ? null : list.getChildAt(0);
     }
 
+    private void chooseAndroidPicker(ActivityMonitor picker) throws Exception {
+        await(() -> explorer != null && explorer.hasWindowFocus());
+        Activity selecting = explorer;
+        // An action-only IntentFilter also matches the native activity's null action.
+        addMonitor(picker);
+        try {
+            tap(() -> selecting.findViewById(id("explorerAndroidPicker")));
+            await(() -> selecting.isFinishing() || selecting.isDestroyed());
+            check(picker.getHits() == 1, "The Android picker must receive exactly one selection request");
+        } finally { removeMonitor(picker); }
+    }
+
     private void verifyBulkFolderRemoval(Uri tree) throws Exception {
         ActivityMonitor picker = new ActivityMonitor(new IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
             new ActivityResult(Activity.RESULT_OK, new Intent().setData(tree)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)), true);
-        addMonitor(picker);
         try {
             tap(() -> activity.findViewById(id("categoryFolders")));
             tap(() -> activity.findViewById(id("settingsAddFolder")));
+            chooseAndroidPicker(picker);
             await(() -> savedLibrary().optJSONArray("sources") != null
                 && savedLibrary().optJSONArray("sources").length() == 1
                 && activity.findViewById(id("settingsRemoveAllFolders")).isEnabled());
@@ -1970,7 +2631,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         await(() -> dialogButton(text) != null);
         onMain(() -> check(dialogButton(text).performClick(), "Dialog must handle " + text));
         waitForIdleSync();
-        await(() -> activity.hasWindowFocus());
+        await(() -> activity.hasWindowFocus() || explorer != null && explorer.hasWindowFocus());
     }
 
     private View dialogButton(String text) {
@@ -2074,6 +2735,18 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
                 LinearLayout button = activity.findViewById(id(name));
                 View icon = button.getChildAt(0);
                 TextView label = (TextView) button.getChildAt(1);
+                float scale = button.isSelected() ? 1.2f : 1f;
+                float density = activity.getResources().getDisplayMetrics().density;
+                check(icon.getWidth() == Math.round((int) (24 * density) * scale),
+                    name + " selected icon must use 120% sizing");
+                float expectedText = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,
+                    12 * scale, activity.getResources().getDisplayMetrics());
+                check(Math.abs(label.getTextSize() - expectedText) < 0.05f, name + " selected text must use 120% sizing");
+                if ("zh".equals(activity.getResources().getConfiguration().locale.getLanguage())) {
+                    String expected = "nav_player".equals(name) ? "播放" :
+                        "nav_library".equals(name) ? "乐库" : "nav_queue".equals(name) ? "队列" : null;
+                    if (expected != null) check(expected.contentEquals(label.getText()), "Wrong short Chinese tab: " + name);
+                }
                 check(button.getOrientation() == (besideIcons ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL),
                     name + " must arrange its icon and text for dock " + position + " and the screen orientation");
                 check(label.isShown(), name + " must show its label");

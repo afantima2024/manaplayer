@@ -36,13 +36,17 @@ import org.hamcrest.Matchers.containsString
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.macarmusic.app.data.LibraryCodec
+import com.macarmusic.app.data.LegacyStorage
 import com.macarmusic.app.data.MediaStoreAccess
 import com.macarmusic.app.model.Library
+import com.macarmusic.app.model.ExplorerMode
 import com.macarmusic.app.model.LibraryEdits
 import com.macarmusic.app.model.LoopMode
 import com.macarmusic.app.model.PlaybackSnapshot
 import com.macarmusic.app.playback.PlaybackService
 import com.macarmusic.app.ui.DocumentPicker
+import com.macarmusic.app.ui.FileExplorerActivity
+import com.macarmusic.app.ui.FileExplorerViewModel
 import com.macarmusic.app.ui.MainActivity
 import com.macarmusic.app.ui.ListPanel
 import com.macarmusic.app.ui.MusicRowAdapter
@@ -146,6 +150,38 @@ class StorageCompatibilityTest {
         )) assertNull(uri, MediaStoreAccess.folder(Uri.parse(uri)))
     }
 
+    @Test fun nativeCacheExplorerRequestsStorageOnlyOnChoiceAndRecoversAfterDenial() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("nativeExplorerPermission") == "true")
+        assumeTrue(LegacyStorage.available())
+        val before = app.repository.library.value
+        assertFalse("Revoke both legacy permissions before this check", LegacyStorage.permitted(app))
+        assertFalse(LegacyStorage.permitted(app, true))
+        ActivityScenario.launch<FileExplorerActivity>(
+            FileExplorerActivity.intent(app, ExplorerMode.LYRIC_CACHE)).use { scenario ->
+            lateinit var model: FileExplorerViewModel
+            scenario.onActivity { model = ViewModelProvider(it)[FileExplorerViewModel::class.java] }
+            await { !model.state.value.loading }
+            assertTrue(model.state.value.path.isEmpty())
+            assertFalse(LegacyStorage.permitted(app, true))
+            onView(withText(R.string.explorer_device_storage)).perform(click())
+            onView(withText(R.string.explorer_allow_storage)).inRoot(isDialog()).perform(click())
+            permissionButton("permission_deny_button")
+            await { model.state.value.error == app.text(R.string.explorer_permission_denied) }
+            assertTrue(model.state.value.path.isEmpty())
+            assertEquals(before, app.repository.library.value)
+            onView(withText(R.string.explorer_device_storage)).perform(click())
+            onView(withText(R.string.explorer_allow_storage)).inRoot(isDialog()).perform(click())
+            permissionButton("permission_allow_button")
+            await { LegacyStorage.permitted(app, true) && !model.state.value.loading &&
+                model.state.value.path.isNotEmpty() }
+            assertNull(model.state.value.error)
+            onView(withText(R.string.device_shared_storage)).perform(click())
+            await { !model.state.value.loading && model.state.value.canSelectFolder }
+            assertEquals(before, app.repository.library.value)
+            screenshot("native-storage-permission-restored")
+        }
+    }
+
     @Test fun pickerlessDeviceRequestsAudioOnlyOnChoiceThenBrowsesScansAndPlaysSavedFolders() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("pickerless") == "true")
         assertFalse("Run on a fresh emulator or revoke audio permission before this test", app.repository.documents.deviceMusic.hasPermission())
@@ -165,9 +201,12 @@ class StorageCompatibilityTest {
             scenario.onActivity { assertNull(model!!.deviceMusic.value) }
             onView(withId(R.id.nav_folders)).perform(click())
             onView(withText(R.string.add_folder)).perform(click())
-            onView(withText(R.string.folder_picker_missing)).inRoot(isDialog()).check(matches(isDisplayed()))
+            onView(withId(R.id.explorerAndroidPicker)).perform(click())
+            onView(withId(R.id.explorerStatus)).check(matches(withText(R.string.picker_missing)))
             screenshot("pickerless-folder-alternative")
-            onView(withText(R.string.device_music)).inRoot(isDialog()).perform(click())
+            onView(withId(R.id.explorerCancel)).perform(click())
+            instrumentation.uiAutomation.waitForIdle(500, 5_000)
+            onView(withText(R.string.device_music)).perform(scrollTo(), click())
             onView(withText(R.string.allow_music_access)).inRoot(isDialog()).perform(click())
             permissionButton("permission_deny_button")
             await { app.notice.value?.text == app.text(R.string.music_permission_denied) }
@@ -276,7 +315,7 @@ class StorageCompatibilityTest {
             ActivityScenario.launch(MainActivity::class.java).use {
                 onView(withId(R.id.nav_folders)).perform(click())
                 onView(withText(R.string.open_file)).perform(scrollTo(), click())
-                onView(withText(R.string.android_file_picker)).inRoot(isDialog()).perform(click())
+                onView(withId(R.id.explorerAndroidPicker)).perform(click())
                 val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
                 val controller = future.get(20, TimeUnit.SECONDS)
                 try {
@@ -296,7 +335,7 @@ class StorageCompatibilityTest {
         }
     }
 
-    @Test fun indexedBrowseSavesOnlyAShortcutUntilOneFileIsPlayed() {
+    @Test fun indexedBrowseDoesNotImportUntilOneFileIsPlayed() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("indexedEnhancements") == "true")
         grantAudioPermission()
         runBlocking { app.repository.update { Library() } }
@@ -304,18 +343,12 @@ class StorageCompatibilityTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             onView(withId(R.id.nav_folders)).perform(click())
             onView(withText(R.string.open_file)).perform(scrollTo(), click())
-            onView(withText(R.string.device_music_browse)).inRoot(isDialog()).perform(click())
-            lateinit var model: MusicViewModel
-            scenario.onActivity { model = ViewModelProvider(it)[MusicViewModel::class.java] }
-            await { model.deviceMusic.value?.loading == false }
-            assertTrue(model.deviceMusic.value!!.browse)
+            onView(withText(R.string.device_music)).perform(click())
             val source = app.repository.documents.deviceMusic.source(rootFolder)
-            onData(equalTo(source.name)).inRoot(isDialog()).perform(click())
-            await { model.browser.value.path.lastOrNull()?.sourceUri == source.uri &&
-                app.repository.library.value.sources.size == 1 }
+            clickExplorerRow(source.name)
             assertTrue("Browsing must not import all songs", app.repository.library.value.tracks.isEmpty())
-            assertEquals(0, app.repository.library.value.sources.single().lastScanMs)
-            clickBrowserRow(scenario, "Indexed fixture 0.wav")
+            assertTrue("A cancelled picker must not add folder references", app.repository.library.value.sources.isEmpty())
+            clickExplorerRow("Indexed fixture 0.wav")
             val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
             val controller = future.get(20, TimeUnit.SECONDS)
             try {
@@ -325,6 +358,7 @@ class StorageCompatibilityTest {
                 assertEquals(song.id, onMainResult { controller.currentMediaItem!!.mediaId })
                 assertEquals(1, onMainResult { controller.mediaItemCount })
                 assertFalse("A single file still reads full tags", song.metadataFromIndex)
+                assertTrue(song.standalonePersisted)
                 screenshot("indexed-browse-single-file")
             } finally {
                 onMain { controller.pause(); MediaController.releaseFuture(future) }
@@ -438,6 +472,24 @@ class StorageCompatibilityTest {
         ).use { assertEquals("", it.bufferedReader().readText().trim()) }
     }
 
+    private fun clickExplorerRow(name: String) {
+        val activity = onMainResult {
+            androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
+                .filterIsInstance<FileExplorerActivity>().single()
+        }
+        val model = onMainResult { ViewModelProvider(activity)[FileExplorerViewModel::class.java] }
+        await { !model.state.value.loading }
+        val position = model.state.value.items.indexOfFirst { it.name == name }
+        assertTrue("Missing explorer entry $name", position >= 0)
+        val list = onMainResult { activity.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.explorerList) }
+        await { onMainResult { list.adapter!!.itemCount == model.state.value.items.size && !list.hasPendingAdapterUpdates() } }
+        onMain { (list.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(position, 0) }
+        await { onMainResult { list.findViewHolderForAdapterPosition(position) != null } }
+        onMain { assertTrue(list.findViewHolderForAdapterPosition(position)!!.itemView.performClick()) }
+        instrumentation.waitForIdleSync()
+    }
+
     @Test fun ordinaryFileManagerFallbackAlsoImportsPrivateBackgroundPictures() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("pickerless") == "true")
         val image = DocumentsContract.buildDocumentUri("com.macarmusic.app.test.documents", "pictures/background")
@@ -453,6 +505,7 @@ class StorageCompatibilityTest {
                 onView(withId(R.id.action_settings)).perform(click())
                 val previous = app.displaySettings.options.value.imageVersion
                 onView(withId(R.id.settingsBackgroundImage)).perform(scrollTo(), click())
+                onView(withId(R.id.explorerAndroidPicker)).perform(click())
                 await { app.displaySettings.options.value.imageVersion > previous }
                 assertEquals(1, monitor.hits)
                 assertEquals(1, app.displaySettings.options.value.backgroundImages.size)
@@ -506,10 +559,11 @@ class StorageCompatibilityTest {
                 assertNotEquals(saved.sources.first().name, label)
                 onView(withText(label)).check(matches(isDisplayed()))
                 onView(withText(R.string.add_folder)).perform(click())
-                onView(withText("系统文件夹选择器不可用")).inRoot(isDialog()).check(matches(isDisplayed()))
-                onView(withText("设备音乐")).inRoot(isDialog()).check(matches(isDisplayed()))
+                onView(withId(R.id.explorerAndroidPicker)).perform(click())
+                onView(withId(R.id.explorerStatus)).check(matches(withText(R.string.picker_missing)))
                 screenshot("pickerless-chinese-alternative")
-                onView(withText(R.string.cancel)).inRoot(isDialog()).perform(click())
+                onView(withId(R.id.explorerCancel)).perform(click())
+                onView(withText("设备音乐")).check(matches(isDisplayed()))
             }
         } finally {
             language("en")
@@ -541,9 +595,11 @@ class StorageCompatibilityTest {
             onView(withId(R.id.categoryFolders)).perform(scrollTo(), click())
             onView(withId(R.id.settingsDeviceMusic)).perform(scrollTo())
             onView(withId(R.id.settingsDeviceMusic)).check(matches(isDisplayed()))
-            onView(withId(R.id.categoryAbout)).perform(scrollTo(), click())
-            onView(withId(R.id.aboutBody)).check(matches(
-                withText(containsString("Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"))))
+            onView(withId(R.id.categoryGeneral)).perform(scrollTo(), click())
+            onView(withId(R.id.settingsSystemInfo)).perform(scrollTo(), click())
+            onView(withText(containsString("API level (reported): ${Build.VERSION.SDK_INT}")))
+                .inRoot(isDialog()).check(matches(isDisplayed()))
+            onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
         }
     }
 

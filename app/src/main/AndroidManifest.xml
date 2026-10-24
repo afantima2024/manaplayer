@@ -7,9 +7,11 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
-    <!-- Requested only for picker-independent access to Android's indexed audio library. -->
+    <!-- Indexed audio, or on Android 6-9 only, user-invoked shared-storage browsing. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- Requested only when selecting a legacy lyric-cache or backup destination. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <application
         android:name=".MaCarMusicApp"
@@ -49,6 +51,10 @@
                 <data android:mimeType="application/ogg" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".ui.FileExplorerActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
         <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false"
@@ -112,6 +118,16 @@
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_play_info" />
         </receiver>
+        <provider
+            android:name=".data.LocalDocumentsProvider"
+            android:authorities="${applicationId}.localdocuments"
+            android:exported="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS"
+            android:grantUriPermissions="true">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.backups"

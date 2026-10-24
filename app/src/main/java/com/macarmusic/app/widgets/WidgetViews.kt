@@ -7,6 +7,9 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.util.TypedValue
 import android.view.ContextThemeWrapper
 import android.view.View
@@ -15,6 +18,9 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.graphics.ColorUtils
 import com.macarmusic.app.R
 import com.macarmusic.app.data.DisplayOptions
+import com.macarmusic.app.lyrics.LyricKaraoke
+import com.macarmusic.app.lyrics.Lyrics
+import com.macarmusic.app.model.LyricAppearance
 import com.macarmusic.app.model.WidgetPlayback
 import com.macarmusic.app.model.WidgetPresentation
 import com.macarmusic.app.ui.MainActivity
@@ -23,7 +29,7 @@ import com.macarmusic.app.ui.TimeText
 
 object WidgetViews {
     fun full(context: Context, kind: HomeWidgetKind, id: Int, state: WidgetPlayback,
-        cover: Bitmap?, lyric: String, display: DisplayOptions = DisplayOptions()): RemoteViews = RemoteViews(context.packageName, kind.layout).apply {
+        cover: Bitmap?, lyric: CharSequence, display: DisplayOptions = DisplayOptions()): RemoteViews = RemoteViews(context.packageName, kind.layout).apply {
         setInt(R.id.widget_background, "setImageAlpha", WidgetPresentation.backgroundAlpha(display.widgetTransparency))
         val open = openPlayer(context)
         setOnClickPendingIntent(R.id.widget_root, open)
@@ -88,15 +94,36 @@ object WidgetViews {
         views.setTextViewTextSize(R.id.widget_lyric_next, TypedValue.COMPLEX_UNIT_SP, appearance.otherSizeSp.toFloat())
     }
 
-    fun dynamic(context: Context, kind: HomeWidgetKind, state: WidgetPlayback, lyric: String): RemoteViews =
+    fun dynamic(context: Context, kind: HomeWidgetKind, state: WidgetPlayback, lyric: CharSequence): RemoteViews =
         RemoteViews(context.packageName, kind.layout).apply {
             progress(context, this, state)
             if (kind == HomeWidgetKind.LYRICS) lyrics(this, lyric)
         }
 
-    private fun lyrics(views: RemoteViews, text: String) {
-        val next = text.substringAfter('\n', "")
-        views.setTextViewText(R.id.widget_lyric, text.substringBefore('\n'))
+    internal fun karaokeLyric(text: String, lyrics: Lyrics?, positionMs: Long, durationMs: Long,
+        appearance: LyricAppearance): CharSequence {
+        if (!appearance.karaoke || lyrics == null) return text
+        val index = lyrics.activeLine(positionMs)
+        val active = lyrics.lines.getOrNull(index) ?: return text
+        val fraction = LyricKaraoke.fraction(active.timeMs, LyricKaraoke.endMs(lyrics, index, durationMs), positionMs)
+        if (fraction <= 0f || active.text.isBlank()) return text
+        val currentLines = active.text.lineSequence().filter(String::isNotBlank).take(2).count()
+        val result = SpannableString(text)
+        var start = 0
+        repeat(currentLines) {
+            val end = text.indexOf('\n', start).takeIf { it >= 0 } ?: text.length
+            val covered = LyricKaraoke.prefixLength(text.substring(start, end), fraction)
+            if (covered > 0) result.setSpan(ForegroundColorSpan(appearance.karaokeColor or Color.BLACK),
+                start, start + covered, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            start = end + 1
+        }
+        return result
+    }
+
+    private fun lyrics(views: RemoteViews, text: CharSequence) {
+        val split = text.indexOf('\n')
+        val next = if (split >= 0) text.subSequence(split + 1, text.length) else ""
+        views.setTextViewText(R.id.widget_lyric, if (split >= 0) text.subSequence(0, split) else text)
         views.setTextViewText(R.id.widget_lyric_next, next)
         views.setViewVisibility(R.id.widget_lyric_next, if (next.isEmpty()) View.GONE else View.VISIBLE)
     }

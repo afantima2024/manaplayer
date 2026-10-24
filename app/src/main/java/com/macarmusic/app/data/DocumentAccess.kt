@@ -6,6 +6,8 @@ import android.annotation.SuppressLint
 import android.database.Cursor
 import android.net.Uri
 import android.os.Build
+import android.os.CancellationSignal
+import android.os.OperationCanceledException
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.provider.MediaStore
@@ -18,8 +20,13 @@ import com.macarmusic.app.model.Track
 import com.macarmusic.app.lyrics.LyricFiles
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.Locale
+import kotlin.coroutines.resume
 
 class DocumentAccess(private val context: Context) {
     private val resolver = context.contentResolver
@@ -90,7 +97,7 @@ class DocumentAccess(private val context: Context) {
 
     fun rootId(sourceUri: String): String {
         val uri = Uri.parse(sourceUri)
-        return MediaStoreAccess.folder(uri)?.path ?: DocumentsContract.getTreeDocumentId(uri)
+        return MediaStoreAccess.folder(uri)?.path ?: DocumentUris.rootId(uri)
     }
 
     fun identity(uri: Uri): String {
@@ -102,12 +109,15 @@ class DocumentAccess(private val context: Context) {
 
     fun retainReadPermission(uri: Uri, resultFlags: Int): Boolean {
         requireContentUri(uri)
-        if (resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }) return true
+        if (LegacyStorage.owns(context, uri)) return LegacyStorage.permitted(context)
+        if (MediaStoreAccess.isAudioFile(uri) && deviceMusic.hasPermission()) return true
+        val grant = DocumentUris.grant(uri)
+        if (resolver.persistedUriPermissions.any { it.uri == grant && it.isReadPermission }) return true
         if (resultFlags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION == 0 ||
             resultFlags and Intent.FLAG_GRANT_READ_URI_PERMISSION == 0
         ) return false
         return try {
-            resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            resolver.takePersistableUriPermission(grant, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             true
         } catch (error: SecurityException) {
             Log.w(TAG, "Provider did not retain a read grant", error)
@@ -118,7 +128,7 @@ class DocumentAccess(private val context: Context) {
     fun source(uri: Uri, resultFlags: Int): FolderSource {
         requireContentUri(uri)
         MediaStoreAccess.folder(uri)?.let { return deviceMusic.source(it) }
-        val treeId = DocumentsContract.getTreeDocumentId(uri)
+        val treeId = DocumentUris.rootId(uri)
         val persisted = retainReadPermission(uri, resultFlags)
         val documentUri = DocumentsContract.buildDocumentUriUsingTree(uri, treeId)
         val entry = describe(documentUri)
@@ -153,44 +163,58 @@ class DocumentAccess(private val context: Context) {
                 modifiedMs = if (isDocument) it.positiveLong(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
                     else if (isIndexed) it.positiveLong(MediaStore.MediaColumns.DATE_MODIFIED)
                         ?.takeIf { seconds -> seconds <= Long.MAX_VALUE / 1000 }?.times(1000) else null,
+                flags = if (isDocument) it.flags() else 0,
             )
         }
     }
 
-    suspend fun children(sourceUri: String, documentId: String, includeLyrics: Boolean = false): List<DocumentEntry> {
+    suspend fun children(sourceUri: String, documentId: String, includeLyrics: Boolean = false,
+        allFiles: Boolean = false,
+    ): List<DocumentEntry> = withContext(Dispatchers.IO) {
         val tree = Uri.parse(sourceUri)
         requireContentUri(tree)
         MediaStoreAccess.folder(tree)?.let {
-            return sorted(deviceMusic.children(it, documentId))
+            return@withContext sorted(deviceMusic.children(it, documentId))
         }
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId)
-        val cursor = resolver.query(childrenUri, DOCUMENT_COLUMNS, null, null, null)
-            ?: throw IOException(context.getString(R.string.provider_no_response))
-        val entries = cursor.use {
-            checkProviderState(it)
-            buildList {
-                var examined = 0
-                while (it.moveToNext()) {
-                    if (++examined > 100_000) throw IOException(context.getString(R.string.folder_safety_limit))
-                    val id = it.text(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                    if (id.isBlank()) throw IOException(context.getString(R.string.invalid_document_id))
-                    val name = it.text(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-                        .ifBlank { context.getString(R.string.unnamed_file) }
-                    val mime = it.text(DocumentsContract.Document.COLUMN_MIME_TYPE)
-                    val folder = mime == DocumentsContract.Document.MIME_TYPE_DIR
-                    val lyric = LyricFiles.accepts(name)
-                    if (folder || (lyric && includeLyrics) || (!lyric && AudioFiles.accepts(name, mime))) {
-                        add(DocumentEntry(
-                            id, DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(),
-                            name, mime, folder, it.flags() and FLAG_VIRTUAL_DOCUMENT != 0,
-                            it.positiveLong(DocumentsContract.Document.COLUMN_SIZE),
-                            it.positiveLong(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
-                        ))
+        suspendCancellableCoroutine { continuation ->
+            val signal = CancellationSignal()
+            continuation.invokeOnCancellation { signal.cancel() }
+            try {
+                val cursor = resolver.query(childrenUri, DOCUMENT_COLUMNS, null, null, null, signal)
+                    ?: throw IOException(context.getString(R.string.provider_no_response))
+                val entries = cursor.use {
+                    checkProviderState(it)
+                    buildList {
+                        var examined = 0
+                        while (it.moveToNext()) {
+                            continuation.context.ensureActive()
+                            if (++examined > 100_000) throw IOException(context.getString(R.string.folder_safety_limit))
+                            val id = it.text(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                            if (id.isBlank()) throw IOException(context.getString(R.string.invalid_document_id))
+                            val name = it.text(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                                .ifBlank { context.getString(R.string.unnamed_file) }
+                            val mime = it.text(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                            val folder = mime == DocumentsContract.Document.MIME_TYPE_DIR
+                            val lyric = LyricFiles.accepts(name)
+                            if (allFiles || folder || (lyric && includeLyrics) || (!lyric && AudioFiles.accepts(name, mime))) {
+                                add(DocumentEntry(
+                                    id, DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(),
+                                    name, mime, folder, it.flags() and FLAG_VIRTUAL_DOCUMENT != 0,
+                                    it.positiveLong(DocumentsContract.Document.COLUMN_SIZE),
+                                    it.positiveLong(DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+                                    it.flags(),
+                                ))
+                            }
+                        }
                     }
                 }
+                if (continuation.isActive) continuation.resume(sorted(entries))
+            } catch (error: OperationCanceledException) {
+                continuation.context.ensureActive()
+                throw IOException(context.getString(R.string.provider_no_response), error)
             }
         }
-        return sorted(entries)
     }
 
     private fun sorted(entries: List<DocumentEntry>): List<DocumentEntry> = entries.sortedWith(
@@ -202,11 +226,15 @@ class DocumentAccess(private val context: Context) {
         releaseReadPermissions(setOf(sourceUri)).firstOrNull()?.let { throw it }
     }
 
-    suspend fun releaseReadPermissions(sourceUris: Set<String>): List<SecurityException> = grantMutex.withLock {
+    suspend fun releaseReadPermissions(sourceUris: Set<String>,
+        retainedUris: Set<String> = emptySet(),
+    ): List<SecurityException> = grantMutex.withLock {
         buildList {
+            val removed = sourceUris.map { DocumentUris.grant(Uri.parse(it)) }.toSet()
+            val retained = retainedUris.map { DocumentUris.grant(Uri.parse(it)) }.toSet()
             // Music sources only acquire read grants; writable grants may also belong to the portable lyric cache.
             val grants = resolver.persistedUriPermissions.filter {
-                it.isReadPermission && !it.isWritePermission && it.uri.toString() in sourceUris
+                it.isReadPermission && !it.isWritePermission && it.uri in removed && it.uri !in retained
             }
             for (grant in grants) {
                 try {

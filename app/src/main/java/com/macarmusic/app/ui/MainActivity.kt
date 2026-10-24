@@ -33,6 +33,7 @@ import androidx.activity.addCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.SystemBarStyle
 import androidx.activity.result.ActivityResult
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -72,6 +73,7 @@ import com.macarmusic.app.data.BackgroundTint
 import com.macarmusic.app.data.DisplayOptions
 import com.macarmusic.app.data.DisplaySettings
 import com.macarmusic.app.data.MediaStoreAccess
+import com.macarmusic.app.data.LegacyStorage
 import com.macarmusic.app.lyrics.LyricIssue
 import com.macarmusic.app.lyrics.LyricOrigin
 import com.macarmusic.app.lyrics.LyricState
@@ -90,6 +92,7 @@ import com.macarmusic.app.model.LyricCacheExpiry
 import com.macarmusic.app.model.LyricSide
 import com.macarmusic.app.model.ThemeAccent
 import com.macarmusic.app.model.DocumentEntry
+import com.macarmusic.app.model.ExplorerMode
 import com.macarmusic.app.model.FolderSource
 import com.macarmusic.app.model.LibraryEdits
 import com.macarmusic.app.model.LocalPlaylist
@@ -275,34 +278,25 @@ class MainActivity : AppCompatActivity() {
     private val createBackup = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             val uri = result.data?.data
-            if (uri == null) model.app.report(getString(R.string.picker_no_document))
+            if (result.data?.getBooleanExtra(FileExplorerActivity.EXTRA_SHARE_BACKUP, false) == true)
+                model.prepareSharedBackup(AppCompatDelegate.getApplicationLocales().toLanguageTags())
+            else if (uri == null) model.app.report(getString(R.string.picker_no_document))
             else model.exportBackup(uri, AppCompatDelegate.getApplicationLocales().toLanguageTags())
         }
     }
-    private val backupPickers = List(3) {
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                val uri = result.data?.data
-                if (uri == null) model.app.report(getString(R.string.picker_no_document)) else model.previewBackup(uri)
-            }
+    private val pickBackup = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri = result.data?.data
+            if (uri == null) model.app.report(getString(R.string.picker_no_document)) else model.previewBackup(uri)
         }
     }
-    private val reconnectPickers = List(3) { index ->
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val id = model.consumeReconnectTrack(index)
-            if (id != null && result.resultCode == Activity.RESULT_OK) {
-                val uri = result.data?.data
-                if (uri == null) model.app.report(getString(R.string.picker_no_document))
-                else model.reconnectTrack(id, uri, result.data?.flags ?: 0)
-            }
+    private val reconnectFile = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val id = model.consumeReconnectTrack(0)
+        if (id != null && result.resultCode == Activity.RESULT_OK) {
+            val uri = result.data?.data
+            if (uri == null) model.app.report(getString(R.string.picker_no_document))
+            else model.reconnectTrack(id, uri, result.data?.flags ?: 0)
         }
-    }
-    // A failed start may still send RESULT_CANCELED; it must not consume the fallback's result.
-    private val compatibleFiles = List(2) {
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult(), ::handlePickedFile)
-    }
-    private val compatiblePictures = List(2) {
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult(), ::handlePickedBackground)
     }
 
     private fun handlePickedFile(result: ActivityResult) {
@@ -1028,6 +1022,17 @@ class MainActivity : AppCompatActivity() {
         settings.settingsLyricSmoothScroll.setOnCheckedChangeListener { _, checked ->
             model.app.displaySettings.update { it.copy(lyricsSmoothScroll = checked) }
         }
+        settings.settingsLyricKaraoke.setOnCheckedChangeListener { _, checked ->
+            model.app.displaySettings.update { it.copy(lyricAppearance = it.lyricAppearance.copy(karaoke = checked)) }
+        }
+        settings.lyricKaraokeColor.setOnClickListener {
+            fun save(color: Int) = model.app.displaySettings.update {
+                it.copy(lyricAppearance = it.lyricAppearance.copy(karaokeColor = color))
+            }
+            ColorSwatchDialog.show(this, getString(R.string.lyric_karaoke_color),
+                model.app.displaySettings.options.value.lyricAppearance.karaokeColor,
+                reset = { save(LyricAppearance.DEFAULT_KARAOKE_COLOR) }) { save(it) }
+        }
         settings.lyricActiveSize.setOnSeekBarChangeListener(backgroundSlider(
             label = { settings.lyricActiveSizeValue.text = getString(R.string.font_size_value, getString(R.string.lyric_active_size), it + 12) },
             save = { value -> model.app.displaySettings.update { it.copy(lyricAppearance = it.lyricAppearance.copy(activeSizeSp = value + 12)) } },
@@ -1369,6 +1374,9 @@ class MainActivity : AppCompatActivity() {
         settings.settingsLyricDragSeek.isEnabled = display.lyricsEnabled
         settings.settingsLyricSmoothScroll.isChecked = display.lyricsSmoothScroll
         settings.settingsLyricSmoothScroll.isEnabled = display.lyricsEnabled
+        settings.settingsLyricKaraoke.isChecked = display.lyricAppearance.karaoke
+        settings.settingsLyricKaraoke.isEnabled = display.lyricsEnabled
+        colorButton(settings.lyricKaraokeColor, R.string.lyric_karaoke_color, display.lyricAppearance.karaokeColor)
         settings.lyricsCacheInternalExpiry.setSelection(display.internalLyricExpiry.ordinal, false)
         settings.lyricsCachePortableExpiry.setSelection(display.portableLyricExpiry.ordinal, false)
         settings.lyricsLandscapePosition.setSelection(display.landscapeLyrics.ordinal, false)
@@ -1768,6 +1776,7 @@ class MainActivity : AppCompatActivity() {
                     source.needsReconnect -> getString(R.string.reconnect_folder_first)
                     source.unavailable -> getString(R.string.source_unavailable)
                     MediaStoreAccess.folder(Uri.parse(source.uri)) != null -> getString(R.string.access_music)
+                    LegacyStorage.owns(this, Uri.parse(source.uri)) -> getString(R.string.explorer_storage_permission)
                     !source.persisted -> getString(R.string.access_temporary)
                     else -> getString(R.string.access_saved)
                 }
@@ -1997,7 +2006,7 @@ class MainActivity : AppCompatActivity() {
         now.controls.favorite.contentDescription = favoriteLabel
         now.controls.favorite.text = if (now.root.compactControls) "" else favoriteLabel
         now.controls.favorite.setIconResource(if (favored) R.drawable.ic_favorite else R.drawable.ic_favorite_border)
-        val favoriteScale = if (favored) 1.5f else 1f
+        val favoriteScale = if (favored) SELECTED_CONTROL_SCALE else 1f
         now.controls.favorite.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, favoriteTextSize * favoriteScale)
         now.controls.favorite.iconSize = (favoriteIconSize * favoriteScale).roundToInt()
         now.controls.favorite.isSelected = favored
@@ -2173,7 +2182,11 @@ class MainActivity : AppCompatActivity() {
         lyricScrolling.progress(player?.currentPosition?.coerceAtLeast(0) ?: 0,
             player?.isCurrentMediaItemSeekable == true && player.duration > 0 &&
                 player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM) &&
-                player.isCommandAvailable(Player.COMMAND_PLAY_PAUSE), force)
+                player.isCommandAvailable(Player.COMMAND_PLAY_PAUSE), force,
+            durationMs = player?.duration?.coerceAtLeast(0) ?: 0,
+            advancing = player?.isPlaying == true && visibleScreen === now.root &&
+                lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && now.cover.lyricsList.isShown,
+            speed = player?.playbackParameters?.speed ?: 1f)
     }
 
     private fun renderLyricChoices(state: LyricChoices?) {
@@ -2392,14 +2405,17 @@ class MainActivity : AppCompatActivity() {
             if (view === binding.miniPlayer && binding.miniPlayer.singleRow) return@forEach
             val vertical = if (view === now.controls.trackInformation || view === now.controls.spectrum ||
                 view === now.cover.root || view === binding.miniPlayer) inset else 0
-            view.setPaddingRelative(maxOf(original.left, inset), maxOf(original.top, vertical),
+            val start = if (view === now.controls.volumeBlock) original.left else maxOf(original.left, inset)
+            view.setPaddingRelative(start, maxOf(original.top, vertical),
                 maxOf(original.right, inset), maxOf(original.bottom, vertical))
         }
         controlBlockButtons.forEach {
             it.background = if (framed) RippleDrawable(ripple, border(), ColorDrawable(Color.WHITE)) else backgrounds[it]
+            it.foreground = it.playerFocusForeground()
         }
         controlBlockOverlays.forEach {
-            it.foreground = if (framed && !(it === binding.miniPlayer && binding.miniPlayer.singleRow)) border() else null
+            val decoration = if (framed && !(it === binding.miniPlayer && binding.miniPlayer.singleRow)) border() else null
+            it.foreground = if (it is MaterialButton) it.playerFocusForeground(decoration) else decoration
         }
         binding.navigation.configureBlocks(enabled, outline)
         listOfNotNull(
@@ -2437,20 +2453,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchBackgroundPicker() {
-        try {
-            if (!DocumentPicker.launch("image/*", multiple = true) { intent ->
-                when {
-                    intent.action == Intent.ACTION_OPEN_DOCUMENT -> pickBackground
-                    intent.hasCategory(Intent.CATEGORY_OPENABLE) -> compatiblePictures[0]
-                    else -> compatiblePictures[1]
-                }.launch(intent)
-            }) {
-                model.app.report(getString(R.string.picture_picker_missing))
-            }
-        } catch (error: SecurityException) {
-            Log.w("MainActivity", "Android denied picture selection", error)
-            model.app.report(getString(R.string.picker_denied))
-        }
+        launchExplorer(pickBackground, ExplorerMode.IMAGES)
     }
 
     private fun currentTrack(): Track? {
@@ -2538,43 +2541,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchBackupExport() {
-        try {
-            createBackup.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                type = "application/zip"
-                addCategory(Intent.CATEGORY_OPENABLE)
-                putExtra(Intent.EXTRA_LOCAL_ONLY, true)
-                val date = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
-                putExtra(Intent.EXTRA_TITLE, "ManaMusicPlayer-backup-$date.zip")
-                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            })
-        } catch (error: ActivityNotFoundException) {
-            Log.i("MainActivity", "Save-document picker unavailable; offering a local backup file", error)
-            AccentTheme.dialog(this).setTitle(R.string.backup_export).setMessage(R.string.backup_share_help)
-                .setNegativeButton(R.string.cancel, null)
-                .setPositiveButton(R.string.backup_share) { _, _ ->
-                    model.prepareSharedBackup(AppCompatDelegate.getApplicationLocales().toLanguageTags())
-                }.show()
-        } catch (error: SecurityException) {
-            Log.w("MainActivity", "Android denied backup export", error)
-            model.app.report(getString(R.string.picker_denied))
-        }
-    }
-
-    private fun pickerIndex(intent: Intent): Int = when {
-        intent.action == Intent.ACTION_OPEN_DOCUMENT -> 0
-        intent.hasCategory(Intent.CATEGORY_OPENABLE) -> 1
-        else -> 2
+        val date = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
+        launchExplorer(createBackup, ExplorerMode.BACKUP_EXPORT, "ManaMusicPlayer-backup-$date.zip")
     }
 
     private fun launchBackupImport() {
-        try {
-            if (!DocumentPicker.launch("*/*") { backupPickers[pickerIndex(it)].launch(it) }) {
-                model.app.report(getString(R.string.picker_missing))
-            }
-        } catch (error: SecurityException) {
-            Log.w("MainActivity", "Android denied backup selection", error)
-            model.app.report(getString(R.string.picker_denied))
-        }
+        launchExplorer(pickBackup, ExplorerMode.BACKUP_IMPORT)
     }
 
     private fun renderBackupPreview(backup: PreparedBackup?) {
@@ -2619,87 +2591,35 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchReconnectTrack(track: Track) {
-        try {
-            if (!DocumentPicker.launch("*/*") { intent ->
-                val index = pickerIndex(intent)
-                model.prepareReconnectTrack(track.id, index)
-                reconnectPickers[index].launch(intent)
-            }) {
-                model.prepareReconnectTrack(null, -1)
-                model.app.report(getString(R.string.picker_missing))
-            }
-        } catch (error: SecurityException) {
-            model.prepareReconnectTrack(null, -1)
-            Log.w("MainActivity", "Android denied restored-file selection", error)
-            model.app.report(getString(R.string.picker_denied))
-        }
+        model.prepareReconnectTrack(track.id, 0)
+        if (!launchExplorer(reconnectFile, ExplorerMode.MUSIC_FILE)) model.prepareReconnectTrack(null, -1)
     }
 
     private fun launchLyricCachePicker() {
-        try {
-            pickLyricCache.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                putExtra(Intent.EXTRA_LOCAL_ONLY, true)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
-                if (Build.VERSION.SDK_INT >= 26) {
-                    model.app.lyrics.cache.info.value.folder?.let {
-                        putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse(it.documentUri))
-                    }
-                }
-            })
-        } catch (error: ActivityNotFoundException) {
-            Log.i("MainActivity", "No writable document-folder picker", error)
-            model.app.report(getString(R.string.lyrics_cache_picker_missing))
-        } catch (error: SecurityException) {
-            Log.w("MainActivity", "Android denied cache-folder selection", error)
-            model.app.report(getString(R.string.picker_denied))
-        }
+        launchExplorer(pickLyricCache, ExplorerMode.LYRIC_CACHE)
     }
 
     private fun launchFolderPicker() {
-        try {
-            pickFolder.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                putExtra(Intent.EXTRA_LOCAL_ONLY, true)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
-                    Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
-            })
-        } catch (error: ActivityNotFoundException) {
-            Log.i("MainActivity", "Android folder picker unavailable; offering indexed music access", error)
-            AccentTheme.dialog(this).setTitle(R.string.folder_picker_missing)
-                .setMessage(R.string.folder_picker_compatibility)
-                .setPositiveButton(R.string.device_music) { _, _ -> launchDeviceMusic() }
-                .setNeutralButton(R.string.open_file) { _, _ -> launchFilePicker() }
-                .setNegativeButton(R.string.cancel, null).show()
-        } catch (error: SecurityException) {
-            Log.w("MainActivity", "Android denied folder selection", error)
-            model.app.report(getString(R.string.picker_denied))
-        }
+        launchExplorer(pickFolder, ExplorerMode.MUSIC_FOLDER)
     }
 
     private fun launchFilePicker() {
-        choiceDialog(getString(R.string.open_file), listOf(
-            getString(R.string.device_music_browse) to { launchDeviceMusic(browse = true) },
-            getString(R.string.android_file_picker) to { launchAndroidFilePicker() },
-        ))
+        launchExplorer(pickFile, ExplorerMode.MUSIC_FILE)
     }
 
-    private fun launchAndroidFilePicker() {
-        try {
-            // Some USB providers mislabel audio as application/octet-stream; validate after selection.
-            if (!DocumentPicker.launch("*/*") { intent ->
-                when {
-                    intent.action == Intent.ACTION_OPEN_DOCUMENT -> pickFile
-                    intent.hasCategory(Intent.CATEGORY_OPENABLE) -> compatibleFiles[0]
-                    else -> compatibleFiles[1]
-                }.launch(intent)
-            }) {
-                model.app.report(getString(R.string.picker_missing))
-                launchDeviceMusic()
-            }
-        } catch (error: SecurityException) {
-            Log.w("MainActivity", "Android denied file selection", error)
-            model.app.report(getString(R.string.picker_denied))
-        }
+    private fun launchExplorer(launcher: ActivityResultLauncher<Intent>, mode: ExplorerMode,
+        filename: String = "",
+    ): Boolean = try {
+        launcher.launch(FileExplorerActivity.intent(this, mode, filename))
+        true
+    } catch (error: ActivityNotFoundException) {
+        Log.e("MainActivity", "The installed file explorer is unavailable", error)
+        model.app.report(getString(R.string.picker_missing))
+        false
+    } catch (error: SecurityException) {
+        Log.w("MainActivity", "Android denied the file explorer", error)
+        model.app.report(getString(R.string.picker_denied))
+        false
     }
 
     private fun launchDeviceMusic(browse: Boolean = false) {

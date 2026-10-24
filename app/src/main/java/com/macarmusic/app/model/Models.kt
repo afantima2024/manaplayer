@@ -101,6 +101,7 @@ data class DocumentEntry(
     val isVirtual: Boolean,
     val sizeBytes: Long? = null,
     val modifiedMs: Long? = null,
+    val flags: Int = 0,
 )
 
 data class BrowserLocation(

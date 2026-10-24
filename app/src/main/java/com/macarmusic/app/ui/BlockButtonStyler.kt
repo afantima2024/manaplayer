@@ -80,7 +80,7 @@ class BlockButtonStyler(root: ViewGroup, private val preserveMargins: Boolean = 
                     RippleDrawable(ripple, indicator, ColorDrawable(Color.WHITE))
                 } else original.background
             }
-            view.foreground = border ?: original.foreground
+            view.foreground = view.playerFocusForeground(border ?: original.foreground)
             val padding = original.padding
             view.setPaddingRelative(
                 if (framed) maxOf(padding.left, inset) else padding.left,

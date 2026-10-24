@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
+import android.provider.DocumentsContract.Document;
 import android.provider.DocumentsProvider;
 import android.provider.MediaStore;
 import java.io.File;
@@ -41,6 +42,8 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
     private final AtomicInteger deleteRequests = new AtomicInteger();
     private final AtomicInteger activeAudioReads = new AtomicInteger();
     private volatile long audioDelayMs;
+    private volatile long childDelayMs;
+    private volatile int extraRows;
     private volatile boolean unknownFileStamp;
     private volatile long fileStampOffset;
     private File tone;
@@ -159,6 +162,7 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             throws FileNotFoundException {
         checkAvailable();
         childReads.incrementAndGet();
+        android.os.SystemClock.sleep(childDelayMs);
         MatrixCursor cursor = new MatrixCursor(projection != null ? projection : COLUMNS);
         if (parent.equals("music")) {
             documentRow(cursor, "music/album");
@@ -168,6 +172,19 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             if (lyricsMode.startsWith("versions")) {
                 documentRow(cursor, "music/lyric-alternate");
                 documentRow(cursor, "music/lyric-third");
+            }
+            for (int index = 0; index < extraRows; index++) {
+                MatrixCursor.RowBuilder row = cursor.newRow();
+                for (String column : cursor.getColumnNames()) {
+                    Object value = null;
+                    if (column.equals(Document.COLUMN_DOCUMENT_ID)) value = "music/large-" + index;
+                    if (column.equals(Document.COLUMN_DISPLAY_NAME)) value = "Large folder " + index + ".wav";
+                    if (column.equals(Document.COLUMN_MIME_TYPE)) value = "audio/wav";
+                    if (column.equals(Document.COLUMN_SIZE)) value = tone.length();
+                    if (column.equals(Document.COLUMN_LAST_MODIFIED)) value = tone.lastModified();
+                    if (column.equals(Document.COLUMN_FLAGS)) value = 0;
+                    row.add(column, value);
+                }
             }
         } else if (parent.equals("music/album")) {
             documentRow(cursor, "music/album/two");
@@ -235,6 +252,8 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
                 unknownFileStamp = extras.getBoolean("unknownStamp");
                 fileStampOffset = extras.getLong("stampOffset");
                 audioDelayMs = Math.max(0, Math.min(10000, extras.getLong("audioDelayMs")));
+                childDelayMs = Math.max(0, Math.min(10000, extras.getLong("childDelayMs")));
+                extraRows = Math.max(0, Math.min(10000, extras.getInt("extraRows")));
                 if (extras.getBoolean("resetReads")) {
                     audioReads.set(0);
                     childReads.set(0);

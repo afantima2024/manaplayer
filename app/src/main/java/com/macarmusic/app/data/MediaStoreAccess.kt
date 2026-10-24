@@ -237,6 +237,12 @@ class MediaStoreAccess(private val context: Context) {
             return Folder(uri.pathSegments[0], path)
         }
 
+        internal fun isAudioFile(uri: Uri): Boolean = uri.scheme == "content" && uri.authority == "media" &&
+            uri.query == null && uri.fragment == null && uri.pathSegments.let {
+                it.size == 4 && it[0].isNotBlank() && it[1] == "audio" && it[2] == "media" &&
+                    it[3].toLongOrNull()?.let { id -> id >= 0 } == true
+            }
+
         internal fun normalizeFolder(path: String): String = when {
             path.isEmpty() -> ""
             path.endsWith('/') -> path

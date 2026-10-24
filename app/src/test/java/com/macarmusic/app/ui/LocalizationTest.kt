@@ -98,4 +98,16 @@ class LocalizationTest {
             }
         }
     }
+
+    @Test fun mainNavigationUsesShortChineseLabelsAndDocumentsTheSelectedSize() {
+        val chinese = strings("values-zh")
+        assertEquals(listOf("播放"), chinese["now_playing"])
+        assertEquals(listOf("乐库"), chinese["library"])
+        assertEquals(listOf("队列"), chinese["queue"])
+        for (directory in listOf("values", "values-zh")) {
+            val help = strings(directory).getValue("about_system_controls").single()
+            assertTrue(help.contains("120%"))
+            assertFalse(help.contains("150%"))
+        }
+    }
 }

@@ -65,6 +65,14 @@ try {
     } else {
         Write-Host 'Older Android has no targeted permission-flag reset here; use a fresh emulator for denial checks.'
     }
+    if ($api -le 28) {
+        Adb shell pm revoke com.macarmusic.app android.permission.WRITE_EXTERNAL_STORAGE
+        Run-Check 'native-explorer-permission-recovery' `
+            'com.macarmusic.app.StorageCompatibilityTest#nativeCacheExplorerRequestsStorageOnlyOnChoiceAndRecoversAfterDenial' `
+            1 'nativeExplorerPermission'
+        Adb shell pm revoke com.macarmusic.app $audioPermission
+        Adb shell pm revoke com.macarmusic.app android.permission.WRITE_EXTERNAL_STORAGE
+    }
     $methods = @(
         'pickerFallbacksKeepContentGrantsAndDoNotPretendToPersistTemporaryAccess',
         'exhaustedPickersAndSecurityRestrictionsRemainExplicit',
@@ -80,6 +88,11 @@ try {
     Adb shell pm revoke com.macarmusic.app $audioPermission
     Run-Check 'picker-permission-revocation' `
         'com.macarmusic.app.StorageCompatibilityTest#savedSourcesFavoritesAndPlaylistsSurviveRealAudioPermissionRevocation' 1 'afterAudioRevoke'
+    $indexed = @(
+        'indexedBrowseDoesNotImportUntilOneFileIsPlayed',
+        'indexedBatchUsesTagsAndOneCommitAndPreservesCancelledImports'
+    ) | ForEach-Object { "com.macarmusic.app.StorageCompatibilityTest#$_" }
+    Run-Check 'picker-indexed-enhancements' ($indexed -join ',') 2 'indexedEnhancements'
     Run-Check 'picker-empty-catalog' `
         'com.macarmusic.app.StorageCompatibilityTest#emptyIndexedCatalogShowsAnExplicitLimitationAndCleansUpOwnedFixtures' 1 'cleanupIndexed'
     Adb shell pm revoke com.macarmusic.app $audioPermission

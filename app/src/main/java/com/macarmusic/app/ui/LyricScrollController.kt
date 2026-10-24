@@ -102,10 +102,11 @@ class LyricScrollController(
         list.scrollToPosition(0)
     }
 
-    fun progress(positionMs: Long, seekable: Boolean, force: Boolean = false) {
+    fun progress(positionMs: Long, seekable: Boolean, force: Boolean = false,
+        durationMs: Long = 0, advancing: Boolean = false, speed: Float = 1f) {
         this.seekable = seekable
         if (!seekable) cancelGesture()
-        val changed = adapter.highlight(positionMs)
+        val changed = adapter.highlight(positionMs, durationMs, advancing, speed)
         val manualExpired = manualUntil != 0L && SystemClock.elapsedRealtime() >= manualUntil
         if (!list.isShown || adapter.lyrics?.timed != true || SystemClock.elapsedRealtime() < manualUntil) return
         if (force || changed || manualExpired) {
@@ -115,6 +116,7 @@ class LyricScrollController(
     }
 
     fun stop() {
+        adapter.stopAnimation()
         generation++
         pendingFollow?.let(list::removeCallbacks)
         pendingFollow = null

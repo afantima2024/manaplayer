@@ -112,6 +112,8 @@ class VisualOptionsTest {
         assertEquals(20, LyricAppearance().otherSizeSp)
         assertNull(LyricAppearance().activeColor)
         assertNull(LyricAppearance().otherColor)
+        assertFalse(LyricAppearance().karaoke)
+        assertEquals(0xffd54f, LyricAppearance().karaokeColor)
         assertEquals(12, LyricAppearance(activeSizeSp = 12, otherSizeSp = 48).activeSizeSp)
         for (value in listOf(11, 49)) {
             assertThrows(IllegalArgumentException::class.java) { LyricAppearance(activeSizeSp = value) }
@@ -119,6 +121,19 @@ class VisualOptionsTest {
         }
         assertThrows(IllegalArgumentException::class.java) { LyricAppearance(activeColor = -1) }
         assertThrows(IllegalArgumentException::class.java) { LyricAppearance(otherColor = 0x1000000) }
+        assertThrows(IllegalArgumentException::class.java) { LyricAppearance(karaokeColor = -1) }
+        assertThrows(IllegalArgumentException::class.java) { LyricAppearance(karaokeColor = 0x1000000) }
+    }
+
+    @Test fun oldLyricAppearanceKeepsKaraokeOffAndNewOptionsRoundTripIndependently() {
+        val json = kotlinx.serialization.json.Json
+        val old = json.decodeFromString<LyricAppearance>("""{"activeSizeSp":31,"otherSizeSp":18,"activeColor":1193046}""")
+        assertEquals(LyricAppearance(31, 18, 0x123456), old)
+        val next = old.copy(karaoke = true, karaokeColor = 0xabcdef)
+        assertEquals(next, json.decodeFromString<LyricAppearance>(json.encodeToString(LyricAppearance.serializer(), next)))
+        assertEquals(0x123456, next.activeColor)
+        assertNull(next.otherColor)
+        assertEquals(0xabcdef, next.copy(karaoke = false).karaokeColor)
     }
 
     @Test fun arcAndShadowAreOptInAndBounded() {

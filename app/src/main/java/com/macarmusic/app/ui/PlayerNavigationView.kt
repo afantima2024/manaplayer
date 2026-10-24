@@ -31,6 +31,7 @@ import com.macarmusic.app.R
 import com.macarmusic.app.model.BlockOutline
 import com.macarmusic.app.model.BlockStyle
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) :
     FrameLayout(context, attrs) {
@@ -171,7 +172,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
         for (item in items) {
             val width = if (vertical == true) MeasureSpec.getSize(widthSpec) else item.view.layoutParams.width
             val height = if (vertical == true) item.view.layoutParams.height else itemHeight
-            val icon = if (item.view.isSelected) dp(36) else dp(24)
+            val icon = iconSize(item.view.isSelected)
             val minimumContent = if (labelsBesideIcons) maxOf(icon, item.label.lineHeight)
                 else icon + dp(2) + item.label.lineHeight
             val verticalInset = minOf(itemInset, ((height - minimumContent) / 2).coerceAtLeast(0))
@@ -232,7 +233,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
         val ripple = ColorStateList.valueOf((primary and 0xffffff) or 0x33000000)
         val outlineColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOutline)
         fun border() = blockOutline?.let { PlayerBlockDrawable(it, outlineColor, resources.displayMetrics.density) }
-        artwork.foreground = border()
+        artwork.foreground = artwork.playerFocusForeground(border())
         val characterInset = if (blockOutline?.style == BlockStyle.CHARACTERS) dp(12) else 0
         val artworkInset = maxOf(dp(8), characterInset)
         artwork.setPadding(artworkInset, artworkInset, artworkInset, artworkInset)
@@ -240,11 +241,11 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
             item.view.setPadding(itemInset, itemInset, itemInset, itemInset)
             val selected = item.view.id == selectedItemId
             item.view.isSelected = selected
-            val iconSize = dp(if (selected) 36 else 24)
+            val iconSize = iconSize(selected)
             if (item.icon.layoutParams.width != iconSize) {
                 item.icon.layoutParams = item.icon.layoutParams.apply { width = iconSize; height = iconSize }
             }
-            item.label.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (selected) 18f else 12f)
+            item.label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f * if (selected) SELECTED_CONTROL_SCALE else 1f)
             val color = if (selected) primary else foreground
             item.icon.imageTintList = ColorStateList.valueOf(color)
             item.label.setTextColor(color)
@@ -254,9 +255,12 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
                 cornerRadius = dp(8).toFloat()
             } else null
             item.view.background = RippleDrawable(ripple, fill, android.graphics.drawable.ColorDrawable(android.graphics.Color.WHITE))
-            item.view.foreground = border()
+            item.view.foreground = item.view.playerFocusForeground(border())
         }
     }
+
+    private fun iconSize(selected: Boolean) =
+        (dp(24) * if (selected) SELECTED_CONTROL_SCALE else 1f).roundToInt()
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 }

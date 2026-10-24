@@ -48,7 +48,7 @@ class BackupArchiveTest {
         val value = backup().copy(settings = settings.copy(display = DisplayOptions(
             blockOutline = BlockOutline(BlockStyle.NONE, "+", 36, true),
             spectrum = SpectrumOptions(refreshRate = 60), navigationPosition = NavigationPosition.LEFT,
-            lyricAppearance = LyricAppearance(30, 16, 0x123456, 0xabcdef), widgetTransparency = 85,
+            lyricAppearance = LyricAppearance(30, 16, 0x123456, 0xabcdef, true, 0x00aaff), widgetTransparency = 85,
             internalLyricExpiry = LyricCacheExpiry.NEVER, portableLyricExpiry = LyricCacheExpiry.SEVEN_DAYS)))
         val output = ByteArrayOutputStream()
         BackupArchive.write(output, value, emptyMap())
@@ -114,6 +114,13 @@ class BackupArchiveTest {
         assertEquals(50, restored.settings.display.widgetTransparency)
         assertEquals(LyricCacheExpiry.THIRTY_DAYS, restored.settings.display.internalLyricExpiry)
         assertEquals(LyricCacheExpiry.NEVER, restored.settings.display.portableLyricExpiry)
+        assertEquals(LyricAppearance(), restored.settings.display.lyricAppearance)
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun invalidKaraokeColorIsRejectedByBackupImport() {
+        val value = backup().copy(settings = settings.copy(display = DisplayOptions(
+            lyricAppearance = LyricAppearance(karaoke = true, karaokeColor = 0x123456))))
+        read(raw(value, text = Json.encodeToString(value).replace("\"karaokeColor\":1193046", "\"karaokeColor\":-1")))
     }
 
     @Test fun imageDataIsStoredOnlyUnderValidatedPrivateNames() {

@@ -2,6 +2,7 @@ package com.macarmusic.app.ui
 
 import android.content.Context
 import android.util.AttributeSet
+import android.view.View
 import android.widget.LinearLayout
 import androidx.core.view.children
 import com.macarmusic.app.R
@@ -39,6 +40,23 @@ class TransportRow @JvmOverloads constructor(context: Context, attrs: AttributeS
             val y = paddingTop + row * (cellHeight + gap)
             button.layout(x, y, x + cellWidth, y + cellHeight)
         }
+    }
+
+    override fun focusSearch(focused: View, direction: Int): View? {
+        val index = indexOfChild(focused)
+        if (index >= 0 && (direction == View.FOCUS_LEFT || direction == View.FOCUS_RIGHT)) {
+            val step = if (direction == View.FOCUS_LEFT) -1 else 1
+            var next = index + step
+            while (next in 0 until childCount) {
+                val candidate = getChildAt(next)
+                if (candidate.visibility == VISIBLE) {
+                    if (candidate.top != focused.top) break
+                    if (candidate.isEnabled && candidate.isFocusable) return candidate
+                }
+                next += step
+            }
+        }
+        return super.focusSearch(focused, direction)
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()

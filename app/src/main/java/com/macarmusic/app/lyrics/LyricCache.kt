@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import com.macarmusic.app.R
+import com.macarmusic.app.data.DocumentUris
+import com.macarmusic.app.data.LegacyStorage
 import com.macarmusic.app.model.LyricCacheExpiry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -209,7 +211,7 @@ class LyricCache internal constructor(
                     if (flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION == 0 || flags and READ_WRITE != READ_WRITE) {
                         throw ActionFailure(context.getString(R.string.lyrics_cache_write_grant_needed))
                     }
-                    resolver.takePersistableUriPermission(tree, READ_WRITE)
+                    resolver.takePersistableUriPermission(DocumentUris.grant(tree), READ_WRITE)
                 }
                 if (grantFlags(tree) != READ_WRITE) throw ActionFailure(context.getString(R.string.lyrics_cache_write_grant_needed))
             }
@@ -236,7 +238,7 @@ class LyricCache internal constructor(
                 catch (error: IOException) {
                     throw ActionFailure(context.getString(R.string.lyrics_cache_move_cleanup_failed), error)
                 } finally {
-                    oldFolder?.takeIf { it.treeUri != tree.toString() }?.let {
+                    oldFolder?.takeIf { DocumentUris.grant(Uri.parse(it.treeUri)) != DocumentUris.grant(tree) }?.let {
                         release(Uri.parse(it.treeUri), READ_WRITE)
                     }
                 }
@@ -288,19 +290,24 @@ class LyricCache internal constructor(
     }
 
     private fun grantFlags(uri: Uri): Int {
-        val grant = resolver.persistedUriPermissions.firstOrNull { it.uri == uri } ?: return 0
+        if (LegacyStorage.owns(context, uri)) return LegacyStorage.grantFlags(context)
+        val grantUri = DocumentUris.grant(uri)
+        val grant = resolver.persistedUriPermissions.firstOrNull { it.uri == grantUri } ?: return 0
         return (if (grant.isReadPermission) Intent.FLAG_GRANT_READ_URI_PERMISSION else 0) or
             (if (grant.isWritePermission) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
     }
 
     private suspend fun release(uri: Uri, requested: Int) = grantMutex.withLock {
+        if (LegacyStorage.owns(context, uri)) return@withLock
         try {
+            val grant = DocumentUris.grant(uri)
             var flags = requested and grantFlags(uri)
             if (flags == 0) return@withLock
-            if (flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0 && uri.toString() in retainedReadUris()) {
+            if (flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0 &&
+                retainedReadUris().any { DocumentUris.grant(Uri.parse(it)) == grant }) {
                 flags = flags and Intent.FLAG_GRANT_READ_URI_PERMISSION.inv()
             }
-            if (flags != 0) resolver.releasePersistableUriPermission(uri, flags)
+            if (flags != 0) resolver.releasePersistableUriPermission(grant, flags)
         }
         catch (error: SecurityException) {
             releaseFailure(error)

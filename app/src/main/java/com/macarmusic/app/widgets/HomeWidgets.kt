@@ -294,8 +294,9 @@ class HomeWidgets(private val app: MaCarMusicApp) {
         publishDynamic()
     }
 
-    private fun lyricText(): String = WidgetPresentation.lyric(lyricResult?.lyrics, state.positionMs)
-        ?: app.text(when {
+    private fun lyricText(): CharSequence {
+        val lyrics = lyricResult?.lyrics
+        val text = WidgetPresentation.lyric(lyrics, state.positionMs) ?: return app.text(when {
             state.track == null -> R.string.widget_select_music
             lyricResult?.issue == LyricIssue.LOCAL_UNREADABLE ||
                 lyricResult?.issue == LyricIssue.CACHE_UNAVAILABLE -> R.string.widget_lyrics_unavailable
@@ -303,12 +304,16 @@ class HomeWidgets(private val app: MaCarMusicApp) {
             lyricResult == null -> R.string.lyrics_loading
             else -> R.string.widget_no_lyrics
         })
+        return WidgetViews.karaokeLyric(text, lyrics, state.positionMs, state.durationMs,
+            app.displaySettings.options.value.lyricAppearance)
+    }
 
     private fun publish() {
         if (updateFailed || !power.isInteractive) return
         update {
+            val lyric = lyricText()
             for ((kind, widgetIds) in ids) for (id in widgetIds) {
-                manager.updateAppWidget(id, WidgetViews.full(app.localizedContext, kind, id, state, cover, lyricText(),
+                manager.updateAppWidget(id, WidgetViews.full(app.localizedContext, kind, id, state, cover, lyric,
                     app.displaySettings.options.value))
             }
         }
@@ -317,8 +322,9 @@ class HomeWidgets(private val app: MaCarMusicApp) {
     private fun publishDynamic() {
         if (updateFailed || !power.isInteractive) return
         update {
+            val lyric = lyricText()
             for ((kind, widgetIds) in ids) if (kind != HomeWidgetKind.PLAY) {
-                manager.partiallyUpdateAppWidget(widgetIds, WidgetViews.dynamic(app.localizedContext, kind, state, lyricText()))
+                manager.partiallyUpdateAppWidget(widgetIds, WidgetViews.dynamic(app.localizedContext, kind, state, lyric))
             }
         }
     }

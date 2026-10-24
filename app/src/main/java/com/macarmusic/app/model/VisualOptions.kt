@@ -77,11 +77,18 @@ data class LyricAppearance(
     val otherSizeSp: Int = 20,
     val activeColor: Int? = null,
     val otherColor: Int? = null,
+    val karaoke: Boolean = false,
+    val karaokeColor: Int = DEFAULT_KARAOKE_COLOR,
 ) {
     init {
         require(activeSizeSp in 12..48 && otherSizeSp in 12..48)
         require(activeColor == null || activeColor in 0..0xffffff)
         require(otherColor == null || otherColor in 0..0xffffff)
+        require(karaokeColor in 0..0xffffff)
+    }
+
+    companion object {
+        const val DEFAULT_KARAOKE_COLOR = 0xffd54f
     }
 }
 

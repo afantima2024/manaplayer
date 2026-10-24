@@ -17,7 +17,7 @@ param(
     [ValidateRange(1, 10000)]
     [int] $FeatureTrackCount = 1,
     [int[]] $TrackCounts = @(0, 2000, 10000),
-    [ValidateSet('minimal', 'lyrics', 'static', 'slideshow', 'blurred-slideshow',
+    [ValidateSet('minimal', 'lyrics', 'karaoke', 'static', 'slideshow', 'blurred-slideshow',
         'spectrum15', 'spectrum30', 'spectrum60', 'combined')]
     [string[]] $Features = @('minimal', 'lyrics', 'static', 'slideshow', 'blurred-slideshow',
         'spectrum15', 'spectrum30', 'spectrum60', 'combined'),
@@ -45,7 +45,7 @@ New-Item -ItemType Directory -Path $report -Force | Out-Null
 $package = 'com.macarmusic.app'
 $data = "/data/user/0/$package"
 $packageInfo = (Adb shell dumpsys package $package) -join "`n"
-if ($packageInfo -notmatch 'userId=(\d+)') { throw 'Install the app first.' }
+if ($packageInfo -notmatch '(?:userId|appId)=(\d+)') { throw 'Install the app first.' }
 $appUid = $Matches[1]
 $ticksPerSecond = [int](((Adb shell getconf CLK_TCK) -join '').Trim())
 if ($ticksPerSecond -lt 1) { throw 'Could not determine the CPU accounting frequency.' }
@@ -119,7 +119,7 @@ function Seed([int] $Count, [string] $Feature) {
     $library | ConvertTo-Json -Depth 8 -Compress | Set-Content -LiteralPath "$report\library.json" -Encoding utf8NoBOM
     $playback | ConvertTo-Json -Depth 8 -Compress | Set-Content -LiteralPath "$report\playback.json" -Encoding utf8NoBOM
     $pictures = $Feature -in @('static', 'slideshow', 'blurred-slideshow', 'combined')
-    $lyrics = $Feature -in @('lyrics', 'combined')
+    $lyrics = $Feature -in @('lyrics', 'karaoke', 'combined')
     $spectrum = $Feature.StartsWith('spectrum') -or $Feature -eq 'combined'
     $rate = if ($Feature -eq 'spectrum15') { 15 } elseif ($Feature -eq 'spectrum60') { 60 } else { 30 }
     $ids = @()
@@ -133,6 +133,7 @@ function Seed([int] $Count, [string] $Feature) {
 <boolean name="parkedNoticeSeen" value="true" />
 <int name="theme" value="2" />
 <boolean name="lyricsEnabled" value="$($lyrics.ToString().ToLowerInvariant())" />
+<boolean name="lyricKaraoke" value="$(($Feature -eq 'karaoke').ToString().ToLowerInvariant())" />
 <boolean name="onlineLyrics" value="false" />
 <boolean name="spectrumEnabled" value="$($spectrum.ToString().ToLowerInvariant())" />
 <int name="spectrumRefreshRate" value="$rate" />
@@ -243,7 +244,7 @@ try {
                 Adb shell cmd media_session dispatch play | Out-Null
                 Start-Sleep -Seconds 3
                 $session = (Adb shell dumpsys media_session) -join "`n"
-                if ($session -notmatch 'state=3,') { throw "Playback did not start: $session" }
+                if ($session -notmatch 'state=(?:3|PLAYING\(3\)),') { throw "Playback did not start: $session" }
                 $processId = ((Adb shell pidof $package) -join '').Trim()
                 if ($processId -notmatch '^\d+$') { throw 'Expected one application process.' }
                 Adb shell dumpsys gfxinfo $package reset | Out-Null
@@ -251,7 +252,7 @@ try {
                 Start-Sleep -Seconds $SampleSeconds
                 $after = Sample $processId
                 $session = (Adb shell dumpsys media_session) -join "`n"
-                if ($session -notmatch 'state=3,') { throw "Playback stopped during measurement: $session" }
+                if ($session -notmatch 'state=(?:3|PLAYING\(3\)),') { throw "Playback stopped during measurement: $session" }
                 $pss = Memory $name
                 $frames = (Adb shell dumpsys gfxinfo $package) -join "`n"
                 $frames | Set-Content -LiteralPath "$report\$name-frames.txt"
