@@ -41,6 +41,7 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
     private final AtomicInteger childReads = new AtomicInteger();
     private final AtomicInteger deleteRequests = new AtomicInteger();
     private final AtomicInteger activeAudioReads = new AtomicInteger();
+    private final AtomicInteger maxAudioReads = new AtomicInteger();
     private volatile long audioDelayMs;
     private volatile long childDelayMs;
     private volatile int extraRows;
@@ -174,17 +175,7 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
                 documentRow(cursor, "music/lyric-third");
             }
             for (int index = 0; index < extraRows; index++) {
-                MatrixCursor.RowBuilder row = cursor.newRow();
-                for (String column : cursor.getColumnNames()) {
-                    Object value = null;
-                    if (column.equals(Document.COLUMN_DOCUMENT_ID)) value = "music/large-" + index;
-                    if (column.equals(Document.COLUMN_DISPLAY_NAME)) value = "Large folder " + index + ".wav";
-                    if (column.equals(Document.COLUMN_MIME_TYPE)) value = "audio/wav";
-                    if (column.equals(Document.COLUMN_SIZE)) value = tone.length();
-                    if (column.equals(Document.COLUMN_LAST_MODIFIED)) value = tone.lastModified();
-                    if (column.equals(Document.COLUMN_FLAGS)) value = 0;
-                    row.add(column, value);
-                }
+                documentRow(cursor, "music/large-" + index);
             }
         } else if (parent.equals("music/album")) {
             documentRow(cursor, "music/album/two");
@@ -199,18 +190,21 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             throws FileNotFoundException {
         checkAvailable();
         if (!mode.equals("r")) throw new FileNotFoundException(id);
+        if (id.equals("music/one") || id.equals("music/album/two") || id.matches("music/large-[0-9]+")) {
+            audioReads.incrementAndGet();
+            int active = activeAudioReads.incrementAndGet();
+            synchronized (maxAudioReads) { maxAudioReads.set(Math.max(maxAudioReads.get(), active)); }
+            try {
+                android.os.SystemClock.sleep(audioDelayMs);
+                checkAvailable();
+                if (signal != null) signal.throwIfCanceled();
+                return ParcelFileDescriptor.open(tone, ParcelFileDescriptor.MODE_READ_ONLY);
+            } finally {
+                activeAudioReads.decrementAndGet();
+            }
+        }
         File selected;
         switch (id) {
-            case "music/one": case "music/album/two":
-                audioReads.incrementAndGet();
-                activeAudioReads.incrementAndGet();
-                try {
-                    android.os.SystemClock.sleep(audioDelayMs);
-                } finally {
-                    activeAudioReads.decrementAndGet();
-                }
-                selected = tone;
-                break;
             case "music/lyric-data":
                 lyricReads.incrementAndGet();
                 activeLyricReads.incrementAndGet();
@@ -258,12 +252,14 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
                     audioReads.set(0);
                     childReads.set(0);
                     deleteRequests.set(0);
+                    maxAudioReads.set(0);
                 }
             }
             Bundle result = new Bundle();
             result.putInt("audioReads", audioReads.get());
             result.putInt("childReads", childReads.get());
             result.putInt("activeAudioReads", activeAudioReads.get());
+            result.putInt("maxAudioReads", maxAudioReads.get());
             result.putInt("deleteRequests", deleteRequests.get());
             return result;
         }
@@ -418,7 +414,8 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             case "pictures/background": name = "Test background.png"; break;
             case "pictures/second": name = "Second background.png"; break;
             case "pictures/invalid": name = "Invalid picture.png"; break;
-            default: name = "Empty";
+            default: name = id.startsWith("music/large-")
+                ? "Large folder " + id.substring("music/large-".length()) + ".wav" : "Empty";
         }
         String mime = id.startsWith("pictures/") ? "image/png"
             : id.equals("music/lyric-alternate") || id.equals("music/lyric-third") ? "text/plain"

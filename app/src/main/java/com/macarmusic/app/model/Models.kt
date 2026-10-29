@@ -24,6 +24,7 @@ data class Track(
     val metadataStamp: FileStamp? = null,
     val metadataFromIndex: Boolean = false,
     val restoredIds: Set<String> = emptySet(),
+    val metadataPending: Boolean = false,
 )
 
 @Serializable
@@ -122,6 +123,8 @@ data class BrowserState(
 )
 
 data class ScanProgress(val folderName: String, val found: Int = 0)
+
+data class MetadataProgress(val completed: Int, val total: Int)
 
 data class ScanResult(
     val tracks: List<Track>,

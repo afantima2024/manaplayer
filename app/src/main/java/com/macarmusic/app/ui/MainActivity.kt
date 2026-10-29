@@ -557,6 +557,7 @@ class MainActivity : AppCompatActivity() {
                 launch { model.repository.loaded.collect { renderLibrary(); renderFolders(); renderSettings() } }
                 launch { model.browser.collect { renderFolders() } }
                 launch { model.scan.collect { renderFolders(); renderSettings() } }
+                launch { model.metadataProgress.collect { renderFolders(); renderSettings() } }
                 launch { model.selectedPlaylist.collect { renderPlaylists() } }
                 launch { model.app.notice.collect(::renderNotice) }
                 launch { model.playRequest.collect { consumePlayRequest() } }
@@ -1480,6 +1481,9 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.selected_folder_count, selected.size, sources.size))
         settings.settingsFolderSummary.text = if (selected.isEmpty()) getString(R.string.no_folders_selected)
             else selected.joinToString(" · ", transform = ::sourceName)
+        model.metadataProgress.value?.let {
+            settings.settingsFolderSummary.append("\n" + getString(R.string.metadata_background_progress, it.completed, it.total))
+        }
         settings.settingsFolders.isEnabled = model.repository.isReadable && model.scan.value == null
         settings.settingsPinFolders.isEnabled = model.repository.isReadable && sources.isNotEmpty()
         settings.settingsAddFolder.isEnabled = model.repository.isReadable && model.scan.value == null
@@ -1751,6 +1755,7 @@ class MainActivity : AppCompatActivity() {
         if (!::folderPanel.isInitialized || visibleScreen !== folderPanel) return
         val state = model.browser.value
         val scan = model.scan.value
+        val metadata = model.metadataProgress.value
         folderUp.isVisible = state.path.isNotEmpty()
         folderRestore.isVisible = state.path.isNotEmpty()
         folderRestore.isEnabled = scan == null && !state.loading
@@ -1761,9 +1766,11 @@ class MainActivity : AppCompatActivity() {
         folderRescan.setText(if (state.path.isEmpty()) R.string.rescan_all else R.string.rescan)
         folderRemoveAll.isEnabled = model.repository.isReadable && scan == null && !model.backupBusy.value &&
             model.library.value.sources.isNotEmpty()
-        cancelScan.isVisible = scan != null
+        cancelScan.isVisible = scan != null || metadata != null
+        cancelScan.setText(if (scan != null) R.string.cancel_scan else R.string.metadata_background_pause)
         folderPanel.heading.text = when {
             scan != null -> getString(R.string.scan_progress, scan.folderName, scan.found)
+            metadata != null -> getString(R.string.metadata_background_progress, metadata.completed, metadata.total)
             state.path.isEmpty() -> getString(R.string.folders)
             else -> state.path.mapIndexed { index, location ->
                 if (index == 0) model.library.value.sources.firstOrNull { it.uri == location.sourceUri }

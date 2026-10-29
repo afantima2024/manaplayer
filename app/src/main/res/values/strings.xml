@@ -98,6 +98,12 @@
     <string name="metadata_warning">Some tags could not be read. Filename information is used; playback may still work.</string>
     <string name="scan_progress">Scanning %1$s · Found: %2$d</string>
     <string name="scan_finished">Scan complete · Tracks: %1$d · Metadata warnings: %2$d</string>
+    <string name="scan_files_ready">%1$d songs ready to play. Details are loading in the background.</string>
+    <string name="metadata_background_progress">Reading details · %1$d / %2$d · Ready to play</string>
+    <string name="metadata_background_pause">Pause details</string>
+    <string name="metadata_background_paused">Background details paused. Found songs were kept. Quick rescan or reopening the app resumes unfinished details.</string>
+    <string name="metadata_background_warnings">Details could not be read for %1$d songs. Available information was kept; playback may still work.</string>
+    <string name="metadata_background_failed">Background details paused. Found songs were kept. Reconnect storage and use Quick rescan to retry. %1$s</string>
     <string name="scan_missing">Previously indexed tracks not found: %1$d. Saved references were kept.</string>
     <string name="scan_cancelled">Scan cancelled. Previously saved music was kept.</string>
     <string name="scan_busy">Wait for the current scan or cancel it first.</string>
@@ -598,6 +604,11 @@
     <string name="explorer_lyric_folder">Lyric-cache folder</string>
     <string name="explorer_add_location">Grant folder access</string>
     <string name="explorer_authorized">Android folder access</string>
+    <string name="explorer_remove_location">Remove location</string>
+    <string name="explorer_remove_location_named">Remove %1$s from Locations</string>
+    <string name="explorer_remove_location_confirm">Remove “%1$s” from Locations?\n\nNo files, saved music or playlists will be deleted. Access needed for saved music, lyrics, selected files or writing is kept.\n\nUse Grant folder access to show this location again.</string>
+    <string name="explorer_location_save_failed">Could not save the Locations list. Please try again.</string>
+    <string name="explorer_location_release_failed">The location was removed from the list, but Android could not release its unused folder access.</string>
     <string name="explorer_refresh">Refresh</string>
     <string name="explorer_empty">No matching files or subfolders here.</string>
     <string name="explorer_no_storage">No readable shared-storage volume is available. Reconnect the drive or try the Android picker.</string>

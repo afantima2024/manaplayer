@@ -31,6 +31,7 @@ class MetadataReuseTest {
         assertFalse(MetadataReuse.unchanged(null, entry))
         assertFalse(MetadataReuse.unchanged(track.copy(metadataStamp = null), entry))
         assertFalse(MetadataReuse.unchanged(track.copy(missing = true), entry))
+        assertFalse(MetadataReuse.unchanged(track.copy(metadataPending = true), entry))
         assertFalse(MetadataReuse.unchanged(track, entry.copy(isVirtual = true)))
         assertFalse(MetadataReuse.unchanged(track, entry.copy(isDirectory = true)))
     }

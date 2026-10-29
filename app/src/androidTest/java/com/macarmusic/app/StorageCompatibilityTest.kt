@@ -399,7 +399,7 @@ class StorageCompatibilityTest {
             }
             observer.startWatching()
             try {
-                val result = app.repository.scanIndexed(requests, false) {}
+                val result = app.repository.scanIndexed(requests, false, deferMetadata = true) {}
                 assertEquals(listOf(2, 1, 1), result.map { it.tracks.size })
                 assertEquals(4, result.sumOf { it.indexedMetadata })
                 assertTrue(result.flatMap { it.tracks }.all { it.metadataFromIndex && it.durationMs == 60_000L })

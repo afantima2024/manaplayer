@@ -7,6 +7,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -18,6 +19,8 @@ import android.system.Os
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
+import android.widget.HorizontalScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
@@ -56,6 +59,7 @@ import com.macarmusic.app.model.BackupEdits
 import com.macarmusic.app.model.ExplorerMode
 import com.macarmusic.app.model.LegacyDocumentPaths
 import com.macarmusic.app.model.Library
+import com.macarmusic.app.model.LibraryEdits
 import com.macarmusic.app.ui.ExplorerLocation
 import com.macarmusic.app.ui.ExplorerPlace
 import com.macarmusic.app.ui.FileExplorerActivity
@@ -64,6 +68,8 @@ import com.macarmusic.app.ui.MainActivity
 import com.macarmusic.app.ui.MusicRowAdapter
 import com.macarmusic.app.ui.MusicViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
@@ -95,14 +101,8 @@ class FileExplorerTest {
     @Before fun setup() {
         assumeTrue("Synthetic storage tests require an emulator", Build.PRODUCT.contains("sdk"))
         app.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putBoolean("parkedNoticeSeen", true).commit()
-        val grantToken = java.util.UUID.randomUUID().toString()
-        instrumentation.context.startActivity(Intent().apply {
-            component = ComponentName("com.macarmusic.app.test", FixtureGrantActivity::class.java.name)
-            putExtra("cacheGrantToken", grantToken)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        })
-        await { app.checkUriPermission(music, Process.myPid(), Process.myUid(), read) == PackageManager.PERMISSION_GRANTED }
-        await { resolver.call(cacheRoot, "cacheFixture", null, null)?.getString("grantToken") == grantToken }
+        grantFixtures()
+        assertTrue(app.getSharedPreferences("explorer", Context.MODE_PRIVATE).edit().clear().commit())
         runBlocking {
             app.repository.awaitReady()
             app.repository.update { Library() }
@@ -112,10 +112,29 @@ class FileExplorerTest {
         resolver.call(music, "scanFixtureState", null, Bundle().apply { putBoolean("resetReads", true) })
         resolver.call(cacheRoot, "cacheFixture", null, Bundle().apply { putBoolean("reset", true) })
         onMain {
-            AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en"))
+            setLanguage("en")
             app.themeMode = AppCompatDelegate.MODE_NIGHT_YES
             app.displaySettings.update { it.copy(lyricsEnabled = false, onlineLyrics = false, customTheme = false) }
         }
+    }
+
+    private fun grantFixtures() {
+        val grantToken = java.util.UUID.randomUUID().toString()
+        instrumentation.context.startActivity(Intent().apply {
+            component = ComponentName("com.macarmusic.app.test", FixtureGrantActivity::class.java.name)
+            putExtra("cacheGrantToken", grantToken)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        })
+        await { app.checkUriPermission(music, Process.myPid(), Process.myUid(), read) == PackageManager.PERMISSION_GRANTED }
+        await { app.checkUriPermission(cacheRoot, Process.myPid(), Process.myUid(), read) == PackageManager.PERMISSION_GRANTED }
+        await { resolver.call(cacheRoot, "cacheFixture", null, null)?.getString("grantToken") == grantToken }
+    }
+
+    private fun setLanguage(tag: String) {
+        if (Build.VERSION.SDK_INT >= 33) {
+            app.getSystemService(android.app.LocaleManager::class.java).applicationLocales =
+                android.os.LocaleList.forLanguageTags(tag)
+        } else AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tag))
     }
 
     @After fun cleanup() {
@@ -248,6 +267,291 @@ class FileExplorerTest {
         assertTrue(resolver.persistedUriPermissions.any { it.uri == music })
         assertTrue(documents.releaseReadPermissions(setOf(child.toString())).isEmpty())
         assertTrue(resolver.persistedUriPermissions.none { it.uri == music })
+    }
+
+    @Test fun unusedLocationRemovalIsDurableAcrossModesAndExplicitGrantRestoresIt() {
+        resolver.takePersistableUriPermission(music, read)
+        ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, ExplorerMode.MUSIC_FOLDER)).use { scenario ->
+            removeLocation(scenario, music, confirm = false)
+            assertTrue(hasLocation(scenario, music))
+            assertTrue(resolver.persistedUriPermissions.any { it.uri == music })
+            removeLocation(scenario, music)
+            assertTrue(resolver.persistedUriPermissions.none { it.uri == music })
+            assertTrue(app.repository.library.value.sources.isEmpty())
+            assertTrue(app.repository.library.value.tracks.isEmpty())
+            assertEquals(0, resolver.call(music, "scanFixtureState", null, null)!!.getInt("audioReads"))
+            grantFixtures()
+            resolver.takePersistableUriPermission(music, read)
+            scenario.onActivity { ViewModelProvider(it)[FileExplorerViewModel::class.java].addGrant(cacheRoot, read or write or persist) }
+            await { !model(scenario).state.value.loading }
+            tap(scenario, R.id.explorerLocations)
+            await { !model(scenario).state.value.loading }
+            assertFalse("Granting another folder must not discard hidden locations", hasLocation(scenario, music))
+            scenario.recreate()
+            await { !model(scenario).state.value.loading }
+            assertFalse(hasLocation(scenario, music))
+        }
+        for (mode in ExplorerMode.entries) {
+            ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, mode)).use { scenario ->
+                await { !model(scenario).state.value.loading }
+                assertFalse("Removal must apply to $mode", hasLocation(scenario, music))
+            }
+        }
+        ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, ExplorerMode.MUSIC_FOLDER)).use { scenario ->
+            scenario.onActivity { ViewModelProvider(it)[FileExplorerViewModel::class.java].addGrant(music, read or persist) }
+            await { !model(scenario).state.value.loading }
+            tap(scenario, R.id.explorerLocations)
+            await { !model(scenario).state.value.loading }
+            assertTrue(hasLocation(scenario, music))
+            assertTrue(resolver.persistedUriPermissions.any { it.uri == music && it.isReadPermission })
+            assertEquals(listOf("Album", "01 - Synthetic.wav"),
+                runBlocking { documents.children(music.toString(), "music") }.map { it.name })
+        }
+    }
+
+    @Test fun removingSharedLocationKeepsSongsFavoritesPlaylistsAndAncestorAccess() {
+        resolver.takePersistableUriPermission(music, read)
+        val child = DocumentsContract.buildDocumentUriUsingTree(music, "music/album")
+        val before = runBlocking {
+            val source = app.repository.addSource(child, 0)
+            val scanned = app.repository.scan(source, null) {}.tracks.single()
+            app.repository.openDocument(DocumentsContract.buildDocumentUriUsingTree(music, "music/one"), 0)
+            app.repository.update {
+                LibraryEdits.addToPlaylist(LibraryEdits.createPlaylist(LibraryEdits.toggleFavorite(it, scanned.id),
+                    "location-playlist", "Keep music"), "location-playlist", listOf(scanned.id))
+            }
+        }
+        ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, ExplorerMode.MUSIC_FOLDER)).use { scenario ->
+            removeLocation(scenario, music)
+            assertEquals(before, app.repository.library.value)
+            assertTrue(resolver.persistedUriPermissions.any { it.uri == music && it.isReadPermission })
+            scenario.recreate()
+            await { !model(scenario).state.value.loading }
+            assertFalse(hasLocation(scenario, music))
+            assertEquals(listOf("02 - Nested.WAV"),
+                runBlocking { documents.children(child.toString(), "music/album") }.map { it.name })
+            screenshot("explorer-shared-location-removed")
+        }
+    }
+
+    @Test fun removingWritableCacheLocationKeepsItsLyricsAndWriteAccess() {
+        resolver.takePersistableUriPermission(cacheRoot, read or write)
+        val value = CachedLyric("[00:00]Keep cached lyrics\n[00:55]Ending", LyricOrigin.QQ, System.currentTimeMillis())
+        val key = "c".repeat(64)
+        InternalLyricCache(File(app.cacheDir, "lyrics"), System::currentTimeMillis).write(key, value)
+        runBlocking { app.lyrics.cache.moveInternalTo(cacheRoot, 0) }
+        val folder = app.lyrics.cache.info.value.folder
+        ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, ExplorerMode.LYRIC_CACHE)).use { scenario ->
+            removeLocation(scenario, cacheRoot)
+            assertEquals(folder, app.lyrics.cache.info.value.folder)
+            assertEquals(value, runBlocking { app.lyrics.cache.read(key) }.value)
+            assertTrue(resolver.persistedUriPermissions.any {
+                it.uri == cacheRoot && it.isReadPermission && it.isWritePermission
+            })
+        }
+    }
+
+    @Test fun removingLocationKeepsAccessForImagesAlreadySelectedInTheExplorer() {
+        resolver.takePersistableUriPermission(cacheRoot, read or write)
+        val picture = DocumentsContract.createDocument(resolver, DocumentUris.document(cacheRoot), "image/png", "Keep.png")!!
+        val original = DocumentsContract.buildDocumentUri("com.macarmusic.app.test.documents", "pictures/background")
+        val bytes = resolver.openInputStream(original)!!.use { it.readBytes() }
+        resolver.openOutputStream(picture, "wt")!!.use { it.write(bytes) }
+        resolver.releasePersistableUriPermission(cacheRoot, write)
+        ActivityScenario.launchActivityForResult<FileExplorerActivity>(
+            FileExplorerActivity.intent(app, ExplorerMode.IMAGES)).use { scenario ->
+            await { !model(scenario).state.value.loading }
+            tapRow(scenario, model(scenario).state.value.items.single { it.location?.uri == cacheRoot.toString() }.name)
+            tapRow(scenario, "Keep.png")
+            tap(scenario, R.id.explorerLocations)
+            removeLocation(scenario, cacheRoot)
+            assertEquals(setOf(picture.toString()), model(scenario).state.value.selected)
+            assertTrue(resolver.persistedUriPermissions.any { it.uri == cacheRoot && it.isReadPermission })
+            tap(scenario, R.id.explorerSelect)
+            assertEquals(Activity.RESULT_OK, scenario.result.resultCode)
+            assertEquals(picture, scenario.result.resultData!!.data)
+            assertArrayEquals(bytes, resolver.openInputStream(picture)!!.use { it.readBytes() })
+        }
+    }
+
+    @Test fun temporaryLocationRemovalSurvivesRecreationAndCanBeGrantedAgain() {
+        ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, ExplorerMode.MUSIC_FILE)).use { scenario ->
+            scenario.onActivity { ViewModelProvider(it)[FileExplorerViewModel::class.java].addGrant(music, read) }
+            await { !model(scenario).state.value.loading }
+            tap(scenario, R.id.explorerLocations)
+            removeLocation(scenario, music)
+            scenario.recreate()
+            await { !model(scenario).state.value.loading }
+            assertFalse(hasLocation(scenario, music))
+            assertTrue(resolver.persistedUriPermissions.none { it.uri == music })
+            scenario.onActivity { ViewModelProvider(it)[FileExplorerViewModel::class.java].addGrant(music, read) }
+            await { !model(scenario).state.value.loading }
+            tap(scenario, R.id.explorerLocations)
+            await { !model(scenario).state.value.loading }
+            assertTrue(hasLocation(scenario, music))
+        }
+    }
+
+    @Test fun unpluggedLocationCanBeRemovedWithoutFolderQueriesOrAudioReads() {
+        resolver.takePersistableUriPermission(music, read)
+        resolver.call(music, "setUnavailable", null, Bundle().apply { putBoolean("value", true) })
+        try {
+            ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, ExplorerMode.MUSIC_FILE)).use { scenario ->
+                removeLocation(scenario, music)
+                assertTrue(resolver.persistedUriPermissions.none { it.uri == music })
+                val counters = resolver.call(music, "scanFixtureState", null, null)!!
+                assertEquals(0, counters.getInt("audioReads"))
+                assertEquals(0, counters.getInt("childReads"))
+                assertNull(model(scenario).state.value.error)
+            }
+        } finally { resolver.call(music, "setUnavailable", null, Bundle().apply { putBoolean("value", false) }) }
+    }
+
+    @Test fun locationRemovalIsRemoteAccessibleLocalizedAndDoesNotAddButtonsToFileRows() {
+        resolver.takePersistableUriPermission(cacheRoot, read)
+        for (language in listOf("en", "zh-CN")) {
+            onMain {
+                setLanguage(language)
+                app.displaySettings.update { it.copy(controlBlocks = language == "en") }
+            }
+            ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, ExplorerMode.MUSIC_FILE)).use { scenario ->
+                scenario.onActivity {
+                    assertEquals(language.substringBefore('-'),
+                        androidx.core.os.ConfigurationCompat.getLocales(it.resources.configuration)[0]?.language)
+                }
+                scenario.onActivity { ViewModelProvider(it)[FileExplorerViewModel::class.java].addGrant(music, read or persist) }
+                await { !model(scenario).state.value.loading }
+                tap(scenario, R.id.explorerLocations)
+                for (location in listOf(music, cacheRoot)) {
+                    val row = locationRow(scenario, location)
+                    remoteKey(KeyEvent.KEYCODE_DPAD_UP)
+                    scenario.onActivity { assertTrue(row.requestFocus()) }
+                    remoteKey(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    scenario.onActivity {
+                        assertSame(row.findViewById<View>(R.id.explorerRemoveLocation), it.currentFocus)
+                        val button = it.currentFocus!!
+                        assertTrue(button.height >= 48 * it.resources.displayMetrics.density)
+                        assertEquals(if (language == "en") "Remove" else "移除", (button as TextView).text)
+                    }
+                    remoteKey(KeyEvent.KEYCODE_DPAD_LEFT)
+                    scenario.onActivity { assertTrue(row.isFocused) }
+                }
+                remoteKey(KeyEvent.KEYCODE_DPAD_RIGHT)
+                remoteKey(KeyEvent.KEYCODE_DPAD_CENTER)
+                screenshot("explorer-remove-location-$language")
+                onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click())
+                assertTrue(hasLocation(scenario, music))
+                assertTrue(hasLocation(scenario, cacheRoot))
+                tapRow(scenario, model(scenario).state.value.items.single { it.location?.uri == music.toString() }.name)
+                scenario.onActivity {
+                    val list = it.findViewById<RecyclerView>(R.id.explorerList)
+                    for (index in 0 until list.childCount)
+                        assertNull(list.getChildAt(index).findViewById<View>(R.id.explorerRemoveLocation))
+                }
+            }
+        }
+    }
+
+    @Test fun permissionReleaseChecksLatestOwnersInsideTheGrantLock() = runBlocking(Dispatchers.IO) {
+        resolver.takePersistableUriPermission(music, read)
+        val retained = java.util.concurrent.atomic.AtomicReference(emptySet<String>())
+        val checked = java.util.concurrent.atomic.AtomicBoolean()
+        documents.grantMutex.lock()
+        val releasing = async {
+            documents.releaseReadPermissions(setOf(music.toString())) {
+                checked.set(true)
+                retained.get()
+            }
+        }
+        try {
+            delay(50)
+            assertFalse(checked.get())
+            retained.set(setOf(DocumentsContract.buildDocumentUriUsingTree(music, "music/album").toString()))
+        } finally { documents.grantMutex.unlock() }
+        assertTrue(releasing.await().isEmpty())
+        assertTrue(checked.get())
+        assertTrue(resolver.persistedUriPermissions.any { it.uri == music && it.isReadPermission })
+    }
+
+    @Test fun folderActionsShareOneBottomRowAndRemainReachableInNarrowWindows() {
+        val ids = listOf(R.id.explorerAndroidPicker, R.id.explorerCancel, R.id.explorerSelect,
+            R.id.explorerLocations, R.id.explorerUp, R.id.explorerRefresh)
+        for (language in listOf("en", "zh-CN")) {
+            onMain {
+                setLanguage(language)
+                app.displaySettings.update { it.copy(controlBlocks = true, blockOutline = BlockOutline()) }
+            }
+            ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, ExplorerMode.MUSIC_FOLDER)).use { scenario ->
+                scenario.onActivity { ViewModelProvider(it)[FileExplorerViewModel::class.java].addGrant(music, read or persist) }
+                await { !model(scenario).state.value.loading && model(scenario).state.value.canSelectFolder }
+                lateinit var footer: HorizontalScrollView
+                lateinit var controls: List<View>
+                scenario.onActivity { activity ->
+                    val root = activity.findViewById<ViewGroup>(R.id.explorerRoot)
+                    footer = activity.findViewById(R.id.explorerActions)
+                    controls = ids.map { activity.findViewById(it) }
+                    val row = footer.getChildAt(0) as ViewGroup
+                    assertSame(footer, root.getChildAt(root.childCount - 1))
+                    assertTrue(activity.findViewById<View>(R.id.explorerList).bottom <= footer.top)
+                    assertEquals(root.height - root.paddingBottom, footer.bottom)
+                    assertTrue(row.width >= footer.width)
+                    assertEquals(0, controls.first().left)
+                    assertEquals(row.width, controls.last().right)
+                    controls.forEach {
+                        assertSame(row, it.parent)
+                        assertTrue(it.isEnabled)
+                        assertEquals(controls.first().top, it.top)
+                        assertEquals(controls.first().bottom, it.bottom)
+                        assertTrue("Footer control ${activity.resources.getResourceEntryName(it.id)} is ${it.height}px high",
+                            it.height >= 48 * activity.resources.displayMetrics.density)
+                        if (footer.width >= 660 * activity.resources.displayMetrics.density &&
+                            activity.resources.configuration.fontScale <= 1f) {
+                            val visible = Rect()
+                            assertTrue("All actions must fit in a normal wide window", it.getLocalVisibleRect(visible))
+                            assertEquals(it.width, visible.width())
+                            assertEquals(it.height, visible.height())
+                        }
+                    }
+                    controls.zipWithNext().forEach { (left, right) -> assertTrue(left.right < right.left) }
+                }
+                screenshot("explorer-bottom-actions-$language")
+                remoteKey(KeyEvent.KEYCODE_DPAD_UP)
+                onMain { assertTrue(controls.first().requestFocus()) }
+                remoteKey(KeyEvent.KEYCODE_DPAD_UP)
+                scenario.onActivity { assertTrue(it.findViewById<View>(R.id.explorerList).hasFocus()) }
+                remoteKey(KeyEvent.KEYCODE_DPAD_DOWN)
+                onMain { assertTrue(footer.hasFocus()) }
+                scenario.onActivity { activity ->
+                    val root = activity.findViewById<View>(R.id.explorerRoot)
+                    root.layoutParams = root.layoutParams.apply {
+                        width = (320 * activity.resources.displayMetrics.density + 0.5f).toInt()
+                    }
+                }
+                await { onMainResult { !footer.isLayoutRequested && footer.getChildAt(0).width > footer.width } }
+                remoteKey(KeyEvent.KEYCODE_DPAD_UP)
+                onMain { assertTrue(controls.first().requestFocus()) }
+                for (id in ids) {
+                    if (id != ids.first()) remoteKey(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    var observed = ""
+                    await({ "Footer action ${app.resources.getResourceEntryName(id)} was not fully focused: $observed" }) { onMainResult {
+                        val view = controls.single { it.id == id }
+                        val visible = Rect()
+                        val shown = view.getLocalVisibleRect(visible)
+                        observed = "focus=${footer.findFocus()?.id}, bounds=${view.left}..${view.right}, " +
+                            "visible=$visible, viewport=${footer.width}, scroll=${footer.scrollX}, " +
+                            "layoutPending=${footer.isLayoutRequested}"
+                        view.isFocused && shown && visible.width() == view.width
+                    } }
+                }
+                assertTrue(onMainResult { footer.scrollX > 0 })
+                for (id in ids.dropLast(1).reversed()) {
+                    remoteKey(KeyEvent.KEYCODE_DPAD_LEFT)
+                    await { onMainResult { controls.single { it.id == id }.isFocused } }
+                }
+                assertEquals(0, resolver.call(music, "scanFixtureState", null, null)!!.getInt("audioReads"))
+                assertTrue(app.repository.library.value.tracks.isEmpty())
+            }
+        }
     }
 
     @Test fun movingCacheBetweenSafSubfoldersDoesNotReleaseTheirSharedGrant() = runBlocking(Dispatchers.IO) {
@@ -438,10 +742,9 @@ class FileExplorerTest {
                 assertTrue(it.findViewById<RecyclerView>(R.id.explorerList).childCount < 40)
             }
             val childReads = resolver.call(music, "scanFixtureState", null, null)!!.getInt("childReads")
-            remoteKey(KeyEvent.KEYCODE_DPAD_UP)
-            scenario.onActivity { assertTrue(it.findViewById<View>(R.id.explorerRefresh).requestFocus()) }
+            focusFirstRow(scenario)
             for (position in 0..60) {
-                remoteKey(KeyEvent.KEYCODE_DPAD_DOWN)
+                if (position > 0) remoteKey(KeyEvent.KEYCODE_DPAD_DOWN)
                 assertEquals("D-pad must traverse recycled rows", position, remotePosition(scenario))
             }
             await {
@@ -473,9 +776,8 @@ class FileExplorerTest {
             await { !model(scenario).state.value.loading }
             val rootPosition = model(scenario).state.value.items.indexOfFirst { it.location?.uri == music.toString() }
             assertTrue(rootPosition >= 0)
-            remoteKey(KeyEvent.KEYCODE_DPAD_UP)
-            scenario.onActivity { assertTrue(it.findViewById<View>(R.id.explorerRefresh).requestFocus()) }
-            repeat(rootPosition + 1) { remoteKey(KeyEvent.KEYCODE_DPAD_DOWN) }
+            focusFirstRow(scenario)
+            repeat(rootPosition) { remoteKey(KeyEvent.KEYCODE_DPAD_DOWN) }
             assertEquals(rootPosition, remotePosition(scenario))
             remoteKey(KeyEvent.KEYCODE_DPAD_CENTER)
             await { !model(scenario).state.value.loading &&
@@ -503,9 +805,7 @@ class FileExplorerTest {
             scenario.onActivity { ViewModelProvider(it)[FileExplorerViewModel::class.java]
                 .navigate(ExplorerLocation(ExplorerPlace.FOLDER, "Synthetic folder", music.toString())) }
             await { !model(scenario).state.value.loading }
-            remoteKey(KeyEvent.KEYCODE_DPAD_UP)
-            scenario.onActivity { assertTrue(it.findViewById<View>(R.id.explorerRefresh).requestFocus()) }
-            remoteKey(KeyEvent.KEYCODE_DPAD_DOWN)
+            focusFirstRow(scenario)
             assertEquals(0, remotePosition(scenario))
             lateinit var activity: FileExplorerActivity
             scenario.onActivity { activity = it }
@@ -642,7 +942,7 @@ class FileExplorerTest {
         try {
             for ((language, night) in listOf("en" to AppCompatDelegate.MODE_NIGHT_YES, "zh" to AppCompatDelegate.MODE_NIGHT_NO)) {
                 onMain {
-                    AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(language))
+                    setLanguage(language)
                     app.themeMode = night
                     app.displaySettings.update { it.copy(controlBlocks = true,
                         blockOutline = BlockOutline(style = BlockStyle.CHARACTERS, character = "+", arcDp = 16)) }
@@ -742,6 +1042,30 @@ class FileExplorerTest {
         return value.get()
     }
 
+    private fun hasLocation(scenario: ActivityScenario<FileExplorerActivity>, uri: Uri) =
+        model(scenario).state.value.items.any { it.location?.uri == uri.toString() }
+
+    private fun locationRow(scenario: ActivityScenario<FileExplorerActivity>, uri: Uri): View {
+        await { !model(scenario).state.value.loading && !model(scenario).state.value.saving }
+        val position = model(scenario).state.value.items.indexOfFirst { it.location?.uri == uri.toString() }
+        assertTrue("Missing granted location $uri", position >= 0)
+        lateinit var list: RecyclerView
+        scenario.onActivity { list = it.findViewById(R.id.explorerList) }
+        val count = model(scenario).state.value.items.size
+        await { onMainResult { !list.hasPendingAdapterUpdates() && list.adapter!!.itemCount == count } }
+        onMain { (list.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(position, 0) }
+        await { onMainResult { list.findViewHolderForAdapterPosition(position) != null } }
+        return onMainResult { list.findViewHolderForAdapterPosition(position)!!.itemView }
+    }
+
+    private fun removeLocation(scenario: ActivityScenario<FileExplorerActivity>, uri: Uri, confirm: Boolean = true) {
+        val row = locationRow(scenario, uri)
+        scenario.onActivity { assertTrue(row.findViewById<View>(R.id.explorerRemoveLocation).performClick()) }
+        onView(withId(if (confirm) android.R.id.button1 else android.R.id.button2)).inRoot(isDialog()).perform(click())
+        if (confirm) await { !model(scenario).state.value.loading && !model(scenario).state.value.saving &&
+            !hasLocation(scenario, uri) }
+    }
+
     private fun tapRow(scenario: ActivityScenario<FileExplorerActivity>, name: String) {
         await { !model(scenario).state.value.loading }
         val viewModel = model(scenario)
@@ -799,6 +1123,18 @@ class FileExplorerTest {
         return position
     }
 
+    private fun focusFirstRow(scenario: ActivityScenario<FileExplorerActivity>) {
+        remoteKey(KeyEvent.KEYCODE_DPAD_UP)
+        await {
+            var focused = false
+            scenario.onActivity {
+                focused = it.findViewById<RecyclerView>(R.id.explorerList)
+                    .findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() == true
+            }
+            focused
+        }
+    }
+
     private fun screenshot(name: String) {
         instrumentation.waitForIdleSync()
         instrumentation.uiAutomation.waitForIdle(500, 5_000)
@@ -831,10 +1167,13 @@ class FileExplorerTest {
         onMain { result.set(action()) }
         return result.get()
     }
-    private fun await(predicate: () -> Boolean) {
+    private fun await(
+        message: () -> String = { "Timed out waiting for explorer state" },
+        predicate: () -> Boolean,
+    ) {
         val deadline = SystemClock.elapsedRealtime() + 20_000
         while (!predicate()) {
-            if (SystemClock.elapsedRealtime() >= deadline) fail("Timed out waiting for explorer state")
+            if (SystemClock.elapsedRealtime() >= deadline) fail(message())
             SystemClock.sleep(40)
         }
     }

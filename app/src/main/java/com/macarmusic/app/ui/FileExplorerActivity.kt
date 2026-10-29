@@ -20,8 +20,10 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.Space
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -69,7 +71,7 @@ class FileExplorerActivity : AppCompatActivity() {
     private lateinit var cancel: MaterialButton
     private lateinit var filename: AppCompatEditText
     private lateinit var list: RecyclerView
-    private val rows = ExplorerRows(::open)
+    private val rows = ExplorerRows(::open, ::removeLocation)
     private var shownItems: List<ExplorerItem>? = null
 
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -119,7 +121,7 @@ class FileExplorerActivity : AppCompatActivity() {
         setTextColor(AccentTheme.color(this, com.google.android.material.R.attr.colorOnSurface))
     }
 
-    private fun button(parent: PlayerDialogActions, id: Int, label: Int, action: () -> Unit) =
+    private fun button(parent: LinearLayout, id: Int, label: Int, action: () -> Unit) =
         MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
             this.id = id
             setText(label)
@@ -127,13 +129,16 @@ class FileExplorerActivity : AppCompatActivity() {
             textSize = 16f
             minHeight = dp(48)
             minWidth = dp(64)
+            minimumWidth = dp(64)
             insetTop = 0
             insetBottom = 0
             setSingleLine(false)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             setOnClickListener { action() }
-            parent.addView(this, ViewGroup.MarginLayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            parent.addView(this, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                if (parent.childCount > 0) marginStart = dp(8)
+            })
         }
 
     private fun buildUi() {
@@ -177,11 +182,6 @@ class FileExplorerActivity : AppCompatActivity() {
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         })
-        val navigation = PlayerDialogActions(this)
-        locations = button(navigation, R.id.explorerLocations, R.string.explorer_locations, model::home)
-        up = button(navigation, R.id.explorerUp, R.string.up_folder) { model.up() }
-        refresh = button(navigation, R.id.explorerRefresh, R.string.explorer_refresh, model::refresh)
-        root.addView(navigation)
         path = text(16f).apply {
             id = R.id.explorerPath
             maxLines = 2
@@ -234,13 +234,38 @@ class FileExplorerActivity : AppCompatActivity() {
             clipToPadding = false
         }
         root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
-        val actions = PlayerDialogActions(this)
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
         androidPicker = button(actions, R.id.explorerAndroidPicker, R.string.android_file_picker) { systemPicker() }
         cancel = button(actions, R.id.explorerCancel, R.string.cancel) { if (!model.state.value.saving) finish() }
         select = button(actions, R.id.explorerSelect,
             if (model.mode == ExplorerMode.BACKUP_EXPORT) R.string.backup_export else R.string.explorer_select_folder,
             model::select)
-        root.addView(actions)
+        actions.addView(Space(this), LinearLayout.LayoutParams(dp(16), ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        locations = button(actions, R.id.explorerLocations, R.string.explorer_locations, model::home)
+        up = button(actions, R.id.explorerUp, R.string.up_folder) { model.up() }
+        refresh = button(actions, R.id.explorerRefresh, R.string.explorer_refresh, model::refresh)
+        val controls = listOf(androidPicker, cancel, select, locations, up, refresh)
+        val footer = object : HorizontalScrollView(this) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                val maximum = (MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight).coerceAtLeast(dp(64))
+                controls.forEach { if (it.maxWidth != maximum) it.maxWidth = maximum }
+                super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            }
+        }.apply {
+            id = R.id.explorerActions
+            isFillViewport = true
+            isHorizontalScrollBarEnabled = false
+            // A pending resize animation can otherwise scroll a newly focused button out of view.
+            isSmoothScrollingEnabled = false
+            isFocusable = false
+            descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+            setPadding(0, dp(8), 0, 0)
+            addView(actions, ViewGroup.LayoutParams(-2, -2))
+        }
+        root.addView(footer, LinearLayout.LayoutParams(-1, -2))
         val display = app.displaySettings.options.value
         BlockButtonStyler(root, preserveMargins = true).apply(display.controlBlocks, display.blockOutline)
         AccentTheme.tintControls(root)
@@ -302,7 +327,7 @@ class FileExplorerActivity : AppCompatActivity() {
                 }
             }
         }
-        rows.selection(state.selected, model.mode == ExplorerMode.IMAGES)
+        rows.selection(state.selected, model.mode == ExplorerMode.IMAGES, state.loading || state.saving)
     }
 
     private fun open(item: ExplorerItem) {
@@ -311,6 +336,14 @@ class FileExplorerActivity : AppCompatActivity() {
         else item.location?.let {
             if (it.place == ExplorerPlace.FOLDER) model.navigate(it) else permission(it.place)
         } ?: item.document?.let(model::choose)
+    }
+
+    private fun removeLocation(item: ExplorerItem) {
+        if (!item.removable || model.state.value.saving || model.state.value.loading) return
+        AccentTheme.dialog(this).setTitle(R.string.explorer_remove_location)
+            .setMessage(getString(R.string.explorer_remove_location_confirm, item.name))
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.remove) { _, _ -> model.removeLocation(item) }.show()
     }
 
     private fun permission(place: ExplorerPlace) {
@@ -415,27 +448,30 @@ class FileExplorerActivity : AppCompatActivity() {
     }
 }
 
-private class ExplorerRows(private val click: (ExplorerItem) -> Unit) :
+private class ExplorerRows(private val click: (ExplorerItem) -> Unit, private val remove: (ExplorerItem) -> Unit) :
     ListAdapter<ExplorerItem, ExplorerRows.Holder>(object : DiffUtil.ItemCallback<ExplorerItem>() {
         override fun areItemsTheSame(old: ExplorerItem, new: ExplorerItem) = old.key == new.key
         override fun areContentsTheSame(old: ExplorerItem, new: ExplorerItem) = old == new
     }) {
     private var selected = emptySet<String>()
     private var multiple = false
+    private var busy = false
 
     init { stateRestorationPolicy = StateRestorationPolicy.PREVENT_WHEN_EMPTY }
 
-    fun selection(value: Set<String>, enabled: Boolean) {
-        if (selected == value && multiple == enabled) return
+    fun selection(value: Set<String>, enabled: Boolean, loading: Boolean) {
+        if (selected == value && multiple == enabled && busy == loading) return
         selected = value
         multiple = enabled
+        busy = loading
         notifyItemRangeChanged(0, itemCount, "selection")
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = Holder(parent)
+    override fun getItemViewType(position: Int) = if (getItem(position).removable) 1 else 0
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = Holder(parent, viewType == 1)
     override fun onBindViewHolder(holder: Holder, position: Int) = holder.bind(getItem(position))
 
-    inner class Holder(parent: ViewGroup) : RecyclerView.ViewHolder(LinearLayout(parent.context)) {
+    inner class Holder(parent: ViewGroup, removable: Boolean) : RecyclerView.ViewHolder(LinearLayout(parent.context)) {
         private val row = itemView as LinearLayout
         private val context = row.context
         private fun dp(value: Int) = (value * context.resources.displayMetrics.density + 0.5f).toInt()
@@ -443,13 +479,16 @@ private class ExplorerRows(private val click: (ExplorerItem) -> Unit) :
         private val name = AppCompatTextView(context)
         private val detail = AppCompatTextView(context)
         private val checked = AppCompatCheckBox(context)
+        private val removeButton = if (removable) MaterialButton(context, null,
+            com.google.android.material.R.attr.materialButtonOutlinedStyle) else null
 
         init {
             row.layoutParams = RecyclerView.LayoutParams(-1, -2)
             row.minimumHeight = dp(64)
             row.gravity = Gravity.CENTER_VERTICAL
             row.isFocusable = true
-            row.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            row.descendantFocusability = if (removable) ViewGroup.FOCUS_BEFORE_DESCENDANTS
+                else ViewGroup.FOCUS_BLOCK_DESCENDANTS
             row.setPadding(dp(8), dp(8), dp(8), dp(8))
             row.background = androidx.appcompat.content.res.AppCompatResources.getDrawable(context,
                 android.R.drawable.list_selector_background)
@@ -474,6 +513,28 @@ private class ExplorerRows(private val click: (ExplorerItem) -> Unit) :
             checked.isFocusable = false
             checked.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             row.addView(checked, LinearLayout.LayoutParams(dp(48), dp(48)))
+            removeButton?.let { button ->
+                row.id = View.generateViewId()
+                button.id = R.id.explorerRemoveLocation
+                button.setText(R.string.remove)
+                button.isAllCaps = false
+                button.textSize = 16f
+                button.minWidth = dp(64)
+                button.minHeight = dp(48)
+                button.insetTop = 0
+                button.insetBottom = 0
+                button.setSingleLine(false)
+                button.setPadding(dp(12), dp(8), dp(12), dp(8))
+                button.setOnClickListener {
+                    val position = bindingAdapterPosition
+                    if (position != RecyclerView.NO_POSITION) remove(getItem(position))
+                }
+                row.addView(button, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12) })
+                row.nextFocusRightId = button.id
+                button.nextFocusLeftId = row.id
+                val display = (context.applicationContext as MaCarMusicApp).displaySettings.options.value
+                BlockButtonStyler(row, preserveMargins = true).apply(display.controlBlocks, display.blockOutline)
+            }
             AccentTheme.tintControls(row)
             row.setOnClickListener {
                 val position = bindingAdapterPosition
@@ -503,6 +564,10 @@ private class ExplorerRows(private val click: (ExplorerItem) -> Unit) :
                 else if (item.document?.mimeType?.startsWith("audio/") == true) R.drawable.ic_note else R.drawable.ic_library)
             checked.isVisible = multiple && item.document?.isDirectory == false
             checked.isChecked = item.document?.uri in selected
+            removeButton?.apply {
+                isEnabled = !busy
+                contentDescription = context.getString(R.string.explorer_remove_location_named, item.name)
+            }
             row.isActivated = checked.isVisible && checked.isChecked
         }
     }

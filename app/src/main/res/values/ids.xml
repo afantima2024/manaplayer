@@ -9,9 +9,11 @@
     <item name="explorerProgress" type="id" />
     <item name="explorerStatus" type="id" />
     <item name="explorerList" type="id" />
+    <item name="explorerActions" type="id" />
     <item name="explorerAndroidPicker" type="id" />
     <item name="explorerCancel" type="id" />
     <item name="explorerSelect" type="id" />
+    <item name="explorerRemoveLocation" type="id" />
     <item name="playerDialogPanel" type="id" />
     <item name="playerDialogTitle" type="id" />
     <item name="playerDialogList" type="id" />

@@ -27,6 +27,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -48,6 +49,7 @@ internal data class ExplorerItem(
     val location: ExplorerLocation? = null,
     val document: DocumentEntry? = null,
     val grant: Boolean = false,
+    val removable: Boolean = false,
 ) {
     val key get() = document?.uri ?: location?.let { "${it.place}:${it.uri}" } ?: "grant"
 }
@@ -196,13 +198,65 @@ internal class FileExplorerViewModel(application: Application, private val saved
         }
         add(ExplorerItem(context.getString(R.string.explorer_add_location), grant = true))
         val sources = app.repository.library.value.sources.associateBy { it.uri }
+        val hidden = hiddenLocations()
         val roots = resolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri } +
             temporaryRoots.map(Uri::parse)
         for (uri in roots.distinct().filter { DocumentUris.isTree(it) && !LegacyStorage.owns(context, it) }) {
+            if (DocumentUris.grant(uri).toString() in hidden) continue
             val name = labels.getString(uri.toString(), null) ?: sources[uri.toString()]?.name
                 ?: DocumentsContract.getTreeDocumentId(uri).substringAfterLast('/').ifEmpty { requireNotNull(uri.authority) }
             add(ExplorerItem(name, context.getString(R.string.explorer_authorized),
-                ExplorerLocation(ExplorerPlace.FOLDER, name, uri.toString())))
+                ExplorerLocation(ExplorerPlace.FOLDER, name, uri.toString()), removable = true))
+        }
+    }
+
+    private fun hiddenLocations(): Set<String> = labels.getStringSet(HIDDEN_LOCATIONS, emptySet()).orEmpty()
+
+    private fun saveHiddenLocations(value: Set<String>) {
+        val previous = hiddenLocations()
+        if (value == previous) return
+        if (!labels.edit().putStringSet(HIDDEN_LOCATIONS, value).commit()) {
+            if (!labels.edit().putStringSet(HIDDEN_LOCATIONS, previous).commit())
+                Log.w(TAG, "Could not restore explorer location preferences")
+            throw IOException(context.getString(R.string.explorer_location_save_failed))
+        }
+    }
+
+    fun removeLocation(item: ExplorerItem) {
+        if (!item.removable || state.value.loading || state.value.saving || path.isNotEmpty()) return
+        val location = item.location ?: return
+        val grant = DocumentUris.grant(Uri.parse(location.uri)).toString()
+        loadJob?.cancel()
+        ++generation
+        mutableState.value = state.value.copy(saving = true, error = null)
+        loadJob = viewModelScope.launch {
+            guard {
+                val failures = withContext(Dispatchers.IO) {
+                    app.repository.awaitReady()
+                    documents.releaseReadPermissions(setOf(grant)) {
+                        saveHiddenLocations(hiddenLocations() + grant)
+                        val cache = app.lyrics.cache.info.value
+                        if (!app.repository.isReadable || cache.busy) setOf(grant)
+                        else buildSet {
+                            val library = app.repository.library.value
+                            library.sources.forEach { add(it.uri) }
+                            library.tracks.forEach {
+                                add(it.uri)
+                                addAll(it.sourceUris.values)
+                                it.standaloneUri?.let(::add)
+                            }
+                            cache.folder?.treeUri?.let(::add)
+                            selections.forEach { add(it.uri) }
+                        }
+                    }
+                }
+                failures.forEach { Log.w(TAG, "Removed explorer location but could not release unused access", it) }
+                temporaryRoots = temporaryRoots.filterNot { DocumentUris.grant(Uri.parse(it)).toString() == grant }
+                saved["temporaryRoots"] = Json.encodeToString(temporaryRoots)
+                restoreError = if (failures.isEmpty()) null else context.getString(R.string.explorer_location_release_failed)
+                mutableState.value = state.value.copy(saving = false)
+                refresh()
+            }
         }
     }
 
@@ -222,7 +276,7 @@ internal class FileExplorerViewModel(application: Application, private val saved
         mutableState.value = state.value.copy(loading = true, error = null)
         loadJob = viewModelScope.launch {
             guard {
-                val folder = withContext(Dispatchers.IO) {
+                val folder = withContext(Dispatchers.IO) { documents.grantMutex.withLock {
                     if (!DocumentUris.isTree(uri)) throw IOException(context.getString(R.string.invalid_folder))
                     val grant = DocumentUris.grant(uri)
                     val wanted = flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
@@ -236,10 +290,12 @@ internal class FileExplorerViewModel(application: Application, private val saved
                         if (!it.isDirectory || it.isVirtual) throw IOException(context.getString(R.string.invalid_folder))
                         val retained = resolver.persistedUriPermissions.map { permission -> permission.uri.toString() }.toSet()
                         val editor = labels.edit()
-                        labels.all.keys.filter { key -> key !in retained }.forEach(editor::remove)
-                        editor.putString(grant.toString(), it.name).apply()
+                        labels.all.keys.filter { key -> key != HIDDEN_LOCATIONS && key !in retained }.forEach(editor::remove)
+                        editor.putStringSet(HIDDEN_LOCATIONS, hiddenLocations() - grant.toString())
+                        if (!editor.putString(grant.toString(), it.name).commit())
+                            throw IOException(context.getString(R.string.explorer_location_save_failed))
                     }
-                }
+                } }
                 val granted = resolver.persistedUriPermissions.any { it.uri == DocumentUris.grant(uri) && it.isReadPermission }
                 if (!granted) {
                     temporaryRoots = (temporaryRoots + uri.toString()).distinct().takeLast(20)
@@ -320,9 +376,24 @@ internal class FileExplorerViewModel(application: Application, private val saved
             error(if (mode == ExplorerMode.IMAGES)
                 context.getString(R.string.explorer_selection_limit, BackgroundImages.MAX_COUNT)
                 else context.getString(R.string.picker_no_document))
-        } else finish(distinct.map(Uri::toString), flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or
-            Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
-            Intent.FLAG_GRANT_PREFIX_URI_PERMISSION))
+        } else {
+            val resultFlags = flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+            if ((mode == ExplorerMode.MUSIC_FOLDER || mode == ExplorerMode.LYRIC_CACHE) &&
+                distinct.any(DocumentUris::isTree)) {
+                mutableState.value = state.value.copy(saving = true, error = null)
+                viewModelScope.launch {
+                    guard {
+                        withContext(Dispatchers.IO) { documents.grantMutex.withLock {
+                            saveHiddenLocations(hiddenLocations() - distinct.filter(DocumentUris::isTree)
+                                .map { DocumentUris.grant(it).toString() }.toSet())
+                        } }
+                        finish(distinct.map(Uri::toString), resultFlags)
+                    }
+                }
+            } else finish(distinct.map(Uri::toString), resultFlags)
+        }
     }
 
     private fun finish(uris: List<String>, flags: Int) {
@@ -362,5 +433,6 @@ internal class FileExplorerViewModel(application: Application, private val saved
         const val EXTRA_MODE = "explorerMode"
         const val EXTRA_FILENAME = "explorerFilename"
         private const val TAG = "FileExplorer"
+        private const val HIDDEN_LOCATIONS = "hiddenLocations"
     }
 }

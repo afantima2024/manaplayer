@@ -112,6 +112,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     val browser = mutableBrowser.asStateFlow()
     private val mutableScan = MutableStateFlow<ScanProgress?>(null)
     val scan = mutableScan.asStateFlow()
+    val metadataProgress = repository.metadataProgress
     private val mutableRequest = MutableStateFlow<PlayRequest?>(null)
     val playRequest = mutableRequest.asStateFlow()
     private var requestToken = 0L
@@ -210,7 +211,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         lyricJob = viewModelScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
-                    app.lyrics.load(track, request.online, refresh)
+                    val detailed = if (track.metadataPending) repository.metadataForDetails(track).track else track
+                    app.lyrics.load(detailed, request.online, refresh)
                 }
                 if (lyricRequest == request) mutableLyrics.value = LyricState(track.id, result = result)
             } catch (error: CancellationException) {
@@ -275,7 +277,10 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             try {
                 val result = withContext(Dispatchers.IO) {
                     repository.awaitReady()
-                    val tracks = prepare { scan ->
+                    val discovered = prepare { scan ->
+                        progress(latest.copy(current = scan.folderName, found = scan.found))
+                    }
+                    val tracks = repository.metadataForLyrics(discovered) { scan ->
                         progress(latest.copy(current = scan.folderName, found = scan.found))
                     }
                     val download = app.lyrics.offlineDownloader()
@@ -339,7 +344,10 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             trackDurationMs = track.durationMs)
         onlineSearchJob = viewModelScope.launch {
             try {
-                app.lyrics.searchOnline(track).collect { catalog ->
+                val detailed = if (track.metadataPending) repository.metadataForDetails(track).track else track
+                if (onlineSearchToken == token) mutableOnlineLyrics.value = onlineLyrics.value?.copy(
+                    title = detailed.title, trackDurationMs = detailed.durationMs)
+                app.lyrics.searchOnline(detailed).collect { catalog ->
                     if (onlineSearchToken == token && lyricTrack?.id == track.id) {
                         mutableOnlineLyrics.value = onlineLyrics.value?.append(catalog)
                     }
@@ -1050,7 +1058,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
                 }
                 if (requests.isNotEmpty() && requests.all { MediaStoreAccess.folder(Uri.parse(it.first.uri)) != null }) {
                     try {
-                        val results = repository.scanIndexed(requests, forceMetadata) { mutableScan.value = it }
+                        val results = repository.scanIndexed(requests, forceMetadata,
+                            deferMetadata = !forceMetadata) { mutableScan.value = it }
                         requests.forEachIndexed { index, (source, location) -> collected(source, location, results[index]) }
                     } catch (error: CancellationException) {
                         throw error
@@ -1066,7 +1075,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
                 } else {
                     for ((source, location) in requests) {
                         try {
-                            collected(source, location, repository.scan(source, location, forceMetadata) { mutableScan.value = it })
+                            collected(source, location, repository.scan(source, location, forceMetadata,
+                                deferMetadata = !forceMetadata) { mutableScan.value = it })
                         } catch (error: CancellationException) {
                             throw error
                         } catch (error: SecurityException) {
@@ -1084,7 +1094,9 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
                 requestLyrics(lyricTrack, refresh = true)
                 if (failures.isNotEmpty()) app.report(failures.joinToString("\n"))
                 else {
-                    val summary = app.text(R.string.scan_finished, resultTracks.size, warnings) +
+                    val summary = (if (resultTracks.any { it.metadataPending })
+                        app.text(R.string.scan_files_ready, resultTracks.size)
+                        else app.text(R.string.scan_finished, resultTracks.size, warnings)) +
                         (if (reused > 0) "\n${app.localizedContext.resources.getQuantityString(R.plurals.scan_metadata_reused, reused, reused)}" else "") +
                         (if (indexed > 0) "\n${app.localizedContext.resources.getQuantityString(R.plurals.scan_indexed_tags, indexed, indexed)}" else "")
                     app.inform(if (missing > 0) "$summary\n${app.text(R.string.scan_missing, missing)}" else summary)
@@ -1120,7 +1132,13 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         }
     }
 
-    fun cancelScan() { scanJob?.cancel() }
+    fun cancelScan() {
+        if (scanJob?.isCompleted == false) scanJob?.cancel()
+        else {
+            repository.cancelMetadata()
+            app.inform(app.text(R.string.metadata_background_paused))
+        }
+    }
 
     fun removeSource(source: FolderSource) = removeSources(setOf(source.uri))
 

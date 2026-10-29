@@ -69,9 +69,19 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
     private boolean lyricDownloadsOnly;
     private boolean playerUiOnly;
     private boolean fileExplorerOnly;
+    private boolean explorerLocationsOnly;
+    private boolean explorerLocationsResume;
     private boolean karaokeOnly;
     private boolean explorerStorageSimulation;
     private boolean remoteNavigationOnly;
+    private boolean bulkRemovalOnly;
+    private boolean bulkRemovalRestart;
+    private boolean bulkRemovalRecovery;
+    private boolean progressiveScanOnly;
+    private boolean progressiveScanBaseline;
+    private boolean progressiveScanLeavePending;
+    private boolean progressiveScanResume;
+    private int bulkRemovalCount;
     private String explorerSimulationRoot;
     private String explorerSimulationVolume;
 
@@ -86,9 +96,19 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         lyricDownloadsOnly = arguments != null && "true".equals(arguments.getString("lyricDownloadsOnly"));
         playerUiOnly = arguments != null && "true".equals(arguments.getString("playerUiOnly"));
         fileExplorerOnly = arguments != null && "true".equals(arguments.getString("fileExplorerOnly"));
+        explorerLocationsOnly = arguments != null && "true".equals(arguments.getString("explorerLocationsOnly"));
+        explorerLocationsResume = arguments != null && "true".equals(arguments.getString("explorerLocationsResume"));
         karaokeOnly = arguments != null && "true".equals(arguments.getString("karaokeOnly"));
         explorerStorageSimulation = arguments != null && "true".equals(arguments.getString("explorerStorageSimulation"));
         remoteNavigationOnly = arguments != null && "true".equals(arguments.getString("remoteNavigationOnly"));
+        bulkRemovalOnly = arguments != null && "true".equals(arguments.getString("bulkRemovalOnly"));
+        bulkRemovalRestart = arguments != null && "true".equals(arguments.getString("bulkRemovalRestart"));
+        bulkRemovalRecovery = arguments != null && "true".equals(arguments.getString("bulkRemovalRecovery"));
+        progressiveScanOnly = arguments != null && "true".equals(arguments.getString("progressiveScanOnly"));
+        progressiveScanBaseline = arguments != null && "true".equals(arguments.getString("progressiveScanBaseline"));
+        progressiveScanLeavePending = arguments != null && "true".equals(arguments.getString("progressiveScanLeavePending"));
+        progressiveScanResume = arguments != null && "true".equals(arguments.getString("progressiveScanResume"));
+        bulkRemovalCount = arguments == null ? 1000 : Integer.parseInt(arguments.getString("bulkRemovalCount", "1000"));
         explorerSimulationRoot = arguments == null ? null : arguments.getString("explorerSimulationRoot");
         explorerSimulationVolume = arguments == null ? null : arguments.getString("explorerSimulationVolume");
         start();
@@ -122,6 +142,15 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
                 new Intent().setData(audio).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)), true);
             addMonitor(monitor);
             if (queueOnly || lyricDownloadsOnly || playerUiOnly || remoteNavigationOnly) writeQueueFixture(tree, audio);
+            if (bulkRemovalOnly && !bulkRemovalRestart) writeBulkRemovalFixture(tree, audio);
+            {
+                Bundle options = new Bundle();
+                options.putInt("extraRows", progressiveScanOnly ? 998 : 0);
+                options.putLong("audioDelayMs", progressiveScanOnly ? 15 : 0);
+                options.putBoolean("resetReads", true);
+                getTargetContext().getContentResolver().call(tree, "scanFixtureState", null, options);
+            }
+            long launchStarted = SystemClock.uptimeMillis();
             activity = launchPlayer(audio);
             if (colorPickerOnly) {
                 verifyColorPickers();
@@ -147,6 +176,21 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             });
             check(connected.await(25, TimeUnit.SECONDS) && controller != null, "Media session connection failed");
             await(() -> controller.getPlaybackState() != null);
+            if (progressiveScanOnly) {
+                result.putLong("launchMs", SystemClock.uptimeMillis() - launchStarted);
+                verifyProgressiveScan(tree, result);
+                result.putString("result", "PASS");
+                result.putString("checks", progressiveScanBaseline ? "Original APK: complete 1000-song scan before publishing the library"
+                    : "Exact optimized APK: 1000 slow-tag songs, durable early library, usable controls/playback during enrichment, no autoplay, completed durations, main-thread responsiveness and resumed pending details");
+                return;
+            }
+            if (bulkRemovalOnly) {
+                result.putLong("launchMs", SystemClock.uptimeMillis() - launchStarted);
+                verifyLargeFolderRemoval(tree, result);
+                result.putString("result", "PASS");
+                result.putString("checks", "Exact optimized APK: large saved library/queue, bulk removal UI responsiveness, durable empty queue, retained playlists, zero file deletion, paused restart and interrupted-removal recovery");
+                return;
+            }
             if (remoteNavigationOnly) {
                 verifyRemoteNavigation(tree);
                 result.putString("result", "PASS");
@@ -165,6 +209,14 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
                 verifyKaraoke(tree, audio);
                 result.putString("result", "PASS");
                 result.putString("checks", "Exact optimized APK: optional karaoke switch and shared color picker, partial glyph coverage, advancing and paused rendering, backward seek, persisted recreation, cross-UID lyric-widget spans, mute alignment and player-only mute, appearance reset");
+                return;
+            }
+            if (explorerLocationsOnly) {
+                verifyExplorerLocations(tree);
+                result.putString("result", "PASS");
+                result.putString("checks", "Exact optimized APK: themed location Remove/Cancel, unused read-grant release, "
+                    + "explicit regrant, saved-song and playing-queue preservation, no document deletion, "
+                    + "durable hidden locations across a fresh process, and no restart autoplay");
                 return;
             }
             if (fileExplorerOnly) {
@@ -395,6 +447,259 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
     }
 
     private int id(String name) { return resource(name, "id"); }
+
+    private void verifyProgressiveScan(Uri tree, Bundle result) throws Exception {
+        check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING, "Scan launch must stay paused");
+        long started;
+        if (!progressiveScanResume) {
+            tap(() -> activity.findViewById(id("action_settings")));
+            verifySettingsPage("categoryLyrics", "settingsLyricsPanel");
+            if (((CompoundButton) activity.findViewById(id("settingsLyrics"))).isChecked())
+                tap(() -> activity.findViewById(id("settingsLyrics")));
+            verifySettingsPage("categoryFolders", "settingsFoldersPanel");
+            ActivityMonitor picker = new ActivityMonitor(new IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
+                new ActivityResult(Activity.RESULT_OK, new Intent().setData(tree).addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)), true);
+            started = SystemClock.uptimeMillis();
+            try {
+                tap(() -> activity.findViewById(id("settingsAddFolder")));
+                chooseAndroidPicker(picker);
+                awaitScan(() -> {
+                    org.json.JSONObject snapshot = scanSnapshot();
+                    return snapshot != null && snapshot.optJSONArray("tracks") != null &&
+                        snapshot.optJSONArray("tracks").length() == 1000;
+                });
+            } finally { removeMonitor(picker); }
+            result.putLong("filesReadyMs", SystemClock.uptimeMillis() - started);
+            int reads = getTargetContext().getContentResolver().call(tree, "scanFixtureState", null, null).getInt("audioReads");
+            result.putInt("audioReadsWhenReady", reads);
+            if (progressiveScanBaseline) {
+                check(reads == 1000, "Baseline should read every song before publishing");
+                return;
+            }
+            check(reads < 1000 && pendingDetails() > 0, "Music must be usable before details finish");
+            check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING, "Adding a folder must not autoplay");
+        } else {
+            started = SystemClock.uptimeMillis();
+            check(savedLibrary().getJSONArray("tracks").length() == 1000, "Restart lost discovered songs");
+            check(pendingDetails() > 0, "Resume fixture must contain unfinished metadata");
+        }
+        android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+        long[] previous = {0};
+        long[] maximumGap = {0};
+        Runnable heartbeat = new Runnable() {
+            @Override public void run() {
+                long now = SystemClock.uptimeMillis();
+                maximumGap[0] = Math.max(maximumGap[0], now - previous[0]);
+                previous[0] = now;
+                handler.postDelayed(this, 16);
+            }
+        };
+        onMain(() -> { previous[0] = SystemClock.uptimeMillis(); handler.post(heartbeat); });
+        try {
+            tap(() -> activity.findViewById(id("nav_library")));
+            await(() -> activity.findViewById(id("libraryList")) != null &&
+                ((ViewGroup) activity.findViewById(id("libraryList"))).getChildCount() > 0);
+            if (!progressiveScanResume) {
+                tap(() -> ((ViewGroup) activity.findViewById(id("libraryList"))).getChildAt(0).findViewById(id("title")));
+                await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+                    controller.getQueue() != null && controller.getQueue().size() == 1000);
+                result.putLong("playableMs", SystemClock.uptimeMillis() - started);
+                check(pendingDetails() > 0, "Playback must start while tags are unfinished");
+                tap(() -> activity.findViewById(id("nav_queue")));
+                await(() -> queueList() != null && queueList().getChildCount() > 0);
+                tap(() -> activity.findViewById(id("action_settings")));
+                verifySettingsPage("categoryFolders", "settingsFoldersPanel");
+                onMain(() -> {
+                    check(activity.findViewById(id("settingsAddFolder")).isEnabled(), "Background tags blocked Add folder");
+                    check(activity.findViewById(id("settingsPlayFolders")).isEnabled(), "Background tags blocked Play");
+                    check(activity.findViewById(id("settingsRemoveAllFolders")).isEnabled(), "Background tags blocked removal");
+                });
+                tap(() -> activity.findViewById(id("nav_player")));
+                saveScreenshot("scan-background-playing-api" + Build.VERSION.SDK_INT + ".png");
+            }
+            if (progressiveScanLeavePending) {
+                onMain(() -> controller.getTransportControls().pause());
+                await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PAUSED);
+                tap(() -> activity.findViewById(id("nav_folders")));
+                String pauseDetails = activity.getString(resource("metadata_background_pause", "string"));
+                tap(() -> textView(activity.getWindow().getDecorView(), pauseDetails));
+                await(() -> textView(activity.getWindow().getDecorView(), pauseDetails) == null);
+                int reads = getTargetContext().getContentResolver()
+                    .call(tree, "scanFixtureState", null, null).getInt("audioReads");
+                SystemClock.sleep(250);
+                check(reads == getTargetContext().getContentResolver()
+                    .call(tree, "scanFixtureState", null, null).getInt("audioReads"), "Pause details kept reading files");
+                result.putInt("pendingAtExit", pendingDetails());
+                check(pendingDetails() > 0, "Restart fixture completed unexpectedly");
+                return;
+            }
+            awaitScan(() -> pendingDetails() == 0);
+            result.putLong("allDetailsMs", SystemClock.uptimeMillis() - started);
+            org.json.JSONArray tracks = savedLibrary().getJSONArray("tracks");
+            for (int index = 0; index < tracks.length(); index++)
+                check(tracks.getJSONObject(index).getLong("durationMs") >= 59000, "Background duration is missing");
+            if (progressiveScanResume) {
+                check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING, "Resume must not autoplay");
+                check(getTargetContext().getContentResolver().call(tree, "scanFixtureState", null, null)
+                    .getInt("childReads") == 0, "Pending restart must not walk storage again");
+            } else {
+                check(controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING,
+                    "Background metadata interrupted playback");
+                onMain(() -> controller.getTransportControls().pause());
+            }
+            result.putInt("audioReads", getTargetContext().getContentResolver()
+                .call(tree, "scanFixtureState", null, null).getInt("audioReads"));
+        } finally {
+            onMain(() -> handler.removeCallbacks(heartbeat));
+            result.putLong("maximumMainGapMs", maximumGap[0]);
+        }
+        check(maximumGap[0] < 1500, "Background metadata blocked UI for " + maximumGap[0] + "ms");
+    }
+
+    private int pendingDetails() {
+        try {
+            org.json.JSONObject snapshot = scanSnapshot();
+            if (snapshot == null) return -1;
+            org.json.JSONArray tracks = snapshot.getJSONArray("tracks");
+            int pending = 0;
+            for (int index = 0; index < tracks.length(); index++)
+                if (tracks.getJSONObject(index).optBoolean("metadataPending")) pending++;
+            return pending;
+        } catch (org.json.JSONException error) { throw new AssertionError(error); }
+    }
+
+    private org.json.JSONObject scanSnapshot() {
+        File file = new File(getTargetContext().getFilesDir(), "library.json");
+        File backup = new File(file.getPath() + ".bak");
+        if (!file.isFile() || backup.exists()) return null;
+        try (InputStream input = new java.io.FileInputStream(file);
+             ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) bytes.write(buffer, 0, count);
+            if (backup.exists()) return null;
+            return new org.json.JSONObject(bytes.toString("UTF-8"));
+        } catch (java.io.FileNotFoundException | org.json.JSONException concurrentWrite) {
+            // A legacy AtomicFile may be replaced during this instrumentation-only observation.
+            android.util.Log.d("ProgressiveScanTest", "Waiting for a complete atomic write", concurrentWrite);
+            return null;
+        } catch (IOException error) { throw new AssertionError(error); }
+    }
+
+    private void awaitScan(Condition condition) {
+        long deadline = SystemClock.uptimeMillis() + 120000;
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (condition.getAsBoolean()) return;
+            SystemClock.sleep(100);
+        }
+        throw new AssertionError("Scan did not reach the expected persisted state");
+    }
+
+    private void writeBulkRemovalFixture(Uri tree, Uri audio) throws Exception {
+        check(bulkRemovalCount >= 1000 && bulkRemovalCount <= 10000, "Invalid large-library fixture size");
+        File library = new File(getTargetContext().getFilesDir(), "library.json");
+        File playback = new File(getTargetContext().getFilesDir(), "playback.json");
+        check(!library.exists() && !playback.exists(), "Bulk-removal fixture requires fresh test data");
+        org.json.JSONArray sources = new org.json.JSONArray();
+        for (int index = 0; index < 5; index++) {
+            String uri = index == 0 ? tree.toString() :
+                DocumentsContract.buildTreeDocumentUri(PACKAGE + ".test.documents", "bulk-" + index).toString();
+            sources.put(new org.json.JSONObject().put("uri", uri).put("name", "Bulk folder " + index)
+                .put("persisted", false));
+        }
+        org.json.JSONArray tracks = new org.json.JSONArray();
+        org.json.JSONArray ids = new org.json.JSONArray();
+        for (int index = 0; index < bulkRemovalCount; index++) {
+            String id = "bulk-fixture-" + index;
+            tracks.put(new org.json.JSONObject().put("id", id).put("uri", audio.toString())
+                .put("fileName", id + ".wav").put("title", id).put("artist", "Fixture artist")
+                .put("album", "Bulk removal").put("durationMs", 60000).put("mimeType", "audio/wav")
+                .put("sourceUris", new org.json.JSONObject()
+                    .put(sources.getJSONObject(index % 5).getString("uri"), audio.toString())));
+            ids.put(id);
+        }
+        org.json.JSONObject playlist = new org.json.JSONObject().put("id", "bulk-playlist")
+            .put("name", "Kept playlist").put("trackIds", bulkRemovalRecovery ? new org.json.JSONArray() : ids);
+        writeFixture(library, new org.json.JSONObject().put("version", 1)
+            .put("tracks", bulkRemovalRecovery ? new org.json.JSONArray() : tracks)
+            .put("sources", bulkRemovalRecovery ? new org.json.JSONArray() : sources)
+            .put("playlists", new org.json.JSONArray().put(playlist)).toString());
+        writeFixture(playback, new org.json.JSONObject().put("version", 1).put("queue", tracks)
+            .put("index", bulkRemovalCount / 2).put("positionMs", 20000)
+            .put("shuffle", false).put("repeat", 0).toString());
+        check(getTargetContext().getSharedPreferences("settings", 0).edit()
+            .putString("playOrder", "SEQUENTIAL").putString("loopMode", "OFF").commit(),
+            "Cannot save bulk fixture settings");
+    }
+
+    private void verifyLargeFolderRemoval(Uri tree, Bundle result) throws Exception {
+        check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING, "Launch must stay paused");
+        if (!bulkRemovalRestart && !bulkRemovalRecovery) {
+            await(() -> controller.getQueue() != null && controller.getQueue().size() == bulkRemovalCount);
+            onMain(() -> controller.getTransportControls().play());
+            await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+            tap(() -> activity.findViewById(id("nav_folders")));
+            tap(() -> activity.findViewById(id("folderRemoveAll")));
+            clickDialogAction("cancel");
+            check(savedLibrary().getJSONArray("tracks").length() == bulkRemovalCount,
+                "Cancelling removal changed the library");
+            tap(() -> activity.findViewById(id("action_settings")));
+            verifySettingsPage("categoryFolders", "settingsFoldersPanel");
+            tap(() -> activity.findViewById(id("settingsRemoveAllFolders")));
+            String remove = activity.getString(resource("remove", "string"));
+            await(() -> dialogButton(remove) != null);
+            android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+            long[] previous = {0};
+            long[] maximumGap = {0};
+            Runnable heartbeat = new Runnable() {
+                @Override public void run() {
+                    long now = SystemClock.uptimeMillis();
+                    maximumGap[0] = Math.max(maximumGap[0], now - previous[0]);
+                    previous[0] = now;
+                    handler.postDelayed(this, 16);
+                }
+            };
+            long started = SystemClock.uptimeMillis();
+            onMain(() -> {
+                previous[0] = SystemClock.uptimeMillis();
+                handler.post(heartbeat);
+                check(dialogButton(remove).performClick(), "Remove confirmation was not handled");
+            });
+            try {
+                await(() -> controller.getQueue() == null || controller.getQueue().isEmpty());
+                await(() -> savedLibrary().optJSONArray("sources").length() == 0);
+                SystemClock.sleep(200);
+            } finally {
+                onMain(() -> handler.removeCallbacks(heartbeat));
+                result.putLong("removalMs", SystemClock.uptimeMillis() - started);
+                result.putLong("maximumMainGapMs", maximumGap[0]);
+            }
+            check(maximumGap[0] < 1500, "Bulk removal blocked the main thread for " + maximumGap[0] + "ms");
+        }
+        await(() -> controller.getQueue() == null || controller.getQueue().isEmpty());
+        await(() -> {
+            try {
+                return new org.json.JSONObject(fileText(new File(getTargetContext().getFilesDir(), "playback.json")))
+                    .getJSONArray("queue").length() == 0;
+            } catch (org.json.JSONException error) { throw new AssertionError(error); }
+        });
+        org.json.JSONObject library = savedLibrary();
+        check(library.getJSONArray("tracks").length() == 0 && library.getJSONArray("sources").length() == 0,
+            "Removed folder references returned");
+        check(library.getJSONArray("playlists").length() == 1 &&
+            library.getJSONArray("playlists").getJSONObject(0).getJSONArray("trackIds").length() == 0,
+            "Playlist itself must remain, without removed references");
+        check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING,
+            "Removal or recovery must not autoplay");
+        Bundle provider = getTargetContext().getContentResolver().call(tree, "scanFixtureState", null, null);
+        check(provider.getInt("deleteRequests") == 0, "Removal deleted music");
+        result.putInt("fixtureTracks", bulkRemovalCount);
+        result.putBoolean("restart", bulkRemovalRestart);
+        result.putBoolean("recovery", bulkRemovalRecovery);
+        tap(() -> activity.findViewById(id("nav_library")));
+        tap(() -> activity.findViewById(id("nav_player")));
+    }
 
     private void writeQueueFixture(Uri tree, Uri audio) throws Exception {
         File library = new File(getTargetContext().getFilesDir(), "library.json");
@@ -1107,7 +1412,8 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
     private String focusName(Activity owner) {
         View focus = owner.getCurrentFocus();
         if (focus == null) return "none";
-        if (focus.getId() != View.NO_ID) return getTargetContext().getResources().getResourceEntryName(focus.getId());
+        if (focus.getId() != View.NO_ID && (focus.getId() & 0xff000000) != 0)
+            return getTargetContext().getResources().getResourceEntryName(focus.getId());
         return focus.getClass().getSimpleName() + ":" + focus.getContentDescription();
     }
 
@@ -1174,6 +1480,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             .putExtra("explorerMode", "MUSIC_FILE")));
         await(() -> explorer != null && explorer.hasWindowFocus()
             && textView(explorer.getWindow().getDecorView(), "Synthetic queue fixture") != null);
+        remoteKey(KeyEvent.KEYCODE_DPAD_UP);
         onMain(() -> {
             View list = explorer.findViewById(id("explorerList"));
             View label = textView(list, "Synthetic queue fixture");
@@ -1181,9 +1488,9 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             while (row.getParent() != list) row = (View) row.getParent();
             trace.append("Explorer row clickable=").append(row.isClickable())
                 .append(" focusable=").append(row.isFocusable()).append('\n');
-            check(explorer.findViewById(id("explorerRefresh")).requestFocus(), "Cannot start explorer focus");
+            check(explorer.findViewById(id("explorerAndroidPicker")).requestFocus(), "Cannot start explorer focus");
         });
-        remoteKey(KeyEvent.KEYCODE_DPAD_DOWN);
+        remoteKey(KeyEvent.KEYCODE_DPAD_UP);
         boolean[] inside = {false};
         onMain(() -> {
             View focus = explorer.getCurrentFocus();
@@ -1192,7 +1499,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
                 parent = parent.getParent() instanceof View ? (View) parent.getParent() : null) {
                 if (parent.getParent() == list) inside[0] = true;
             }
-            trace.append("Explorer Down -> ").append(focusName(explorer)).append(" rowFocused=").append(inside[0]).append('\n');
+            trace.append("Explorer Up -> ").append(focusName(explorer)).append(" rowFocused=").append(inside[0]).append('\n');
             if (!inside[0]) failures.append("Explorer rows skipped; ");
         });
         if (inside[0]) {
@@ -1200,7 +1507,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
                 boolean[] chosen = {false};
                 onMain(() -> chosen[0] = textView(explorer.getCurrentFocus(), "Synthetic queue fixture") != null);
                 if (chosen[0]) break;
-                remoteKey(KeyEvent.KEYCODE_DPAD_DOWN);
+                remoteKey(KeyEvent.KEYCODE_DPAD_UP);
             }
             onMain(() -> check(textView(explorer.getCurrentFocus(), "Synthetic queue fixture") != null,
                 "Remote cannot reach the authorized location"));
@@ -1226,6 +1533,157 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         }
         onMain(() -> explorer.finish());
         check(failures.length() == 0, failures.toString());
+    }
+
+    private void openLocationsExplorer() {
+        tap(() -> activity.findViewById(id("nav_folders")));
+        tap(() -> textView(activity.getWindow().getDecorView(), activity.getString(resource("add_folder", "string"))));
+        await(() -> explorer != null && explorer.hasWindowFocus()
+            && textView(explorer.findViewById(id("explorerList")),
+                explorer.getString(resource("explorer_add_location", "string"))) != null);
+        onMain(() -> {
+            android.widget.HorizontalScrollView footer = explorer.findViewById(id("explorerActions"));
+            ViewGroup root = explorer.findViewById(id("explorerRoot"));
+            ViewGroup row = (ViewGroup) footer.getChildAt(0);
+            View previous = null;
+            int top = -1;
+            int bottom = -1;
+            for (String name : new String[] { "explorerAndroidPicker", "explorerCancel", "explorerSelect",
+                    "explorerLocations", "explorerUp", "explorerRefresh" }) {
+                View button = explorer.findViewById(id(name));
+                check(button.getParent() == row, "Explorer controls must share one bottom row");
+                if (previous == null) {
+                    check(button.getLeft() == 0, "Picker actions must start at the left edge");
+                    top = button.getTop();
+                    bottom = button.getBottom();
+                } else check(previous.getRight() < button.getLeft(), "Explorer action order or spacing changed");
+                check(button.getTop() == top && button.getBottom() == bottom, "Explorer actions wrapped or misaligned");
+                previous = button;
+            }
+            check(previous.getRight() == row.getWidth(), "Navigation actions must end at the right edge");
+            check(root.getChildAt(root.getChildCount() - 1) == footer
+                && explorer.findViewById(id("explorerList")).getBottom() <= footer.getTop()
+                && footer.getBottom() == root.getHeight() - root.getPaddingBottom(),
+                "Explorer actions must be below the list at the bottom of the window");
+        });
+    }
+
+    private View locationRemoveButton(String name) {
+        View label = textView(explorer.findViewById(id("explorerList")), name);
+        if (label == null) return null;
+        for (android.view.ViewParent parent = label.getParent(); parent instanceof View
+                && parent != explorer.findViewById(id("explorerList")); parent = parent.getParent()) {
+            View button = ((View) parent).findViewById(id("explorerRemoveLocation"));
+            if (button != null) return button;
+        }
+        return null;
+    }
+
+    private boolean hasReadFolderAccess(Uri tree) {
+        for (android.content.UriPermission permission : getTargetContext().getContentResolver().getPersistedUriPermissions())
+            if (permission.getUri().equals(tree) && permission.isReadPermission()) return true;
+        return false;
+    }
+
+    private void verifyExplorerLocations(Uri tree) throws Exception {
+        android.content.ContentResolver resolver = getTargetContext().getContentResolver();
+        int read = Intent.FLAG_GRANT_READ_URI_PERMISSION;
+        String rootName;
+        Uri document = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
+        try (android.database.Cursor cursor = resolver.query(document,
+                new String[] { DocumentsContract.Document.COLUMN_DISPLAY_NAME }, null, null, null)) {
+            check(cursor != null && cursor.moveToFirst(), "Missing location fixture");
+            rootName = cursor.getString(0);
+        }
+        ActivityMonitor grant = new ActivityMonitor(new IntentFilter(Intent.ACTION_OPEN_DOCUMENT_TREE),
+            new ActivityResult(Activity.RESULT_OK, new Intent().setData(tree).addFlags(read
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)), true);
+        try {
+            check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING,
+                "Location management must launch paused");
+            if (!explorerLocationsResume) {
+                resolver.takePersistableUriPermission(tree, read);
+                openLocationsExplorer();
+                String initialName = DocumentsContract.getTreeDocumentId(tree).substring(
+                    DocumentsContract.getTreeDocumentId(tree).lastIndexOf('/') + 1);
+                tap(() -> locationRemoveButton(initialName));
+                clickDialogAction("cancel");
+                check(locationRemoveButton(initialName) != null, "Cancel removed the location");
+                check(hasReadFolderAccess(tree), "Cancel released folder access");
+                tap(() -> locationRemoveButton(initialName));
+                check(ownedPanel() != null, "Remove must use the player-owned panel");
+                saveScreenshot("explorer-location-confirm.png");
+                clickDialogAction("remove");
+                await(() -> locationRemoveButton(initialName) == null
+                    && !hasReadFolderAccess(tree));
+                check(resolver.call(tree, "scanFixtureState", null, null).getInt("audioReads") == 0,
+                    "Removing an unused location read audio");
+                String grantToken = java.util.UUID.randomUUID().toString();
+                getContext().startActivity(new Intent().setClassName(PACKAGE + ".test",
+                    PACKAGE + ".FixtureGrantActivity").putExtra("cacheGrantToken", grantToken)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+                Uri cache = DocumentsContract.buildTreeDocumentUri(PACKAGE + ".test.cache", "root");
+                await(() -> getTargetContext().checkUriPermission(cache, Process.myPid(), Process.myUid(), read)
+                    == PackageManager.PERMISSION_GRANTED
+                    && grantToken.equals(resolver.call(cache, "cacheFixture", null, null).getString("grantToken")));
+                addMonitor(grant);
+                tap(() -> textView(explorer.getWindow().getDecorView(),
+                    explorer.getString(resource("explorer_add_location", "string"))));
+                removeMonitor(grant);
+                tap(() -> explorer.findViewById(id("explorerSelect")));
+                await(() -> {
+                    org.json.JSONObject snapshot = scanSnapshot();
+                    org.json.JSONArray tracks = snapshot == null ? null : snapshot.optJSONArray("tracks");
+                    return activity.hasWindowFocus() && tracks != null && tracks.length() == 2
+                        && tracks.optJSONObject(0).optLong("durationMs") >= 59000
+                        && tracks.optJSONObject(1).optLong("durationMs") >= 59000;
+                });
+                String title = savedLibrary().getJSONArray("tracks").getJSONObject(0).getString("title");
+                tap(() -> activity.findViewById(id("nav_library")));
+                tap(() -> textView(activity.findViewById(id("libraryList")), title));
+                await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+                String playing = controller.getMetadata().getDescription().getMediaId();
+                String before = savedLibrary().toString();
+                openLocationsExplorer();
+                tap(() -> locationRemoveButton(rootName));
+                clickDialogAction("remove");
+                await(() -> locationRemoveButton(rootName) == null);
+                check(before.equals(savedLibrary().toString()), "Location removal changed saved music");
+                check(hasReadFolderAccess(tree), "Shared music access was released");
+                check(controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING
+                    && playing.equals(controller.getMetadata().getDescription().getMediaId()),
+                    "Location removal interrupted playback");
+                Activity previous = explorer;
+                onMain(previous::recreate);
+                await(() -> explorer != previous && explorer.hasWindowFocus()
+                    && textView(explorer.findViewById(id("explorerList")),
+                        explorer.getString(resource("explorer_add_location", "string"))) != null);
+                check(locationRemoveButton(rootName) == null, "Removed location returned after recreation");
+                saveScreenshot("explorer-location-removed.png");
+            } else {
+                check(savedLibrary().getJSONArray("sources").length() == 1
+                    && savedLibrary().getJSONArray("tracks").length() == 2, "Saved songs were lost");
+                check(hasReadFolderAccess(tree), "Required access did not survive process restart");
+                openLocationsExplorer();
+                check(locationRemoveButton(rootName) == null, "Hidden location returned after process restart");
+                addMonitor(grant);
+                tap(() -> textView(explorer.getWindow().getDecorView(),
+                    explorer.getString(resource("explorer_add_location", "string"))));
+                removeMonitor(grant);
+                tap(() -> explorer.findViewById(id("explorerLocations")));
+                await(() -> locationRemoveButton(rootName) != null);
+                saveScreenshot("explorer-location-regranted.png");
+            }
+            check(resolver.call(tree, "scanFixtureState", null, null).getInt("deleteRequests") == 0,
+                "Location management must never delete storage documents");
+            check(grant.getHits() == 1, "The explicit regrant must use Android's tree picker exactly once");
+        } finally {
+            removeMonitor(grant);
+            onMain(() -> {
+                if (explorer != null && !explorer.isDestroyed()) explorer.finish();
+                controller.getTransportControls().pause();
+            });
+        }
     }
 
     private void verifyFileExplorer(Uri tree, Uri audio) throws Exception {

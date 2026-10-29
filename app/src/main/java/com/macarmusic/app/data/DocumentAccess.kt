@@ -228,10 +228,14 @@ class DocumentAccess(private val context: Context) {
 
     suspend fun releaseReadPermissions(sourceUris: Set<String>,
         retainedUris: Set<String> = emptySet(),
+    ): List<SecurityException> = releaseReadPermissions(sourceUris) { retainedUris }
+
+    internal suspend fun releaseReadPermissions(sourceUris: Set<String>,
+        retainedUris: suspend () -> Set<String>,
     ): List<SecurityException> = grantMutex.withLock {
         buildList {
             val removed = sourceUris.map { DocumentUris.grant(Uri.parse(it)) }.toSet()
-            val retained = retainedUris.map { DocumentUris.grant(Uri.parse(it)) }.toSet()
+            val retained = retainedUris().map { DocumentUris.grant(Uri.parse(it)) }.toSet()
             // Music sources only acquire read grants; writable grants may also belong to the portable lyric cache.
             val grants = resolver.persistedUriPermissions.filter {
                 it.isReadPermission && !it.isWritePermission && it.uri in removed && it.uri !in retained

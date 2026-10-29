@@ -2,6 +2,7 @@ package com.macarmusic.app.data
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.util.Log
 import com.macarmusic.app.R
 import com.macarmusic.app.model.BrowserLocation
@@ -10,6 +11,8 @@ import com.macarmusic.app.model.Library
 import com.macarmusic.app.model.LibraryEdits
 import com.macarmusic.app.model.LibraryScan
 import com.macarmusic.app.model.MetadataReuse
+import com.macarmusic.app.model.MetadataEdits
+import com.macarmusic.app.model.MetadataUpdate
 import com.macarmusic.app.model.ScanProgress
 import com.macarmusic.app.model.ScanResult
 import com.macarmusic.app.model.Track
@@ -31,7 +34,7 @@ import java.util.ArrayDeque
 
 class MusicRepository(
     private val context: Context,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val report: (String) -> Unit,
 ) {
     val documents = DocumentAccess(context)
@@ -45,6 +48,8 @@ class MusicRepository(
     private val mutableLoaded = MutableStateFlow(false)
     val loaded = mutableLoaded.asStateFlow()
     val isReadable: Boolean get() = mutableLoaded.value && !loadFailed
+    private val enrichment by lazy { MetadataEnrichment(context, this, scope, report) }
+    val metadataProgress get() = enrichment.progress
 
     init {
         scope.launch {
@@ -60,6 +65,7 @@ class MusicRepository(
                 mutableLoaded.value = true
                 ready.complete(Unit)
             }
+            resumeMetadata()
         }
     }
 
@@ -70,6 +76,7 @@ class MusicRepository(
         mutex.withLock {
             if (loadFailed) throw IOException(context.getString(R.string.library_read_only))
             val updated = edit(mutableLibrary.value)
+            if (updated === mutableLibrary.value) return@withLock updated
             store.write(LibraryCodec.encode(updated))
             mutableLibrary.value = updated
             updated
@@ -137,18 +144,23 @@ class MusicRepository(
         source: FolderSource,
         location: BrowserLocation?,
         forceMetadata: Boolean = false,
+        deferMetadata: Boolean = false,
         onProgress: (ScanProgress) -> Unit,
     ): ScanResult = withContext(Dispatchers.IO) {
         if (MediaStoreAccess.folder(Uri.parse(source.uri)) != null) {
-            return@withContext scanIndexed(listOf(source to location), forceMetadata, onProgress).single()
+            return@withContext scanIndexed(listOf(source to location), forceMetadata, deferMetadata, onProgress).single()
         }
         ready.await()
         if (loadFailed) throw IOException(context.getString(R.string.library_read_only))
+        cancelMetadata()
         val saved = mutableLibrary.value
         val known = saved.tracks.associateBy { it.id }
         val reuseMetadata = !forceMetadata && !source.unavailable &&
             saved.sources.firstOrNull { it.uri == source.uri }?.unavailable == false
         val rootId = documents.rootId(source.uri)
+        val tree = Uri.parse(source.uri)
+        val documentProvider = DocumentsContract.isDocumentUri(context,
+            DocumentsContract.buildDocumentUriUsingTree(tree, rootId))
         val startingId = location?.documentId ?: rootId
         val fullSource = startingId == rootId
         val startPath = if (fullSource) "" else location?.relativePath?.ifBlank { location.name }.orEmpty()
@@ -186,12 +198,17 @@ class MusicRepository(
         var reused = 0
         for ((index, entry) in entries.values.withIndex()) {
             currentCoroutineContext().ensureActive()
-            val previous = if (reuseMetadata) known[documents.identity(Uri.parse(entry.uri))] else null
-            val result = if (MetadataReuse.unchanged(previous, entry)) {
+            // All entries came from this provider's child query; resolve its document authority once.
+            val identity = if (documentProvider) DocumentsContract.buildDocumentUri(tree.authority, entry.id).toString()
+                else entry.uri
+            val previous = known[identity]
+            val result = if (reuseMetadata && MetadataReuse.unchanged(previous, entry)) {
                 reused++
                 MetadataResult(checkNotNull(previous).copy(uri = entry.uri,
                     sourceUris = mapOf(source.uri to entry.uri), missing = false), warning = false)
-            } else metadata.read(entry, source.uri)
+            } else if (deferMetadata && !forceMetadata) {
+                MetadataResult(pendingReference(entry, source.uri, previous, identity), warning = false)
+            } else metadata.read(entry, source.uri, identity = identity)
             tracks.add(result.track.copy(sourceParents = mapOf(source.uri to parents.getValue(entry.id)),
                 sourcePaths = mapOf(source.uri to paths.getValue(entry.id))))
             if (result.warning) warnings++
@@ -211,17 +228,20 @@ class MusicRepository(
                 merged.copy(sources = merged.sources.map { if (it.uri == source.uri) it.copy(lastIssue = issue) else it })
             } else LibraryEdits.upsertTracks(library, tracks)
         }
+        resumeMetadata()
         ScanResult(tracks, warnings, missing, reused)
     }
 
     suspend fun scanIndexed(
         requests: List<Pair<FolderSource, BrowserLocation?>>,
         forceMetadata: Boolean = false,
+        deferMetadata: Boolean = false,
         onProgress: (ScanProgress) -> Unit,
     ): List<ScanResult> = withContext(Dispatchers.IO) {
         ready.await()
         if (loadFailed) throw IOException(context.getString(R.string.library_read_only))
         if (requests.isEmpty()) return@withContext emptyList()
+        cancelMetadata()
         val roots = requests.map { (source, location) ->
             val folder = requireNotNull(MediaStoreAccess.folder(Uri.parse(source.uri)))
             val path = location?.documentId ?: folder.path
@@ -257,6 +277,8 @@ class MusicRepository(
                         indexed++
                         MetadataResult(song.tags.toTrack(entry), warning = false)
                     }
+                    deferMetadata && !forceMetadata ->
+                        MetadataResult(pendingReference(entry, source.uri, previous), warning = false)
                     else -> extracted.getOrPut(entry.uri) { metadata.read(entry, source.uri) }
                 }
                 if (result.warning) warnings++
@@ -290,11 +312,13 @@ class MusicRepository(
             }
             merged
         }
+        resumeMetadata()
         results.mapIndexed { index, result -> result.copy(missingCount = missing[index]) }
     }
 
-    suspend fun metadataForDetails(track: Track): MetadataResult = withContext(Dispatchers.IO) {
-        if (!track.metadataFromIndex) return@withContext MetadataResult(track, warning = false)
+    suspend fun metadataForDetails(requested: Track): MetadataResult = withContext(Dispatchers.IO) {
+        val track = library.value.tracks.firstOrNull { it.id == requested.id && it.uri == requested.uri } ?: requested
+        if (!track.metadataFromIndex && !track.metadataPending) return@withContext MetadataResult(track, warning = false)
         val entry = documents.describe(Uri.parse(track.uri))
         val result = metadata.read(entry).let { read ->
             if (read.warning) return@withContext MetadataResult(track, warning = true)
@@ -309,6 +333,51 @@ class MusicRepository(
             else LibraryEdits.upsertTracks(current, listOf(result.track))
         }
         result
+    }
+
+    suspend fun metadataForLyrics(tracks: List<Track>, onProgress: (ScanProgress) -> Unit): List<Track> =
+        withContext(Dispatchers.IO) {
+            if (tracks.none { it.metadataPending }) return@withContext tracks
+            cancelMetadata()
+            try {
+                val known = library.value.tracks.associateBy { it.id }
+                val updates = mutableListOf<MetadataUpdate>()
+                var warnings = 0
+                val resolved = tracks.mapIndexed { index, track ->
+                    currentCoroutineContext().ensureActive()
+                    val latest = known[track.id] ?: track
+                    if (!latest.metadataPending) latest else {
+                        onProgress(ScanProgress(latest.fileName, index + 1))
+                        val read = metadata.read(MetadataEdits.entry(latest), identity = latest.id)
+                        if (read.warning) warnings++
+                        updates.add(MetadataUpdate(latest, if (read.warning) latest.copy(metadataStamp = null) else read.track))
+                        MetadataEdits.complete(Library(tracks = listOf(latest)), listOf(updates.last())).tracks.single()
+                    }
+                }
+                currentCoroutineContext().ensureActive()
+                if (updates.isNotEmpty()) update { MetadataEdits.complete(it, updates) }
+                if (warnings > 0) report(context.getString(R.string.metadata_background_warnings, warnings))
+                resolved
+            } finally {
+                resumeMetadata()
+            }
+        }
+
+    fun cancelMetadata() { enrichment.cancel() }
+
+    private fun resumeMetadata() {
+        if (isReadable && library.value.tracks.any { it.metadataPending && !it.missing }) enrichment.resume()
+    }
+
+    private fun pendingReference(entry: com.macarmusic.app.model.DocumentEntry, source: String, previous: Track?,
+        identity: String? = null,
+    ): Track {
+        val reference = metadata.reference(entry, source, identity = identity)
+        return (previous ?: reference).copy(
+            uri = entry.uri, fileName = entry.name, mimeType = entry.mimeType, missing = false,
+            sourceUris = mapOf(source to entry.uri), standaloneUri = null, standalonePersisted = false,
+            metadataStamp = MetadataReuse.stamp(entry), metadataPending = true,
+        )
     }
 
     suspend fun markSourceError(uri: String, message: String) {

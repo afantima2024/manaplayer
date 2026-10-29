@@ -148,6 +148,7 @@ class PlaybackService : MediaLibraryService() {
         })
         scope.launch {
             val saved = app.playback.read()
+            app.repository.awaitReady()
             val library = app.repository.takeIf { it.isReadable }?.library?.value
             val (snapshot, items) = withContext(Dispatchers.Default) {
                 val snapshot = if (library != null) PlaybackEdits.reconcile(saved, library.tracks) else saved
@@ -165,6 +166,7 @@ class PlaybackService : MediaLibraryService() {
             cachedTimeline = player.currentTimeline
             // Do not prepare or acquire audio focus until an explicit Play command.
             restoring = false
+            persist()
             restored.complete(Unit)
             app.playbackReady.value = true
             app.homeWidgets.attach(player)
@@ -248,22 +250,15 @@ class PlaybackService : MediaLibraryService() {
             if (!app.repository.isReadable) return@launch
             // Reconcile the live queue, not the original restore snapshot: intervening user commands win.
             var previous = cachedQueue.associateBy { it.id }
+            var previousTracks: List<Track>? = null
             app.repository.library.collect { library ->
+                if (previousTracks === library.tracks) return@collect
                 val known = library.tracks.associateBy { it.id }
-                val removed = previous.keys - known.keys
-                for (index in player.mediaItemCount - 1 downTo 0) {
-                    val item = player.getMediaItemAt(index)
-                    if (item.mediaId in removed) {
-                        if (index == player.currentMediaItemIndex) player.pause()
-                        player.removeMediaItem(index)
-                    } else {
-                        val track = known[item.mediaId]
-                        if (track != null && previous[item.mediaId] != track) {
-                            player.replaceMediaItem(index, track.toMediaItem())
-                        }
-                    }
-                }
+                player.reconcileLibraryQueue(previous, known)
                 previous = known
+                previousTracks = library.tracks
+                refreshQueue()
+                persist()
             }
         }
     }
@@ -525,7 +520,9 @@ class PlaybackService : MediaLibraryService() {
             controller: MediaSession.ControllerInfo,
             items: List<MediaItem>,
         ): List<MediaItem> {
-            val resolved = if (controller.uid == Process.myUid()) items else {
+            val resolved = if (controller.uid == Process.myUid()) {
+                items.withLibraryMetadata(app.repository.library.value.tracks.associateBy { it.id })
+            } else {
                 val known = (app.repository.library.value.tracks + cachedQueue).associateBy { it.id }
                 val byUri = known.values.associateBy { it.uri }
                 items.map { item ->

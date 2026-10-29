@@ -9,7 +9,7 @@ object MetadataReuse {
 
     // The caller looks up the candidate by canonical document identity, not by filename.
     fun unchanged(track: Track?, entry: DocumentEntry): Boolean =
-        track != null && !track.missing && !entry.isDirectory && !entry.isVirtual &&
+        track != null && !track.missing && !track.metadataPending && !entry.isDirectory && !entry.isVirtual &&
             track.fileName == entry.name && track.mimeType == entry.mimeType &&
             track.metadataStamp != null && track.metadataStamp == stamp(entry)
 }

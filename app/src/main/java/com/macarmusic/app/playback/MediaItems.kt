@@ -46,6 +46,15 @@ fun Track.toMediaItem(): MediaItem {
     return MediaItem.Builder().setMediaId(id).setUri(uri).setMediaMetadata(metadata).build()
 }
 
+internal fun List<MediaItem>.withLibraryMetadata(known: Map<String, Track>): List<MediaItem> = map { item ->
+    val track = known[item.mediaId]
+    if (track == null || track.uri != item.localConfiguration?.uri?.toString()) item
+    else {
+        val metadata = track.toMediaItem().mediaMetadata
+        if (metadata == item.mediaMetadata) item else item.buildUpon().setMediaMetadata(metadata).build()
+    }
+}
+
 fun MediaItem.toTrack(known: Track? = null): Track {
     val data = mediaMetadata
     val extras = data.extras
