@@ -1,0 +1,97 @@
+<resources>
+    <item type="id" name="radioSettings" />
+    <item type="id" name="radioEditName" />
+    <item type="id" name="radioEditGroup" />
+    <item type="id" name="radioEditSources" />
+    <item type="id" name="radioEditLogo" />
+    <string name="radio_settings">Radio settings</string>
+    <string name="radio_settings_invalid">Saved radio settings are invalid. Safe defaults are being used; review Radio settings.</string>
+    <string name="radio_cri">China Radio International</string>
+    <string name="radio_cri_news">Global Information Radio</string>
+    <string name="radio_pin">Pin</string>
+    <string name="radio_unpin">Unpin</string>
+    <string name="radio_pinned">Pinned station</string>
+    <string name="radio_pin_color">Pinned station color</string>
+    <string name="radio_pin_color_help">Pinned stations stay in their groups and also appear as shortcuts. Their names and pin icons use this color. The default is yellow in dark mode and amber in light mode. Use Default restores theme-aware colors; custom colors stay the same in both themes.</string>
+    <string name="radio_pin_limit">The %1$d shortcut slots are full. Unpin a station before pinning another.</string>
+    <string name="radio_pins_empty">No pinned stations. Open Radio, hold a channel and choose Pin.</string>
+    <string name="radio_sources">Sources (%1$d)</string>
+    <string name="radio_source_count">%1$d sources</string>
+    <string name="radio_list_station">%1$s · %2$d sources</string>
+    <string name="radio_source_item">Source %1$d\n%2$s</string>
+    <string name="radio_source_position">Source %1$d/%2$d · %3$s</string>
+    <string name="radio_source_previous">Previous playing source</string>
+    <string name="radio_source_next">Next playing source</string>
+    <string name="radio_sources_too_many">A station can have up to 32 different addresses. No changes were saved.</string>
+    <string name="radio_source_fallback">This source failed. Trying source %1$d/%2$d for the same station.</string>
+    <string name="radio_edit">Edit station / addresses</string>
+    <string name="radio_edit_name">Station name</string>
+    <string name="radio_edit_group">Group (blank = identify region)</string>
+    <string name="radio_edit_sources">Audio URLs, one per line (HTTP is unencrypted)</string>
+    <string name="radio_edit_logo">Logo URL (optional; blank = built-in default)</string>
+    <string name="radio_station_saved">Station saved. Press Play to use the updated addresses.</string>
+    <string name="radio_import_addresses">Remove all current stations before importing?</string>
+    <string name="radio_import_append">Keep and merge</string>
+    <string name="radio_import_replace">Replace all stations</string>
+    <string name="radio_import_modes_help">Keep and merge: keep all current stations and addresses. Match by station name or a known ID; skip the same source URL and add a different URL as another playing source. New names become new stations.\n\nReplace all stations: remove the current list and keep ONLY valid station/source entries from the file, including when built-ins are missing. Old addresses not in the file are removed. This choice survives restarts and backups; Reset built-ins can restore the bundled stations. Pins remain only for retained station IDs.\n\nThe original file, local music, music playlists and downloaded logo files are not deleted. Radio stops only if its catalog changes. Cancel leaves everything unchanged.</string>
+    <string name="radio_buffer">Target audio buffer</string>
+    <string name="radio_start_buffer">Buffer before starting / resuming</string>
+    <string name="radio_seconds">%1$d seconds</string>
+    <string name="radio_buffer_help">A larger buffer can absorb short interruptions but increases live delay and memory use. HLS stations with short live windows may supply less than the target; the player adjusts its starting threshold to avoid waiting forever. Radio audio allocation is limited to about 8 MiB plus decoder/network overhead. Audio is held in memory only, not recorded. New live-delay and retry settings take full effect on the next Play or source switch. Local-file buffering is unchanged.</string>
+    <string name="radio_retries">Network request retries</string>
+    <string name="radio_retry_count">%1$d retries</string>
+    <string name="radio_auto_source">Try another source after failure</string>
+    <string name="radio_retries_help">Retries are bounded per failed request; unavailable or forbidden URLs are not repeatedly retried. Automatic source switching is off by default. When on, each address of the same station is tried at most once per Play attempt, then playback stops. It never skips to another station. Stop, Radio-off or returning to music cancels recovery.</string>
+    <string name="radio_download_logos">Download logos while listening</string>
+    <string name="radio_clear_cache">Clear all cached radio logos</string>
+    <string name="radio_clear_cache_confirm">Remove all downloaded radio logos? Stations, addresses, pins, music and lyrics will not be changed. Logos download again on a later playback when enabled. Audio has no persistent disk cache.</string>
+    <string name="radio_cache_cleared">Cached radio logos cleared. Stations and playback were kept.</string>
+    <string name="radio_logo_failed">The station logo could not be downloaded. Audio is unaffected; the generic icon is shown.</string>
+    <string name="radio_logo_cache_failed">A cached radio logo could not be read. Clear radio logos in Radio settings to download it again.</string>
+    <string name="radio_show_status">Show receive speed and audio buffer</string>
+    <string name="radio_stream_status">Receiving %1$.1f KB/s · Buffered %2$.1f / %3$d s</string>
+    <string name="radio_status_help">Playing shows the source number and host, recent received bytes per second, and seconds of playable audio ahead. This is measured stream traffic, not a network speed test or a guarantee against interruptions. HLS downloads arrive in bursts, so 0 KB/s while buffered audio plays is normal. Status refreshes once per second only while Playing is visible. Logos are downloaded only for the station being played, kept on disk until cleared, and decoded with a small memory cache. No logos are bundled or fetched just by browsing.</string>
+    <string name="radio_group_national">National stations</string>
+    <string name="radio_group_other">Others</string>
+    <string name="radio_group_expanded">Expanded</string>
+    <string name="radio_group_collapsed">Collapsed</string>
+    <string name="radio_expand_group">Expand group</string>
+    <string name="radio_collapse_group">Collapse group</string>
+    <string name="radio_region_beijing">Beijing</string>
+    <string name="radio_region_tianjin">Tianjin</string>
+    <string name="radio_region_hebei">Hebei</string>
+    <string name="radio_region_shanxi">Shanxi</string>
+    <string name="radio_region_neimenggu">Inner Mongolia</string>
+    <string name="radio_region_liaoning">Liaoning</string>
+    <string name="radio_region_jilin">Jilin</string>
+    <string name="radio_region_heilongjiang">Heilongjiang</string>
+    <string name="radio_region_shanghai">Shanghai</string>
+    <string name="radio_region_jiangsu">Jiangsu</string>
+    <string name="radio_region_zhejiang">Zhejiang</string>
+    <string name="radio_region_anhui">Anhui</string>
+    <string name="radio_region_fujian">Fujian</string>
+    <string name="radio_region_jiangxi">Jiangxi</string>
+    <string name="radio_region_shandong">Shandong</string>
+    <string name="radio_region_henan">Henan</string>
+    <string name="radio_region_hubei">Hubei</string>
+    <string name="radio_region_hunan">Hunan</string>
+    <string name="radio_region_guangdong">Guangdong</string>
+    <string name="radio_region_guangxi">Guangxi</string>
+    <string name="radio_region_hainan">Hainan</string>
+    <string name="radio_region_chongqing">Chongqing</string>
+    <string name="radio_region_sichuan">Sichuan</string>
+    <string name="radio_region_guizhou">Guizhou</string>
+    <string name="radio_region_yunnan">Yunnan</string>
+    <string name="radio_region_xizang">Tibet</string>
+    <string name="radio_region_shaanxi">Shaanxi</string>
+    <string name="radio_region_gansu">Gansu</string>
+    <string name="radio_region_qinghai">Qinghai</string>
+    <string name="radio_region_ningxia">Ningxia</string>
+    <string name="radio_region_xinjiang">Xinjiang</string>
+    <string name="radio_region_hongkong">Hong Kong</string>
+    <string name="radio_region_macao">Macao</string>
+    <string name="radio_region_taiwan">Taiwan</string>
+    <string name="radio_region_singapore">Singapore</string>
+    <string name="radio_region_usa">United States</string>
+    <string name="radio_region_uk">United Kingdom</string>
+</resources>

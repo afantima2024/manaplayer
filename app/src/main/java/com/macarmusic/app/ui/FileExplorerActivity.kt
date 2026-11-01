@@ -172,7 +172,9 @@ class FileExplorerActivity : AppCompatActivity() {
             ExplorerMode.MUSIC_FILE -> R.string.open_file
             ExplorerMode.IMAGES -> R.string.background_choose
             ExplorerMode.BACKUP_IMPORT -> R.string.backup_restore
+            ExplorerMode.RADIO_IMPORT -> R.string.radio_import
             ExplorerMode.BACKUP_EXPORT -> R.string.backup_export
+            ExplorerMode.RADIO_EXPORT -> R.string.radio_export
             ExplorerMode.LYRIC_CACHE -> R.string.explorer_lyric_folder
         }
         root.addView(text(22f).apply {
@@ -206,7 +208,7 @@ class FileExplorerActivity : AppCompatActivity() {
                     true
                 } else false
             }
-            isVisible = model.mode == ExplorerMode.BACKUP_EXPORT
+            isVisible = model.mode.export
         }
         root.addView(filename, LinearLayout.LayoutParams(-1, -2))
         val information = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -241,7 +243,11 @@ class FileExplorerActivity : AppCompatActivity() {
         androidPicker = button(actions, R.id.explorerAndroidPicker, R.string.android_file_picker) { systemPicker() }
         cancel = button(actions, R.id.explorerCancel, R.string.cancel) { if (!model.state.value.saving) finish() }
         select = button(actions, R.id.explorerSelect,
-            if (model.mode == ExplorerMode.BACKUP_EXPORT) R.string.backup_export else R.string.explorer_select_folder,
+            when (model.mode) {
+                ExplorerMode.BACKUP_EXPORT -> R.string.backup_export
+                ExplorerMode.RADIO_EXPORT -> R.string.radio_export
+                else -> R.string.explorer_select_folder
+            },
             model::select)
         actions.addView(Space(this), LinearLayout.LayoutParams(dp(16), ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         locations = button(actions, R.id.explorerLocations, R.string.explorer_locations, model::home)
@@ -405,10 +411,10 @@ class FileExplorerActivity : AppCompatActivity() {
                             putExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.parse(it))
                     }
                 })
-            } else if (model.mode == ExplorerMode.BACKUP_EXPORT) {
+            } else if (model.mode.export) {
                 val name = model.validFilename() ?: return
                 externalPickers[0].launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    type = "application/zip"
+                    type = model.mode.exportMime
                     addCategory(Intent.CATEGORY_OPENABLE)
                     putExtra(Intent.EXTRA_LOCAL_ONLY, true)
                     putExtra(Intent.EXTRA_TITLE, name)

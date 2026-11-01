@@ -1,5 +1,6 @@
 package com.macarmusic.app.playback
 
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import com.macarmusic.app.model.Track
 
@@ -28,16 +29,33 @@ internal fun Player.reconcileLibraryQueue(previous: Map<String, Track>, known: M
         return
     }
 
-    fun replaceChangedRange(from: Int, until: Int) {
+    val next = (0 until current).count { updated[it] != null }
+    replaceQueueAroundCurrent(original, updated.filterNotNull(), current, next)
+}
+
+internal fun Player.reselectCurrentItem(items: List<MediaItem>, index: Int): Boolean {
+    val selected = items.getOrNull(index) ?: return false
+    if (playerError != null || playbackState == Player.STATE_ENDED ||
+        currentMediaItem?.hasSource(selected.mediaId, selected.localConfiguration?.uri?.toString()) != true) return false
+    replaceQueueAroundCurrent(List(mediaItemCount, ::getMediaItemAt), items, currentMediaItemIndex, index)
+    return true
+}
+
+private fun Player.replaceQueueAroundCurrent(
+    original: List<MediaItem>, updated: List<MediaItem>, current: Int, next: Int,
+) {
+    fun replaceChangedRange(from: Int, until: Int, newFrom: Int, newUntil: Int) {
         var first = from
         var end = until
-        while (first < end && original[first] === updated[first]) first++
-        while (end > first && original[end - 1] === updated[end - 1]) end--
-        if (first < end) replaceMediaItems(first, end, updated.subList(first, end).filterNotNull())
+        var newFirst = newFrom
+        var newEnd = newUntil
+        while (first < end && newFirst < newEnd && original[first] == updated[newFirst]) { first++; newFirst++ }
+        while (end > first && newEnd > newFirst && original[end - 1] == updated[newEnd - 1]) { end--; newEnd-- }
+        if (first < end || newFirst < newEnd) replaceMediaItems(first, end, updated.subList(newFirst, newEnd))
     }
 
-    // Keep the current media source/buffer alive; batch each side instead of rebuilding N timelines.
-    replaceChangedRange(current + 1, original.size)
-    if (updated[current] !== original[current]) replaceMediaItem(current, checkNotNull(updated[current]))
-    replaceChangedRange(0, current)
+    // Keep the selected media period and buffer, including when its queue position changes.
+    replaceChangedRange(current + 1, original.size, next + 1, updated.size)
+    if (updated[next] != original[current]) replaceMediaItem(current, updated[next])
+    replaceChangedRange(0, current, 0, next)
 }

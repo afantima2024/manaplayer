@@ -36,20 +36,29 @@ class LocalBackupRepository(private val app: MaCarMusicApp) {
         return value
     }
 
-    private fun settings(language: String) = BackupSettings(
-        app.displaySettings.options.value, app.playbackSettings.options.value, app.sortOrder,
-        preferences.getInt("theme", androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES),
-        language, ColorSlotStore(context).read(),
-    )
+    private suspend fun settings(language: String): BackupSettings {
+        val catalog = app.radioCatalog.snapshot()
+        val ids = com.macarmusic.app.radio.RadioList.catalog(catalog.programs,
+            if (catalog.includeDefaults) app.radioCatalog.state.value.defaults else emptyList()).mapTo(hashSetOf()) { it.id }
+        val radio = app.radio.backup().let {
+            it.copy(stations = it.stations.intersect(ids), pins = it.pins?.filter(ids::contains))
+        }
+        return BackupSettings(
+            app.displaySettings.options.value, app.playbackSettings.options.value, app.sortOrder,
+            preferences.getInt("theme", androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES),
+            language, ColorSlotStore(context).read(), radio, catalog.programs, catalog.includeDefaults,
+        )
+    }
 
     suspend fun sharedExport(language: String): Uri = withContext(Dispatchers.IO) {
         val directory = File(app.cacheDir, "backup-exports")
         if (!directory.isDirectory && !directory.mkdir()) throw IOException(context.getString(R.string.backup_save_failed))
-        directory.listFiles()?.filter { it.isFile && it.name.startsWith("ManaMusicPlayer-") &&
+        directory.listFiles()?.filter { it.isFile &&
+            (it.name.startsWith("ManaMusicRadio-") || it.name.startsWith("ManaMusicPlayer-")) &&
             it.name.endsWith(".zip") && System.currentTimeMillis() - it.lastModified() > 86_400_000L }?.forEach {
             if (!it.delete()) Log.w("LocalBackup", "Could not remove expired shared backup")
         }
-        val file = File(directory, "ManaMusicPlayer-${System.currentTimeMillis()}-${UUID.randomUUID()}.zip")
+        val file = File(directory, "ManaMusicRadio-${System.currentTimeMillis()}-${UUID.randomUUID()}.zip")
         val uri = FileProvider.getUriForFile(app, "${app.packageName}.backups", file)
         var complete = false
         try {
@@ -124,12 +133,14 @@ class LocalBackupRepository(private val app: MaCarMusicApp) {
                 var preferencesChanged = false
                 try {
                     val currentOrigin = origin()
-                    app.repository.update { current ->
-                        val result = BackupEdits.merge(current, backup.manifest, currentOrigin)
-                        preferencesChanged = true
-                        if (!edit(replacement).commit()) throw IOException(context.getString(R.string.backup_settings_failed))
-                        merged = result
-                        result.library
+                    app.radioCatalog.withReplacement(replacement.radioPrograms, replacement.radioIncludeDefaults) {
+                        app.repository.update { current ->
+                            val result = BackupEdits.merge(current, backup.manifest, currentOrigin)
+                            preferencesChanged = true
+                            if (!edit(replacement).commit()) throw IOException(context.getString(R.string.backup_settings_failed))
+                            merged = result
+                            result.library
+                        }
                     }
                     committed = true
                 } catch (error: IOException) {
@@ -157,6 +168,7 @@ class LocalBackupRepository(private val app: MaCarMusicApp) {
                 withContext(Dispatchers.Main.immediate) {
                     app.playbackSettings.publishRestored(replacement.playback)
                     app.displaySettings.publishRestored(replacement.display)
+                    app.radio.publishRestored()
                 }
                 BackupRestoreResult(replacement.language,
                     checkNotNull(merged).library.tracks.count { BackupEdits.unavailable(it.uri) }, positionError)
@@ -174,6 +186,7 @@ class LocalBackupRepository(private val app: MaCarMusicApp) {
         .putString("loopMode", settings.playback.loop.name)
         .putString("playOrder", settings.playback.order.name)
         .putString("customColorSlots", Json.encodeToString(settings.colors))
+        .also { editor -> settings.radio?.let { app.radio.writeBackup(editor, it) } }
 
     private fun discardDirectory(directory: File) {
         require(directory.parentFile?.canonicalFile == app.cacheDir.canonicalFile &&

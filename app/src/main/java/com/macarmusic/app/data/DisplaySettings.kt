@@ -63,6 +63,9 @@ data class DisplayOptions(
     val widgetTransparency: Int = 50,
     val internalLyricExpiry: LyricCacheExpiry = LyricCacheExpiry.THIRTY_DAYS,
     val portableLyricExpiry: LyricCacheExpiry = LyricCacheExpiry.NEVER,
+    val showLibrary: Boolean = true,
+    val showQueue: Boolean = true,
+    val showPlaylists: Boolean = true,
 ) {
     init {
         require(customAccentColor == null || customAccentColor in 0..0xffffff)
@@ -101,6 +104,9 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
         blockOutline = BlockOutline(choice("blockStyle", BlockStyle.SOLID), readBlockCharacter(),
             preferences.getInt("blockArcDp", 18).coerceIn(0, 48), preferences.getBoolean("blockShadow", false)),
         navigationPosition = choice("navigationPosition", NavigationPosition.BOTTOM),
+        showLibrary = preferences.getBoolean("showLibrary", true),
+        showQueue = preferences.getBoolean("showQueue", true),
+        showPlaylists = preferences.getBoolean("showPlaylists", true),
         mainTimeMode = choice("mainTimeMode", PlaybackTimeMode.REMAINING),
         widgetTransparency = preferences.getInt("widgetTransparency", 50).coerceIn(0, 100),
         internalLyricExpiry = choice("internalLyricExpiry", LyricCacheExpiry.THIRTY_DAYS),
@@ -204,6 +210,9 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
             .putInt("blockArcDp", next.blockOutline.arcDp)
             .putBoolean("blockShadow", next.blockOutline.shadow)
             .putString("navigationPosition", next.navigationPosition.name)
+            .putBoolean("showLibrary", next.showLibrary)
+            .putBoolean("showQueue", next.showQueue)
+            .putBoolean("showPlaylists", next.showPlaylists)
             .putString("mainTimeMode", next.mainTimeMode.name)
             .putBoolean("lyricsDragSeek", next.lyricsDragSeek)
             .putBoolean("lyricsSmoothScroll", next.lyricsSmoothScroll)

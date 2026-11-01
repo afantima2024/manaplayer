@@ -7,6 +7,7 @@ import com.macarmusic.app.R
 enum class SettingsCategory(@IdRes val buttonId: Int, @IdRes val panelId: Int, @StringRes val label: Int) {
     GENERAL(R.id.categoryGeneral, R.id.settingsGeneralPanel, R.string.category_general),
     PLAYBACK(R.id.categoryPlayback, R.id.settingsPlaybackPanel, R.string.category_playback),
+    RADIO(R.id.categoryRadio, R.id.settingsRadioPanel, R.string.radio),
     SPECTRUM(R.id.categorySpectrum, R.id.settingsSpectrumPanel, R.string.spectrum),
     LYRICS(R.id.categoryLyrics, R.id.settingsLyricsPanel, R.string.lyrics),
     FOLDERS(R.id.categoryFolders, R.id.settingsFoldersPanel, R.string.folders),

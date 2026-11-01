@@ -1,0 +1,14 @@
+# UTF-8: one station name,URL per line.
+# A Group,#genre# heading applies to following channels.
+全国,#genre#
+中国之声,https://ngcdn001.cnr.cn/live/zgzs/index.m3u8
+经济之声,https://ngcdn002.cnr.cn/live/jjzs/index.m3u8
+音乐之声,https://ngcdn003.cnr.cn/live/yyzs/index.m3u8
+中国交通广播,https://ngcdn016.cnr.cn/live/gsgljtgb/index.m3u8
+环球资讯广播,https://sk.cri.cn/905.m3u8
+中国乡村之声,https://ngcdn017.cnr.cn/live/xczs/index.m3u8
+文艺之声,https://ngcdn010.cnr.cn/live/wyzs/index.m3u8
+经典音乐广播,https://ngcdn004.cnr.cn/live/dszs/index.m3u8
+# Repeat a channel name with another real URL for additional sources.
+# Keep and merge adds distinct sources without removing other stations.
+# Replace all stations keeps only this file's stations and sources.

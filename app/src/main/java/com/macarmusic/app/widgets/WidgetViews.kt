@@ -26,6 +26,7 @@ import com.macarmusic.app.model.WidgetPresentation
 import com.macarmusic.app.ui.MainActivity
 import com.macarmusic.app.ui.AccentTheme
 import com.macarmusic.app.ui.TimeText
+import com.macarmusic.app.radio.RadioProgram
 
 object WidgetViews {
     fun full(context: Context, kind: HomeWidgetKind, id: Int, state: WidgetPlayback,
@@ -36,8 +37,11 @@ object WidgetViews {
         setContentDescription(R.id.widget_root, state.track?.let {
             listOf(it.title, it.artist).filter(String::isNotBlank).joinToString(" - ")
         } ?: context.getString(R.string.widget_select_music))
-        setImageViewResource(R.id.widget_play, if (state.playing) R.drawable.ic_pause else R.drawable.ic_play)
-        setContentDescription(R.id.widget_play, context.getString(if (state.playing) R.string.pause else R.string.play))
+        val radio = RadioProgram.isRadio(state.track?.id)
+        setImageViewResource(R.id.widget_play, if (state.playing && radio) R.drawable.ic_stop
+            else if (state.playing) R.drawable.ic_pause else R.drawable.ic_play)
+        setContentDescription(R.id.widget_play, context.getString(if (state.playing && radio) R.string.radio_stop
+            else if (state.playing) R.string.pause else R.string.play))
         setOnClickPendingIntent(R.id.widget_play, if (state.track == null) open
             else action(context, kind, id, HomeWidgetAction.TOGGLE))
         if (kind == HomeWidgetKind.PLAY) return@apply
@@ -61,7 +65,7 @@ object WidgetViews {
         if (kind == HomeWidgetKind.ARTWORK) {
             setViewVisibility(R.id.widget_artwork, View.VISIBLE)
             if (cover != null) setImageViewBitmap(R.id.widget_artwork, cover)
-            else setImageViewResource(R.id.widget_artwork, R.drawable.ic_launcher)
+            else setImageViewResource(R.id.widget_artwork, if (radio) R.drawable.ic_radio else R.drawable.ic_launcher)
         }
         if (kind == HomeWidgetKind.LYRICS) {
             setOnClickPendingIntent(R.id.widget_lyric, open)
@@ -130,6 +134,7 @@ object WidgetViews {
 
     private fun progress(context: Context, views: RemoteViews, state: WidgetPlayback) {
         val time = if (state.failed) context.getString(R.string.widget_playback_failed)
+            else if (RadioProgram.isRadio(state.track?.id)) context.getString(R.string.radio_live)
             else context.getString(R.string.widget_progress_time, TimeText.format(state.positionMs),
                 state.durationMs.takeIf { it > 0 }?.let(TimeText::format) ?: context.getString(R.string.empty_time))
         views.setTextViewText(R.id.widget_time, time)

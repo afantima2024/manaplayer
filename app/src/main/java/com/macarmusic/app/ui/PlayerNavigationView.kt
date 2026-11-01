@@ -24,6 +24,8 @@ import androidx.appcompat.widget.AppCompatTextView
 import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.widget.TooltipCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.children
+import androidx.core.view.isVisible
 import androidx.core.view.AccessibilityDelegateCompat
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import com.google.android.material.color.MaterialColors
@@ -136,6 +138,31 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
 
     fun setOnItemSelectedListener(value: (Int) -> Unit) { listener = value }
 
+    fun setScreenVisibility(visible: (Int) -> Boolean) {
+        var changed = false
+        for (item in items) {
+            val show = visible(item.view.id)
+            if (item.view.isVisible != show) {
+                item.view.isVisible = show
+                changed = true
+            }
+        }
+        if (!visible(selectedItemId)) selectedItemId = R.id.nav_player
+        if (!changed) return
+        updateItemMargins()
+        requestLayout()
+    }
+
+    private fun updateItemMargins() {
+        val visible = row.children.filter { it.isVisible }.toList()
+        visible.forEachIndexed { index, child ->
+            (child.layoutParams as LinearLayout.LayoutParams).apply {
+                marginEnd = if (vertical == false && index != visible.lastIndex) gap else 0
+                bottomMargin = if (vertical == true && index != visible.lastIndex) gap else 0
+            }
+        }
+    }
+
     fun configureBlocks(enabled: Boolean, outline: BlockOutline) {
         val next = outline.takeIf { enabled && it.hasBorder }
         if (blockOutline == next) return
@@ -150,18 +177,19 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
             MeasureSpec.makeMeasureSpec(resolveSize(sideWidth, widthMeasureSpec), MeasureSpec.EXACTLY) else widthMeasureSpec
         val heightSpec = if (vertical == false)
             MeasureSpec.makeMeasureSpec(resolveSize(itemHeight, heightMeasureSpec), MeasureSpec.EXACTLY) else heightMeasureSpec
+        val visibleCount = row.children.count { it.isVisible }
         if (vertical == true && MeasureSpec.getMode(heightSpec) != MeasureSpec.UNSPECIFIED) {
             val height = maxOf(itemHeight,
-                (MeasureSpec.getSize(heightMeasureSpec) - gap * (row.childCount - 1)) / row.childCount)
+                (MeasureSpec.getSize(heightMeasureSpec) - gap * (visibleCount - 1)) / visibleCount)
             for (index in 0 until row.childCount) {
                 val child = row.getChildAt(index)
                 if (child.layoutParams.height != height)
                     child.layoutParams = child.layoutParams.apply { this.height = height }
             }
         } else if (vertical == false && MeasureSpec.getMode(widthSpec) != MeasureSpec.UNSPECIFIED) {
-            val available = MeasureSpec.getSize(widthSpec) - gap * (row.childCount - 1)
-            val width = if (labelsBesideIcons) maxOf(inlineWidth, (available - dp(48)) / items.size)
-                else maxOf(dp(48), available / row.childCount)
+            val available = MeasureSpec.getSize(widthSpec) - gap * (visibleCount - 1)
+            val width = if (labelsBesideIcons) maxOf(inlineWidth, (available - dp(48)) / (visibleCount - 1))
+                else maxOf(dp(48), available / visibleCount)
             for (index in 0 until row.childCount) {
                 val child = row.getChildAt(index)
                 val itemWidth = if (index == 0 && labelsBesideIcons) dp(48) else width
@@ -214,6 +242,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
                 marginEnd = if (index == row.childCount - 1) 0 else gap
             }
         }
+        updateItemMargins()
         if (vertical) {
             addView(ScrollView(context).apply {
                 isFillViewport = false
@@ -254,6 +283,8 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
                 setColor(container)
                 cornerRadius = dp(8).toFloat()
             } else null
+            // Android 6 can crash when an animated ripple loses its target during replacement.
+            if (android.os.Build.VERSION.SDK_INT == 23) item.view.background?.jumpToCurrentState()
             item.view.background = RippleDrawable(ripple, fill, android.graphics.drawable.ColorDrawable(android.graphics.Color.WHITE))
             item.view.foreground = item.view.playerFocusForeground(border())
         }

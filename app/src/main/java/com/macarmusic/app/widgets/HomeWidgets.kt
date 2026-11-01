@@ -20,6 +20,7 @@ import com.macarmusic.app.model.WidgetPresentation
 import com.macarmusic.app.model.LyricAppearance
 import com.macarmusic.app.model.ThemeAccent
 import com.macarmusic.app.playback.toTrack
+import com.macarmusic.app.radio.RadioProgram
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -111,8 +112,17 @@ class HomeWidgets(private val app: MaCarMusicApp) {
         if (player != null) updatePlayer() else {
             val version = generation
             val saved = app.playback.read()
+            if (app.radio.options.value.let { it.enabled && it.active }) app.radioCatalog.awaitReady()
             if (player == null && generation == version) {
                 state = WidgetPlayback.restored(saved, app.playbackSettings.muted.value)
+                val radio = app.radio.options.value
+                val station = if (radio.enabled && radio.active) app.radioCatalog.find(radio.stationId) else null
+                station?.let {
+                    val stations = app.radioCatalog.state.value.programs
+                    val index = stations.indexOf(it)
+                    state = state.copy(track = it.mediaItem(app.localizedContext).toTrack(), positionMs = 0, durationMs = 0,
+                        previous = index > 0, next = index < stations.lastIndex)
+                }
                 clearStaleAssets()
                 publish()
                 loadAssets()
@@ -134,8 +144,10 @@ class HomeWidgets(private val app: MaCarMusicApp) {
             playing = source.playWhenReady && source.playbackState != Player.STATE_ENDED && source.playerError == null,
             advancing = source.isPlaying,
             positionMs = source.currentPosition.coerceAtLeast(0),
-            durationMs = source.duration.takeIf { it > 0 } ?: track?.durationMs?.coerceAtLeast(0) ?: 0,
-            previous = track != null && source.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS),
+            durationMs = if (RadioProgram.isRadio(track?.id)) 0
+                else source.duration.takeIf { it > 0 } ?: track?.durationMs?.coerceAtLeast(0) ?: 0,
+            previous = track != null && if (RadioProgram.isRadio(track.id)) source.hasPreviousMediaItem()
+                else source.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS),
             next = track != null && source.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM),
             muted = app.playbackSettings.muted.value,
             failed = source.playerError != null,
@@ -144,7 +156,7 @@ class HomeWidgets(private val app: MaCarMusicApp) {
         publish()
         loadAssets()
         observeScreen()
-        val needsTicks = WidgetPresentation.needsTicks(ids.keys.any { it != HomeWidgetKind.PLAY },
+        val needsTicks = !RadioProgram.isRadio(track?.id) && WidgetPresentation.needsTicks(ids.keys.any { it != HomeWidgetKind.PLAY },
             state.advancing, power.isInteractive)
         if (!needsTicks || updateFailed) {
             ticker?.cancel()
@@ -197,6 +209,14 @@ class HomeWidgets(private val app: MaCarMusicApp) {
 
     private fun loadAssets() {
         val track = state.track
+        if (RadioProgram.isRadio(track?.id)) {
+            cancelAssets()
+            cover = null
+            lyricResult = null
+            lyricObserver?.cancel()
+            lyricObserver = null
+            return
+        }
         if (HomeWidgetKind.ARTWORK !in ids || artworkUri != track?.uri) {
             artworkJob?.cancel()
             artworkJob = null
@@ -295,6 +315,7 @@ class HomeWidgets(private val app: MaCarMusicApp) {
     }
 
     private fun lyricText(): CharSequence {
+        if (RadioProgram.isRadio(state.track?.id)) return app.text(R.string.radio_live)
         val lyrics = lyricResult?.lyrics
         val text = WidgetPresentation.lyric(lyrics, state.positionMs) ?: return app.text(when {
             state.track == null -> R.string.widget_select_music

@@ -31,6 +31,12 @@
                 android:layout_height="wrap_content"
                 android:text="@string/category_playback" />
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/categoryRadio"
+                style="@style/SettingCategory"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/radio" />
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/categorySpectrum"
                 style="@style/SettingCategory"
                 android:layout_width="match_parent"
@@ -254,6 +260,42 @@
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content" />
+                    <TextView
+                        style="@style/SettingLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/navigation_buttons" />
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/settingsShowLibrary"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="48dp"
+                        android:text="@string/navigation_show_library"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="16sp" />
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/settingsShowQueue"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="48dp"
+                        android:text="@string/navigation_show_queue"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="16sp" />
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/settingsShowPlaylists"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="48dp"
+                        android:text="@string/navigation_show_playlists"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="16sp" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:padding="8dp"
+                        android:text="@string/navigation_buttons_help"
+                        android:textColor="?attr/colorOnSurfaceVariant"
+                        android:textSize="14sp" />
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/settingsControlBlocks"
                         android:layout_width="match_parent"
@@ -381,6 +423,9 @@
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:textSize="16sp" />
                 </LinearLayout>
+                <include
+                    android:id="@+id/settingsRadioPanel"
+                    layout="@layout/view_radio_settings" />
                 <LinearLayout
                     android:id="@+id/settingsPlaybackPanel"
                     android:layout_width="match_parent"

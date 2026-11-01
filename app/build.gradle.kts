@@ -13,8 +13,8 @@ android {
         applicationId = "com.macarmusic.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 48
-        versionName = "1.29.5"
+        versionCode = 58
+        versionName = "1.36.0"
         resourceConfigurations += listOf("en", "zh")
         testInstrumentationRunner = if (providers.gradleProperty("optimizedSmoke").orNull == "true") {
             "com.macarmusic.app.OptimizedSmokeInstrumentation"
@@ -78,6 +78,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("androidx.media3:media3-exoplayer:1.6.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.6.1")
     implementation("androidx.media3:media3-session:1.6.1")
 
     testImplementation("junit:junit:4.13.2")

@@ -5,6 +5,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisualOptionsTest {
+    @Test fun optionalNavigationPagesDefaultToVisibleAndRoundTripIndependently() {
+        val json = kotlinx.serialization.json.Json
+        val legacy = json.decodeFromString<DisplayOptions>("{}")
+        assertTrue(legacy.showLibrary)
+        assertTrue(legacy.showQueue)
+        assertTrue(legacy.showPlaylists)
+        for (bits in 0..7) {
+            val options = DisplayOptions(showLibrary = bits and 1 != 0, showQueue = bits and 2 != 0,
+                showPlaylists = bits and 4 != 0)
+            assertEquals(options, json.decodeFromString<DisplayOptions>(
+                json.encodeToString(DisplayOptions.serializer(), options)))
+            val normalized = options.copy(blockOutline = BlockOutline(BlockStyle.NONE)).normalized()
+            assertEquals(options.showLibrary, normalized.showLibrary)
+            assertEquals(options.showQueue, normalized.showQueue)
+            assertEquals(options.showPlaylists, normalized.showPlaylists)
+        }
+    }
+
     @Test fun spectrumOriginsAndBandCountsPreserveExistingDefaultsAndRoundTrip() {
         val json = kotlinx.serialization.json.Json
         assertEquals(SpectrumOrigin.BOTTOM, SpectrumOptions().origin)

@@ -8,6 +8,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.provider.DocumentsContract
 import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -22,6 +23,8 @@ import com.macarmusic.app.model.Track
 import com.macarmusic.app.model.CollectionKind
 import com.macarmusic.app.model.PlaybackCollection
 import com.macarmusic.app.playback.reconcileLibraryQueue
+import com.macarmusic.app.playback.reselectCurrentItem
+import com.macarmusic.app.playback.RadioSessionPlayer
 import com.macarmusic.app.playback.toMediaItem
 import com.macarmusic.app.playback.collection
 import com.macarmusic.app.playback.withCollection
@@ -51,6 +54,10 @@ class LibraryQueueTest {
                 PackageManager.PERMISSION_GRANTED
         }
         val cache = DocumentsContract.buildTreeDocumentUri("${app.packageName}.test.cache", "root")
+        await {
+            app.checkUriPermission(cache, Process.myPid(), Process.myUid(), Intent.FLAG_GRANT_READ_URI_PERMISSION) ==
+                PackageManager.PERMISSION_GRANTED
+        }
         await {
             app.contentResolver.call(cache, "cacheFixture", null, null)?.getString("grantToken") == token
         }
@@ -89,6 +96,132 @@ class LibraryQueueTest {
         assertSame(item, listOf(item).withLibraryMetadata(mapOf(track.id to track)).single())
         assertSame(item, listOf(item).withLibraryMetadata(emptyMap()).single())
         assertSame(item, listOf(item).withLibraryMetadata(mapOf(track.id to track.copy(uri = "$audio?new"))).single())
+    }
+
+    @Test fun reselectingCurrentSongDoesNotMutateOrReopenAThousandItemQueue() = withPlayer { player, counted ->
+        val items = tracks(1000).map(Track::toMediaItem)
+        onMain {
+            player.setMediaItems(items, 501, 20_000)
+            player.prepare(); player.play()
+        }
+        await { player.isPlaying }
+        var loads = 0
+        onMain {
+            val period = player.currentTimeline.getUidOfPeriod(player.currentPeriodIndex)
+            player.addAnalyticsListener(object : AnalyticsListener {
+                override fun onLoadStarted(eventTime: AnalyticsListener.EventTime,
+                    loadEventInfo: LoadEventInfo, mediaLoadData: MediaLoadData) {
+                    if (eventTime.mediaPeriodId?.periodUid == period) loads++
+                }
+            })
+            val position = player.currentPosition
+            repeat(10) { assertTrue(counted.reselectCurrentItem(items, 501)) }
+            assertEquals(0, counted.mutations)
+            assertEquals(period, player.currentTimeline.getUidOfPeriod(player.currentPeriodIndex))
+            assertTrue(player.currentPosition in position..position + 1000)
+            assertTrue(player.isPlaying)
+        }
+        SystemClock.sleep(250)
+        onMain { assertEquals("The active file must not reopen", 0, loads) }
+    }
+
+    @Test fun reselectingSongAdoptsNewQueueAndCollectionWithoutLosingItsPeriodOrBuffer() = withPlayer { player, counted ->
+        val tracks = tracks(1000)
+        val items = tracks.map(Track::toMediaItem)
+        val collection = PlaybackCollection.playlist("reselection")
+        val selected = items[501]
+        val replacement = listOf(items[900].withCollection(collection), selected, items[600], items[400])
+        onMain {
+            player.setMediaItems(items, 501, 17_000)
+            player.shuffleModeEnabled = true
+            player.repeatMode = Player.REPEAT_MODE_ALL
+            player.prepare(); player.play()
+        }
+        await { player.isPlaying }
+        var currentLoads = 0
+        onMain {
+            val period = player.currentTimeline.getUidOfPeriod(player.currentPeriodIndex)
+            player.addAnalyticsListener(object : AnalyticsListener {
+                override fun onLoadStarted(eventTime: AnalyticsListener.EventTime,
+                    loadEventInfo: LoadEventInfo, mediaLoadData: MediaLoadData) {
+                    if (eventTime.mediaPeriodId?.periodUid == period) currentLoads++
+                }
+            })
+            val position = player.currentPosition
+            assertTrue(counted.reselectCurrentItem(replacement, 1))
+            assertEquals(2, counted.mutations)
+            assertEquals(1, player.currentMediaItemIndex)
+            assertEquals(replacement, List(player.mediaItemCount, player::getMediaItemAt))
+            assertEquals(collection, player.getMediaItemAt(0).collection())
+            assertEquals(period, player.currentTimeline.getUidOfPeriod(player.currentPeriodIndex))
+            assertTrue(player.currentPosition in position..position + 500)
+            assertTrue(player.isPlaying)
+            assertTrue(player.shuffleModeEnabled)
+            assertEquals(Player.REPEAT_MODE_ALL, player.repeatMode)
+        }
+        SystemClock.sleep(250)
+        onMain { assertEquals("Queue changes must retain the active buffer", 0, currentLoads) }
+    }
+
+    @Test fun reselectingPausedSongCanNarrowGrowAndMoveTheQueueWithoutResettingPosition() = withPlayer { player, counted ->
+        val items = tracks(10).map(Track::toMediaItem)
+        onMain {
+            player.setMediaItems(items, 5, 17_000)
+            val period = player.currentTimeline.getUidOfPeriod(player.currentPeriodIndex)
+            for ((replacement, index) in listOf(
+                listOf(items[5].withCollection(PlaybackCollection.playlist("only"))) to 0,
+                listOf(items[5], items[0], items[1]) to 0,
+                listOf(items[8], items[9], items[5]) to 2,
+                listOf(items[2], items[5], items[5], items[3]) to 2,
+            )) {
+                assertTrue(counted.reselectCurrentItem(replacement, index))
+                assertEquals(replacement, List(player.mediaItemCount, player::getMediaItemAt))
+                assertEquals(index, player.currentMediaItemIndex)
+                assertEquals(period, player.currentTimeline.getUidOfPeriod(player.currentPeriodIndex))
+                assertEquals(17_000L, player.currentPosition)
+                assertFalse(player.playWhenReady)
+            }
+        }
+    }
+
+    @Test fun reselectingRequiresBothTheSameMediaIdAndTheSameSourceUri() = withPlayer { player, counted ->
+        val items = tracks(2).map(Track::toMediaItem)
+        onMain {
+            player.setMediaItems(items, 0, 17_000)
+            assertFalse(counted.reselectCurrentItem(items, 1))
+            assertFalse(counted.reselectCurrentItem(listOf(items[0].buildUpon().setUri("$audio?renewed=1").build()), 0))
+            assertFalse(counted.reselectCurrentItem(emptyList(), 0))
+            assertFalse(counted.reselectCurrentItem(items, -1))
+            assertEquals(0, counted.mutations)
+            assertEquals(17_000L, player.currentPosition)
+        }
+    }
+
+    @Test fun ordinarySessionSelectionPreservesPositionButExplicitRestoreAndEndedReplayDoNot() = withPlayer { player, _ ->
+        val items = tracks(2).map(Track::toMediaItem)
+        lateinit var session: RadioSessionPlayer
+        onMain {
+            session = RadioSessionPlayer(player) {}
+            session.setMediaItems(items, 1, 17_000)
+            session.prepare(); session.pause()
+        }
+        await { session.playbackState == Player.STATE_READY }
+        onMain {
+            session.setMediaItems(listOf(items[1]), 0, C.TIME_UNSET)
+            assertEquals(17_000L, player.currentPosition)
+            assertFalse(player.playWhenReady)
+            session.setMediaItems(listOf(items[1]), 0, 7_000)
+        }
+        await { session.playbackState == Player.STATE_READY && session.currentPosition == 7_000L }
+        onMain {
+            assertFalse(player.playWhenReady)
+            session.seekTo(session.duration)
+            session.play()
+        }
+        await { session.playbackState == Player.STATE_ENDED }
+        onMain { session.setMediaItems(listOf(items[1]), 0, C.TIME_UNSET); session.prepare(); session.play() }
+        await { session.isPlaying }
+        onMain { assertTrue(session.currentPosition < 3_000) }
     }
 
     @Test fun interleavedRemovalPreservesPlayingDuplicateOccurrenceAndBuffer() = withPlayer { player, counted ->

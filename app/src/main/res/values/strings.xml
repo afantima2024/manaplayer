@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">ManaMusicPlayer</string>
+    <string name="app_name">ManaMusicRadio</string>
     <string name="now_playing">Playing</string>
     <string name="library">Library</string>
     <string name="folders">Folders</string>
@@ -113,7 +113,7 @@
     <string name="dismiss">Dismiss message</string>
     <string name="more_options">More options</string>
     <string name="remove_source">Remove folder reference</string>
-    <string name="remove_source_body">Remove “%1$s” from ManaMusicPlayer, along with tracks that belong only to it? Favorites, playlist entries, and queued references to those tracks will also be removed. Music files will NOT be deleted.</string>
+    <string name="remove_source_body">Remove “%1$s” from ManaMusicRadio, along with tracks that belong only to it? Favorites, playlist entries, and queued references to those tracks will also be removed. Music files will NOT be deleted.</string>
     <string name="remove_track">Remove library reference</string>
     <string name="remove_track_body">Remove “%1$s” from the library, playlists, favorites, and queue? The actual file will NOT be deleted. A future folder scan can add it again.</string>
     <string name="remove">Remove</string>
@@ -131,7 +131,7 @@
     <string name="back_playlists">All playlists</string>
     <string name="song_details">Title: %1$s\nArtist: %2$s\nAlbum: %3$s\nDuration: %4$s\nTrack: %5$s\nYear: %6$s\nGenre: %7$s\nFile: %8$s\nFormat: %9$s\n\nFile location:\n%10$s</string>
     <string name="local_documents_only">The file manager returned an unsupported file address. Use the built-in explorer, or an Android-compatible picker that grants content URI access.</string>
-    <string name="external_media_unavailable">That song is not a saved music reference. Open ManaMusicPlayer and select it again.</string>
+    <string name="external_media_unavailable">That song is not a saved music reference. Open ManaMusicRadio and select it again.</string>
     <string name="invalid_folder">The provider did not return a valid folder.</string>
     <string name="provider_no_response">The storage provider did not respond. Reconnect the drive and retry.</string>
     <string name="document_unavailable">The file or folder is unavailable. Reconnect the drive or select the folder again.</string>
@@ -151,8 +151,8 @@
     <string name="playback_position_load_failed">The latest playback position could not be read: %1$s. The queue and its earlier position were recovered; the damaged checkpoint was preserved. Choose a new track to resume saving.</string>
     <string name="playback_save_failed">The latest playback position could not be saved: %1$s</string>
     <string name="playback_failed">Playback stopped for “%1$s” (%2$s). Reconnect storage or select another track; press Play to retry. No tracks were automatically skipped.</string>
-    <string name="controller_failed">Playback connection failed: %1$s. Close and reopen ManaMusicPlayer to reconnect.</string>
-    <string name="foreground_failed">Android blocked background playback. Open ManaMusicPlayer and press Play again.</string>
+    <string name="controller_failed">Playback connection failed: %1$s. Close and reopen ManaMusicRadio to reconnect.</string>
+    <string name="foreground_failed">Android blocked background playback. Open ManaMusicRadio and press Play again.</string>
     <string name="picker_missing">No compatible Android file picker could be opened. Use an available location in the built-in explorer. On newer Android, access to a new unindexed folder still requires a working system picker.</string>
     <string name="folder_picker_missing">System folder picker unavailable</string>
     <string name="folder_picker_compatibility">Use the built-in explorer to choose an authorized folder or indexed Device music. On Android 6–9, Device storage / USB can also browse readable shared storage after permission is granted. Newer Android still needs a working system picker to authorize new folders.</string>
@@ -170,11 +170,11 @@
     <string name="device_music_unfiled">Audio without folder information</string>
     <string name="access_music">Music-library permission</string>
     <string name="allow_music_access">Allow music access</string>
-    <string name="music_permission_explanation">Device music uses Android\'s audio library instead of an external folder picker. Android 13+ requests music/audio access; Android 6–12 calls this storage access. ManaMusicPlayer reads indexed audio and does not modify music files. Permission is requested only when you choose this option, not when the app starts.</string>
+    <string name="music_permission_explanation">Device music uses Android\'s audio library instead of an external folder picker. Android 13+ requests music/audio access; Android 6–12 calls this storage access. ManaMusicRadio reads indexed audio and does not modify music files. Permission is requested only when you choose this option, not when the app starts.</string>
     <string name="music_permission_denied">Music access was not granted. Choose Device music to retry or enable music/storage access in the app\'s Android settings. Your saved music references are kept.</string>
     <string name="music_permission_settings">Android is not offering the music-access prompt again. Open this app\'s Android settings, allow music/audio (or storage) access, then return here.</string>
     <string name="open_app_settings">App permissions</string>
-    <string name="permission_ui_missing">This head unit could not open Android\'s permission settings. Enable music/storage access for ManaMusicPlayer in the head unit\'s app settings.</string>
+    <string name="permission_ui_missing">This head unit could not open Android\'s permission settings. Enable music/storage access for ManaMusicRadio in the head unit\'s app settings.</string>
     <string name="picker_no_document">The file picker did not return a document.</string>
     <string name="no_tracks_to_play">No supported tracks to play.</string>
     <string name="artwork_too_large">Embedded artwork is too large; showing the default cover.</string>
@@ -366,6 +366,11 @@
     <string name="spectrum_color_high">Top color</string>
     <string name="spectrum_reset_colors">Reset this palette</string>
     <string name="navigation_position">Navigation toolbar position</string>
+    <string name="navigation_buttons">Navigation buttons</string>
+    <string name="navigation_show_library">Show Library</string>
+    <string name="navigation_show_queue">Show Queue</string>
+    <string name="navigation_show_playlists">Show Playlists</string>
+    <string name="navigation_buttons_help">Hiding a page keeps your music, queue and playlists and does not stop playback. Playing and Folders always remain visible. Radio has its own enable switch under Settings &gt; Radio.</string>
     <string name="navigation_bottom">Bottom</string>
     <string name="navigation_left">Left</string>
     <string name="navigation_right">Right</string>
@@ -475,7 +480,7 @@
     <string name="forward">Forward 10 seconds</string>
     <string name="media_controls_channel">Music playback</string>
     <string name="seek_unavailable">Seeking is not available for this track yet.</string>
-    <string name="about_system_controls">SYSTEM MUSIC PLAYER\nGeneral > Default music player opens Android app settings. Select ManaMusicPlayer if a music-app choice is offered. Otherwise, open a local audio document from a file manager, choose ManaMusicPlayer and select Always when available. Some car launchers have their own player setting. Opening a selected audio document starts playback; launching the music app normally does not.\n\nSYSTEM PLAYBACK PANEL\nStart a song and pull down the Android status bar for Previous, Play/Pause and Next. Expand the panel for Back 10 seconds and Forward 10 seconds. Tap the song card to return to Playing. Controls continue to work while the player is in the background. Panel layout depends on Android and the device. If the panel is hidden, check the app notification settings and the Music playback channel.\n\nHOME SCREEN WIDGETS\nLong-press an empty area of the home screen, open Widgets and choose ManaMusicPlayer. General also provides a Home screen widgets button for supported launchers. Controls (3x1) includes previous, play/pause, next, player mute and bottom progress. Artwork (3x1) adds a thumbnail behind Play; Lyrics (3x2) has top-aligned controls and current/next lyrics filling the space below; Play/Pause (1x1) is a single button. The lyric widget uses the current-line and other-line font sizes and colors from Lyrics settings. Larger fonts may need a taller widget. General > Widget background transparency adjusts the background without fading the controls. The lyric widget uses local or already cached lyrics and follows lyrics loaded in the player. Tap the background, lyric or progress bar to open Playing for seeking; the artwork Play tile toggles playback. Mute affects only this player, not navigation or other apps. Progress updates pause when playback stops or the screen turns off. Adding a widget does not start playback. Grid sizes and resizing depend on the launcher; older placements may need resizing or re-adding.\n\nAPPEARANCE AND BUTTONS\nChoose Customize under Appearance in General to show picture, slideshow, blur and tint controls there. Other themes hide those controls without deleting saved choices. Main-window buttons keep icons at the leading edge and words centered. Selected navigation items, Favorite, Shuffle, Repeat and mute use 120% text/icon size while the buttons keep their dimensions. Settings detail controls retain their usual alignment.\n\nREMOTE CONTROL\nUse directional arrows to move focus and OK/Enter to activate a button or open a folder/file. The accent outline marks keyboard focus; it is separate from the active page or enabled playback mode. Back returns to the parent folder. Disabled controls are skipped: 10-second seeking requires a loaded, seekable track, and Next requires another queued track. Dedicated media keys still control playback rather than moving focus.</string>
+    <string name="about_system_controls">SYSTEM MUSIC PLAYER\nGeneral > Default music player opens Android app settings. Select ManaMusicRadio if a music-app choice is offered. Otherwise, open a local audio document from a file manager, choose ManaMusicRadio and select Always when available. Some car launchers have their own player setting. Opening a selected audio document starts playback; launching the music app normally does not.\n\nSYSTEM PLAYBACK PANEL\nStart a song and pull down the Android status bar for Previous, Play/Pause and Next. Expand the panel for Back 10 seconds and Forward 10 seconds. Tap the song card to return to Playing. Controls continue to work while the player is in the background. Panel layout depends on Android and the device. If the panel is hidden, check the app notification settings and the Music playback channel.\n\nHOME SCREEN WIDGETS\nLong-press an empty area of the home screen, open Widgets and choose ManaMusicRadio. General also provides a Home screen widgets button for supported launchers. Controls (3x1) includes previous, play/pause, next, player mute and bottom progress. Artwork (3x1) adds a thumbnail behind Play; Lyrics (3x2) has top-aligned controls and current/next lyrics filling the space below; Play/Pause (1x1) is a single button. The lyric widget uses the current-line and other-line font sizes and colors from Lyrics settings. Larger fonts may need a taller widget. General > Widget background transparency adjusts the background without fading the controls. The lyric widget uses local or already cached lyrics and follows lyrics loaded in the player. Tap the background, lyric or progress bar to open Playing for seeking; the artwork Play tile toggles playback. Mute affects only this player, not navigation or other apps. Progress updates pause when playback stops or the screen turns off. Adding a widget does not start playback. Grid sizes and resizing depend on the launcher; older placements may need resizing or re-adding.\n\nAPPEARANCE AND BUTTONS\nChoose Customize under Appearance in General to show picture, slideshow, blur and tint controls there. Other themes hide those controls without deleting saved choices. Main-window buttons keep icons at the leading edge and words centered. Selected navigation items, Favorite, Shuffle, Repeat and mute use 120% text/icon size while the buttons keep their dimensions. Settings detail controls retain their usual alignment.\n\nREMOTE CONTROL\nUse directional arrows to move focus and OK/Enter to activate a button or open a folder/file. The accent outline marks keyboard focus; it is separate from the active page or enabled playback mode. Back returns to the parent folder. Disabled controls are skipped: 10-second seeking requires a loaded, seekable track, and Next requires another queued track. Dedicated media keys still control playback rather than moving focus.</string>
     <string name="file_location_partial">%1$s\nThe storage provider does not expose the complete folder path.</string>
     <string name="save">Save</string>
     <string name="select_songs">Select songs</string>
@@ -497,8 +502,8 @@
     <string name="folder_pinned">Pinned · protected from removal</string>
     <string name="pinned_folder_name">Pinned · %1$s</string>
     <string name="unpin_first">This folder is pinned. Unpin it in Settings → Folders → Pin folders before deselecting or removing it, its songs, or a playlist containing them.</string>
-    <string name="app_logo">ManaMusicPlayer logo</string>
-    <string name="logo_now_playing">ManaMusicPlayer logo · Playing</string>
+    <string name="app_logo">ManaMusicRadio logo</string>
+    <string name="logo_now_playing">ManaMusicRadio logo · Playing</string>
     <string name="about_version">Version %1$s (build %2$d)</string>
     <string name="color_slots_help">Seven rainbow colors, five custom slots and + for more. Select a color, then Apply. Cancel discards pending slot edits.</string>
     <string name="color_edit_slot">Edit this color</string>
@@ -562,9 +567,9 @@
     <string name="default_music_player">Default music player</string>
     <string name="folder_loop_song_selection">No saved folder for this song. Playing the requested song selection.</string>
     <string name="open_system_settings">Open system settings</string>
-    <string name="default_music_player_help">Choose ManaMusicPlayer if your device offers a default music-app option. Otherwise, open a local audio file in a file manager, choose ManaMusicPlayer and select Always when offered. Some car launchers have their own music-app setting. Android controls this choice; the player cannot change it automatically.</string>
-    <string name="default_music_player_unavailable">System app settings are unavailable. Select ManaMusicPlayer in your file manager or car launcher settings.</string>
-    <string name="widgets_help">While parked, long-press an empty area of the home screen, open Widgets and choose ManaMusicPlayer. Controls and Artwork use 3x1 cells, Lyrics 3x2, and Play/Pause 1x1 on supported grids. General adjusts background transparency. Existing widgets may need resizing or re-adding. Android 8 and newer launchers may offer a pin confirmation here. Some car launchers do not support Android widgets or these exact grid sizes.</string>
+    <string name="default_music_player_help">Choose ManaMusicRadio if your device offers a default music-app option. Otherwise, open a local audio file in a file manager, choose ManaMusicRadio and select Always when offered. Some car launchers have their own music-app setting. Android controls this choice; the player cannot change it automatically.</string>
+    <string name="default_music_player_unavailable">System app settings are unavailable. Select ManaMusicRadio in your file manager or car launcher settings.</string>
+    <string name="widgets_help">While parked, long-press an empty area of the home screen, open Widgets and choose ManaMusicRadio. Controls and Artwork use 3x1 cells, Lyrics 3x2, and Play/Pause 1x1 on supported grids. General adjusts background transparency. Existing widgets may need resizing or re-adding. Android 8 and newer launchers may offer a pin confirmation here. Some car launchers do not support Android widgets or these exact grid sizes.</string>
     <string name="widget_controls_name">Widget 1 - Controls (3x1)</string>
     <string name="widget_artwork_name">Widget 2 - Artwork (3x1)</string>
     <string name="widget_lyrics_name">Widget 3 - Lyrics (3x2)</string>
@@ -615,13 +620,13 @@
     <string name="explorer_unavailable">This location is unavailable or outside accessible shared storage. Reconnect the drive, restore its permission, or choose another location.</string>
     <string name="explorer_read_only">This folder cannot be selected for writing. Grant writable folder access with the Android picker or choose another location.</string>
     <string name="explorer_read_access">Allow storage access to browse shared internal storage and readable USB volumes on Android 6–9. Music files will not be changed. Set up storage while parked.</string>
-    <string name="explorer_write_access">Allow storage access to save a backup or use a lyric-cache folder on Android 6–9. Writing is used only for the selected backup and the player’s own lyric-cache records; music files are not changed.</string>
+    <string name="explorer_write_access">Allow storage access to export backups or radio lists, or use a lyric-cache folder on Android 6–9. Writing is used only for selected exports and the player’s own lyric-cache records; music files are not changed.</string>
     <string name="explorer_permission_denied">Storage access is not available. Allow it in app settings, use an authorized folder, or try the Android picker.</string>
     <string name="explorer_legacy_unavailable">Direct shared-storage browsing is available only on Android 6–9. On newer Android versions, grant a folder with the Android picker or use indexed device music.</string>
-    <string name="explorer_filename">Backup filename</string>
-    <string name="explorer_invalid_name">Enter a filename without path separators or control characters (maximum 255 UTF-8 bytes, including .zip).</string>
+    <string name="explorer_filename">Export filename</string>
+    <string name="explorer_invalid_name">Enter a filename without path separators or control characters (maximum 255 UTF-8 bytes, including its extension).</string>
     <string name="explorer_exists">A file or folder with this name already exists. Choose a different filename; existing files will not be overwritten.</string>
-    <string name="explorer_create_failed">The storage provider could not create the requested backup file.</string>
+    <string name="explorer_create_failed">The storage provider could not create the requested export file.</string>
     <string name="explorer_select_folder">Use this folder</string>
     <string name="explorer_select_images">Use images (%1$d)</string>
     <string name="explorer_selection_limit">Select at most %1$d images.</string>

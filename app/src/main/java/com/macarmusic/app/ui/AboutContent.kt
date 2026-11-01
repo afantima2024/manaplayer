@@ -60,7 +60,8 @@ object AboutContent {
             textSize = 16f
             setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
             text = context.getString(R.string.about_body) + "\n\n" + context.getString(R.string.about_system_controls) +
-                "\n\n" + context.getString(R.string.about_lyric_cache)
+                "\n\n" + context.getString(R.string.about_lyric_cache) +
+                "\n\n" + context.getString(R.string.radio_help_title) + "\n" + context.getString(R.string.radio_help)
         })
     }
 }

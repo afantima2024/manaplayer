@@ -227,6 +227,7 @@ class MusicIntegrationTest {
                     slideshow = SlideshowOptions(), settingsTransition = TransitionStyle.FADE,
                     timeMode = PlaybackTimeMode.ELAPSED, spectrum = SpectrumOptions(), controlBlocks = true,
                     mainTimeMode = PlaybackTimeMode.ELAPSED, navigationPosition = NavigationPosition.BOTTOM,
+                    showLibrary = true, showQueue = true, showPlaylists = true,
                     lyricsDragSeek = false, lyricsSmoothScroll = true, lyricAppearance = LyricAppearance(),
                     landscapeLyrics = LyricSide.START, portraitLyrics = LyricSide.START, themeAccent = ThemeAccent.DEFAULT,
                     blockOutline = BlockOutline(), customAccentColor = null, widgetTransparency = 50)
@@ -1593,6 +1594,92 @@ class MusicIntegrationTest {
                 onView(withId(R.id.artwork)).check(matches(isDisplayed()))
                 assertEquals(20_000, onMainResult { controller.currentPosition })
                 assertFalse(onMainResult { controller.playWhenReady })
+            } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
+        }
+    }
+
+    @Test fun repeatedMusicSelectionsKeepPositionWhileAdoptingTheRequestedQueueAndCollection() {
+        val tracks = fixtureTracks()
+        val selected = tracks[1]
+        val collection = PlaybackCollection.playlist("reselect-playlist")
+        runBlocking {
+            app.repository.update { it.copy(playlists = listOf(
+                LocalPlaylist(collection.id, "Reselect playlist", tracks.map(Track::id)))) }
+        }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+            val controller = future.get(20, TimeUnit.SECONDS)
+            try {
+                await { app.playbackReady.value }
+                onMain {
+                    controller.setMediaItems(tracks.map(Track::toMediaItem), 1, 17_000)
+                    controller.prepare(); controller.play()
+                }
+                await { controller.isPlaying }
+                fun select(items: List<Track>, index: Int, context: PlaybackCollection? = null) {
+                    scenario.onActivity {
+                        ViewModelProvider(it)[MusicViewModel::class.java].requestPlay(items, index, collection = context)
+                    }
+                    await {
+                        controller.isPlaying && controller.currentMediaItem?.mediaId == selected.id &&
+                            controller.mediaItemCount == items.size && controller.currentMediaItemIndex == index &&
+                            ViewModelProvider(resumedActivity())[MusicViewModel::class.java].playRequest.value == null
+                    }
+                    assertTrue("Selecting the same song must not seek to zero", onMainResult { controller.currentPosition >= 17_000 })
+                }
+                repeat(3) { select(tracks, 1) }
+                select(tracks.reversed(), 0, collection)
+                await { runBlocking { app.playback.read().collection == collection } }
+                select(listOf(selected), 0, PlaybackCollection(CollectionKind.FOLDER, root.toString(), "Album"))
+                select(tracks, 1)
+                onMain { controller.pause(); controller.seekTo(23_000) }
+                await { !controller.playWhenReady && controller.currentPosition == 23_000L }
+                select(tracks, 1)
+                assertTrue(onMainResult { controller.currentPosition >= 23_000 })
+                scenario.onActivity {
+                    ViewModelProvider(it)[MusicViewModel::class.java].requestPlay(tracks, 1, positionMs = 7_000, playWhenReady = false)
+                }
+                await { !controller.playWhenReady && controller.currentPosition == 7_000L }
+                scenario.onActivity { ViewModelProvider(it)[MusicViewModel::class.java].requestPlay(tracks, 0) }
+                await { controller.isPlaying && controller.currentMediaItem?.mediaId == tracks[0].id }
+                assertTrue(onMainResult { controller.currentPosition < 5_000 })
+            } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
+        }
+    }
+
+    @Test fun selectingCurrentQueueRowPreservesPlayingAndPausedPositionButAnotherOccurrenceStillSelects() {
+        val tracks = fixtureTracks()
+        ActivityScenario.launch(MainActivity::class.java).use {
+            val future = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
+            val controller = future.get(20, TimeUnit.SECONDS)
+            fun row(index: Int) = resumedActivity().findViewById<RecyclerView>(R.id.queueList)
+                .findViewHolderForAdapterPosition(index)?.itemView
+            try {
+                onMain {
+                    controller.setMediaItems(List(100) { tracks[it % tracks.size].toMediaItem() }, 76, 17_000)
+                    controller.prepare(); controller.play()
+                }
+                await { controller.isPlaying }
+                onView(withId(R.id.nav_queue)).perform(click())
+                await { row(76)?.isShown == true }
+                repeat(3) { onMain { checkNotNull(row(76)).performClick() } }
+                instrumentation.waitForIdleSync()
+                await { controller.isPlaying }
+                assertTrue("Current queue row restarted playback", onMainResult { controller.currentPosition >= 17_000 })
+                onMain { controller.pause(); controller.seekTo(23_000) }
+                await { !controller.playWhenReady && controller.currentPosition == 23_000L }
+                onMain { checkNotNull(row(76)).performClick() }
+                await { controller.isPlaying }
+                assertTrue("A paused current song must resume, not restart", onMainResult { controller.currentPosition >= 23_000 })
+                val nextOccurrence = 76 + tracks.size
+                onMain {
+                    (resumedActivity().findViewById<RecyclerView>(R.id.queueList).layoutManager as
+                        androidx.recyclerview.widget.LinearLayoutManager).scrollToPositionWithOffset(nextOccurrence, 0)
+                }
+                await { row(nextOccurrence)?.isShown == true }
+                onMain { checkNotNull(row(nextOccurrence)).performClick() }
+                await { controller.currentMediaItemIndex == nextOccurrence && controller.isPlaying }
+                assertTrue("Another queue occurrence must remain selectable", onMainResult { controller.currentPosition < 5_000 })
             } finally { onMain { controller.pause(); MediaController.releaseFuture(future) } }
         }
     }
@@ -7462,6 +7549,8 @@ class MusicIntegrationTest {
     }
 
     @Test fun independentRecentSongResumesItsQueueAndPositionWithoutLaunchingPlayerUi() {
+        org.junit.Assume.assumeTrue("Android cannot identify legacy browser child-list callers before API 28",
+            Build.VERSION.SDK_INT >= 28)
         val tracks = runBlocking(Dispatchers.IO) {
             app.repository.update { Library() }
             val source = app.repository.addSource(root, 0)
@@ -7480,6 +7569,15 @@ class MusicIntegrationTest {
             awaitExternal { it.getInt("state") == PlatformPlaybackState.STATE_PLAYING &&
                 it.getLong("position") > 18_000 }
             assertEquals(tracks.last().id, externalState().getString("mediaId"))
+            assertEquals(2, externalState().getInt("queueSize"))
+            Thread.sleep(250)
+            val opens = app.contentResolver.call(root, "scanFixtureState", null, null)!!.getInt("audioReads")
+            repeat(3) { externalCommand("playId", tracks.last().id) }
+            externalCommand("playUri", tracks.last().uri)
+            Thread.sleep(750)
+            awaitExternal { it.getInt("state") == PlatformPlaybackState.STATE_PLAYING && it.getLong("position") >= 18_000 }
+            assertEquals("An external selection of the current song must keep its buffered source",
+                opens, app.contentResolver.call(root, "scanFixtureState", null, null)!!.getInt("audioReads"))
             assertEquals(2, externalState().getInt("queueSize"))
             externalCommand("stop")
             // Media3 maps an explicitly stopped/idle player to Android's STATE_NONE.

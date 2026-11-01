@@ -31,6 +31,11 @@ object AudioFiles {
     fun cleanTag(value: String?): String =
         value.orEmpty().replace("\u0000", "").trim().take(2048)
 
+    fun searchMatcher(query: String): (String) -> Boolean {
+        val words = query.trim().lowercase(Locale.ROOT).split(querySeparator).filter(String::isNotEmpty).map(::SearchWord)
+        return { value -> words.all { it.matches(value) } }
+    }
+
     fun sortAndFilter(
         tracks: List<Track>,
         query: String,

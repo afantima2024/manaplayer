@@ -9,6 +9,11 @@ import com.macarmusic.app.model.PlaybackCollection
 import com.macarmusic.app.model.PlaybackOptions
 import com.macarmusic.app.model.SortOrder
 import com.macarmusic.app.model.SpectrumColors
+import com.macarmusic.app.radio.CnrRadio
+import com.macarmusic.app.radio.RadioFavorites
+import com.macarmusic.app.radio.RadioProgram
+import com.macarmusic.app.radio.RadioList
+import com.macarmusic.app.radio.RadioDefaults
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -35,6 +40,9 @@ data class BackupSettings(
     val nightMode: Int,
     val language: String,
     val colors: ColorSlots,
+    val radio: RadioFavorites? = null,
+    val radioPrograms: List<RadioProgram>? = null,
+    val radioIncludeDefaults: Boolean = true,
 )
 
 @Serializable
@@ -60,6 +68,23 @@ object BackupArchive {
         require(backup.settings.nightMode in setOf(-1, 1, 2))
         require(backup.settings.language in setOf("", "en", "zh", "zh-CN"))
         require(backup.settings.colors.colors.size <= 1024) { "Backup color palette is too large" }
+        require(backup.settings.radioIncludeDefaults || backup.settings.radioPrograms != null) {
+            "A replacement radio catalog requires a station list"
+        }
+        backup.settings.radioPrograms?.let { RadioList.encode(it, backup.settings.radioIncludeDefaults) }
+        backup.settings.radio?.let { radio ->
+            val ids = RadioList.catalog(backup.settings.radioPrograms.orEmpty(),
+                if (backup.settings.radioIncludeDefaults) RadioDefaults.bundled else emptyList())
+                .mapTo(hashSetOf()) { it.id }
+            require(radio.stations.size <= ids.size && radio.stations.all { it in ids }) {
+                "Backup contains an unknown radio station"
+            }
+            radio.pins?.let {
+                require(it.size <= RadioDefaults.MAX_PINS && it.distinct() == it && it.all(ids::contains)) {
+                    "Backup contains invalid pinned stations"
+                }
+            }
+        }
         val display = backup.settings.display
         require(display.blur in 0..100 && display.tintStrength in 0..100 && display.imageVersion >= 0)
         require(display.imageIds.size <= BackgroundImages.MAX_COUNT && display.imageIds.distinct() == display.imageIds &&
@@ -134,7 +159,7 @@ object BackupArchive {
     fun read(input: InputStream, directory: File, checkCancelled: () -> Unit = {}): BackupManifest {
         require(directory.isDirectory && directory.listFiles()?.isEmpty() == true)
         return ZipInputStream(input).use { zip ->
-            require(zip.nextEntry?.name == MANIFEST) { "Not a ManaMusicPlayer backup" }
+            require(zip.nextEntry?.name == MANIFEST) { "Not a ManaMusicRadio backup" }
             val bytes = BoundedInput.read(zip, MAX_METADATA_BYTES, checkCancelled)
             val backup = decodeManifest(bytes.toString(Charsets.UTF_8))
             validate(backup)

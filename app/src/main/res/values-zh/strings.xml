@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">小悦音乐播放器</string>
+    <string name="app_name">小悦音乐广播</string>
     <string name="now_playing">播放</string>
     <string name="library">乐库</string>
     <string name="folders">文件夹</string>
@@ -111,7 +111,7 @@
     <string name="dismiss">关闭提示</string>
     <string name="more_options">更多选项</string>
     <string name="remove_source">移除文件夹引用</string>
-    <string name="remove_source_body">从小悦音乐播放器中移除“%1$s”及仅属于它的歌曲？这些歌曲的收藏、歌单条目和队列引用也会被移除。不会删除音乐文件。</string>
+    <string name="remove_source_body">从小悦音乐广播中移除“%1$s”及仅属于它的歌曲？这些歌曲的收藏、歌单条目和队列引用也会被移除。不会删除音乐文件。</string>
     <string name="remove_track">移除音乐库引用</string>
     <string name="remove_track_body">从音乐库、歌单、收藏和队列中移除“%1$s”？不会删除实际文件。以后扫描文件夹时可能会重新添加此歌曲。</string>
     <string name="remove">移除</string>
@@ -129,7 +129,7 @@
     <string name="back_playlists">全部歌单</string>
     <string name="song_details">歌名：%1$s\n歌手：%2$s\n专辑：%3$s\n时长：%4$s\n曲目编号：%5$s\n年份：%6$s\n流派：%7$s\n文件：%8$s\n格式：%9$s\n\n文件位置：\n%10$s</string>
     <string name="local_documents_only">文件管理器返回了不支持的文件地址。请使用内置文件浏览器，或可授予内容 URI 访问权限的安卓文件选择器。</string>
-    <string name="external_media_unavailable">该歌曲不在已保存的音乐引用中。请打开小悦音乐播放器并重新选择。</string>
+    <string name="external_media_unavailable">该歌曲不在已保存的音乐引用中。请打开小悦音乐广播并重新选择。</string>
     <string name="invalid_folder">文件提供程序未返回有效的文件夹。</string>
     <string name="provider_no_response">存储提供程序未响应。请重新连接存储设备后再试。</string>
     <string name="document_unavailable">文件或文件夹不可用。请重新连接存储设备或重新选择文件夹。</string>
@@ -149,8 +149,8 @@
     <string name="playback_position_load_failed">无法读取最新播放进度：%1$s。已恢复队列和较早的进度，并保留损坏的记录。选择新歌曲后将继续保存进度。</string>
     <string name="playback_save_failed">无法保存最新播放位置：%1$s</string>
     <string name="playback_failed">“%1$s”播放已停止（%2$s）。请重新连接存储设备或选择其他歌曲；按播放可重试。没有自动跳过任何歌曲。</string>
-    <string name="controller_failed">播放器连接失败：%1$s。请关闭并重新打开小悦音乐播放器。</string>
-    <string name="foreground_failed">安卓阻止了后台播放。请打开小悦音乐播放器并再次按播放。</string>
+    <string name="controller_failed">播放器连接失败：%1$s。请关闭并重新打开小悦音乐广播。</string>
+    <string name="foreground_failed">安卓阻止了后台播放。请打开小悦音乐广播并再次按播放。</string>
     <string name="picker_missing">无法打开兼容的安卓文件选择器。请使用内置文件浏览器中的可用位置。较新安卓要访问尚未授权且未收录的文件夹，仍需要可用的系统选择器。</string>
     <string name="folder_picker_missing">系统文件夹选择器不可用</string>
     <string name="folder_picker_compatibility">内置文件浏览器可选择已授权文件夹或已收录的“设备音乐”。安卓 6–9 上，允许存储访问后，“设备存储 / USB”也可浏览可读取的共享存储。较新安卓仍需要可用的系统选择器来授权新文件夹。</string>
@@ -168,11 +168,11 @@
     <string name="device_music_unfiled">没有文件夹信息的音频</string>
     <string name="access_music">音乐库访问权限</string>
     <string name="allow_music_access">允许音乐访问</string>
-    <string name="music_permission_explanation">“设备音乐”通过安卓音频库读取歌曲，不依赖外部文件夹选择器。Android 13 及以上会申请音乐和音频权限，Android 6–12 将其称为存储权限。小悦音乐播放器只读取已收录的音频，不会修改音乐文件。仅在您选择此功能时申请权限，启动应用时不会申请。</string>
+    <string name="music_permission_explanation">“设备音乐”通过安卓音频库读取歌曲，不依赖外部文件夹选择器。Android 13 及以上会申请音乐和音频权限，Android 6–12 将其称为存储权限。小悦音乐广播只读取已收录的音频，不会修改音乐文件。仅在您选择此功能时申请权限，启动应用时不会申请。</string>
     <string name="music_permission_denied">未获得音乐访问权限。请选择“设备音乐”重试，或在安卓应用设置中允许音乐、音频或存储访问。已保存的音乐引用会保留。</string>
     <string name="music_permission_settings">安卓已不再弹出音乐授权提示。请打开本应用的安卓设置，允许音乐和音频（或存储）访问后返回。</string>
     <string name="open_app_settings">应用权限设置</string>
-    <string name="permission_ui_missing">车机无法打开安卓权限设置。请在车机的应用设置中为小悦音乐播放器允许音乐或存储访问。</string>
+    <string name="permission_ui_missing">车机无法打开安卓权限设置。请在车机的应用设置中为小悦音乐广播允许音乐或存储访问。</string>
     <string name="picker_no_document">文件选择器未返回文件。</string>
     <string name="no_tracks_to_play">没有可播放的歌曲。</string>
     <string name="artwork_too_large">内嵌封面过大，已显示默认封面。</string>
@@ -362,6 +362,11 @@
     <string name="spectrum_color_high">顶部颜色</string>
     <string name="spectrum_reset_colors">恢复此配色默认值</string>
     <string name="navigation_position">导航工具栏位置</string>
+    <string name="navigation_buttons">导航按钮</string>
+    <string name="navigation_show_library">显示乐库</string>
+    <string name="navigation_show_queue">显示队列</string>
+    <string name="navigation_show_playlists">显示歌单</string>
+    <string name="navigation_buttons_help">隐藏页面不会删除音乐、队列或歌单，也不会中断播放。播放和文件夹始终显示。电台可在“设置 &gt; 电台”中单独启用或关闭。</string>
     <string name="navigation_bottom">底部</string>
     <string name="navigation_left">左侧</string>
     <string name="navigation_right">右侧</string>
@@ -471,7 +476,7 @@
     <string name="forward">快进 10 秒</string>
     <string name="media_controls_channel">音乐播放</string>
     <string name="seek_unavailable">当前歌曲暂时无法快进或快退。</string>
-    <string name="about_system_controls">系统音乐播放器\n“常规 → 默认音乐播放器”可打开安卓应用设置。如果系统提供音乐应用选项，请选择小悦音乐播放器。否则，从文件管理器打开本地音频文档，选择小悦音乐播放器，并在系统提供时选择“始终”。部分车机桌面有独立的播放器设置。打开选中的音频文档会开始播放，普通启动应用不会自动播放。\n\n系统播放面板\n开始播放歌曲后，下拉安卓状态栏即可使用上一首、播放／暂停和下一首。展开面板可使用快退 10 秒和快进 10 秒。点击歌曲卡片可返回播放页面。应用在后台时也可使用这些控制。面板布局由安卓和设备决定。如果面板未显示，请检查应用通知设置和“音乐播放”通知类别。\n\n桌面小组件\n长按桌面空白区域，打开“小组件”，选择小悦音乐播放器。“常规”中的“桌面小组件”也可在支持的桌面上发起添加。“播放控制”（3x1）提供上一首、播放／暂停、下一首、播放器静音和底部进度条；“专辑图片”（3x1）在播放按钮后显示封面缩略图；“歌词”（3x2）将控制置顶，当前行与下一行歌词利用下方空间；“播放／暂停”（1x1）只有一个按钮。歌词小组件使用歌词设置中的当前行与其他行字号、颜色；较大字号可能需要增高小组件。“常规 → 小组件背景透明度”可调整背景，不会让控制按钮变淡。歌词小组件读取本地或已缓存的歌词，并跟随播放器内加载的歌词。点击背景、歌词或进度条可打开播放页面进行定位；封面上的播放按钮用于播放或暂停。静音仅影响本播放器，不影响导航或其他应用。暂停播放或关闭屏幕后，进度停止刷新。添加小组件不会自动播放。网格尺寸和大小调整由桌面决定，已有小组件可能需要调整大小或重新添加。\n\n外观与按钮\n在常规的外观选项中选择“自定义”，即可在该页显示图片、幻灯片、模糊和色调设置。其他主题隐藏这些控件，但保留已保存的配置。主界面按钮的图标靠前，文字独立居中；已选中的导航、收藏、随机、循环和静音按钮使用 120% 的文字与图标大小，按钮本身尺寸不变。设置子页保持原有对齐方式。\n\n遥控器\n使用方向键移动焦点，按确定／回车操作按钮或打开文件夹、文件。强调色边框表示当前键盘焦点，与当前页面或已启用的播放模式不同。返回键回到上一级文件夹。不可用的控件会被跳过：快退／快进 10 秒需要已加载且支持定位的歌曲，下一首需要队列中还有歌曲。遥控器的专用媒体键仍直接控制播放，而不是移动焦点。</string>
+    <string name="about_system_controls">系统音乐播放器\n“常规 → 默认音乐播放器”可打开安卓应用设置。如果系统提供音乐应用选项，请选择小悦音乐广播。否则，从文件管理器打开本地音频文档，选择小悦音乐广播，并在系统提供时选择“始终”。部分车机桌面有独立的播放器设置。打开选中的音频文档会开始播放，普通启动应用不会自动播放。\n\n系统播放面板\n开始播放歌曲后，下拉安卓状态栏即可使用上一首、播放／暂停和下一首。展开面板可使用快退 10 秒和快进 10 秒。点击歌曲卡片可返回播放页面。应用在后台时也可使用这些控制。面板布局由安卓和设备决定。如果面板未显示，请检查应用通知设置和“音乐播放”通知类别。\n\n桌面小组件\n长按桌面空白区域，打开“小组件”，选择小悦音乐广播。“常规”中的“桌面小组件”也可在支持的桌面上发起添加。“播放控制”（3x1）提供上一首、播放／暂停、下一首、播放器静音和底部进度条；“专辑图片”（3x1）在播放按钮后显示封面缩略图；“歌词”（3x2）将控制置顶，当前行与下一行歌词利用下方空间；“播放／暂停”（1x1）只有一个按钮。歌词小组件使用歌词设置中的当前行与其他行字号、颜色；较大字号可能需要增高小组件。“常规 → 小组件背景透明度”可调整背景，不会让控制按钮变淡。歌词小组件读取本地或已缓存的歌词，并跟随播放器内加载的歌词。点击背景、歌词或进度条可打开播放页面进行定位；封面上的播放按钮用于播放或暂停。静音仅影响本播放器，不影响导航或其他应用。暂停播放或关闭屏幕后，进度停止刷新。添加小组件不会自动播放。网格尺寸和大小调整由桌面决定，已有小组件可能需要调整大小或重新添加。\n\n外观与按钮\n在常规的外观选项中选择“自定义”，即可在该页显示图片、幻灯片、模糊和色调设置。其他主题隐藏这些控件，但保留已保存的配置。主界面按钮的图标靠前，文字独立居中；已选中的导航、收藏、随机、循环和静音按钮使用 120% 的文字与图标大小，按钮本身尺寸不变。设置子页保持原有对齐方式。\n\n遥控器\n使用方向键移动焦点，按确定／回车操作按钮或打开文件夹、文件。强调色边框表示当前键盘焦点，与当前页面或已启用的播放模式不同。返回键回到上一级文件夹。不可用的控件会被跳过：快退／快进 10 秒需要已加载且支持定位的歌曲，下一首需要队列中还有歌曲。遥控器的专用媒体键仍直接控制播放，而不是移动焦点。</string>
     <string name="file_location_partial">%1$s\n存储提供程序未提供完整的文件夹路径。</string>
     <string name="save">保存</string>
     <string name="select_songs">选择歌曲</string>
@@ -493,8 +498,8 @@
     <string name="folder_pinned">已固定 · 禁止移除</string>
     <string name="pinned_folder_name">已固定 · %1$s</string>
     <string name="unpin_first">此文件夹已固定。请先到“设置 → 文件夹 → 固定文件夹”取消固定，再取消选择、移除文件夹或歌曲，或删除包含它们的歌单。</string>
-    <string name="app_logo">小悦音乐播放器标志</string>
-    <string name="logo_now_playing">小悦音乐播放器标志 · 播放页</string>
+    <string name="app_logo">小悦音乐广播标志</string>
+    <string name="logo_now_playing">小悦音乐广播标志 · 播放页</string>
     <string name="about_version">版本 %1$s（构建 %2$d）</string>
     <string name="color_slots_help">七种彩虹色、五个自定义色块，点击 + 可添加更多。选色后点击“应用”；取消会放弃尚未保存的色块修改。</string>
     <string name="color_edit_slot">编辑此颜色</string>
@@ -557,9 +562,9 @@
     <string name="default_music_player">默认音乐播放器</string>
     <string name="folder_loop_song_selection">此歌曲未关联已添加的文件夹，按所选歌曲播放。</string>
     <string name="open_system_settings">打开系统设置</string>
-    <string name="default_music_player_help">如果设备提供默认音乐应用选项，请选择小悦音乐播放器。否则，在文件管理器中打开本地音乐文件，选择小悦音乐播放器，并在系统提供时选择“始终”。部分车机桌面有独立的音乐应用设置。此选项由 Android 控制，播放器无法自动更改。</string>
-    <string name="default_music_player_unavailable">系统应用设置不可用。请在文件管理器或车机桌面设置中选择小悦音乐播放器。</string>
-    <string name="widgets_help">请停车后长按桌面空白区域，打开“小组件”，选择小悦音乐播放器。在支持的网格上，“播放控制”和“专辑图片”为 3x1，“歌词”为 3x2，“播放／暂停”为 1x1。可在“常规”调整背景透明度。已有小组件可能需要调整大小或重新添加。安卓 8 及以上的桌面也可能支持从这里弹出添加确认。部分车机桌面不支持安卓小组件或这些网格尺寸。</string>
+    <string name="default_music_player_help">如果设备提供默认音乐应用选项，请选择小悦音乐广播。否则，在文件管理器中打开本地音乐文件，选择小悦音乐广播，并在系统提供时选择“始终”。部分车机桌面有独立的音乐应用设置。此选项由 Android 控制，播放器无法自动更改。</string>
+    <string name="default_music_player_unavailable">系统应用设置不可用。请在文件管理器或车机桌面设置中选择小悦音乐广播。</string>
+    <string name="widgets_help">请停车后长按桌面空白区域，打开“小组件”，选择小悦音乐广播。在支持的网格上，“播放控制”和“专辑图片”为 3x1，“歌词”为 3x2，“播放／暂停”为 1x1。可在“常规”调整背景透明度。已有小组件可能需要调整大小或重新添加。安卓 8 及以上的桌面也可能支持从这里弹出添加确认。部分车机桌面不支持安卓小组件或这些网格尺寸。</string>
     <string name="widget_controls_name">小组件 1 - 播放控制（3x1）</string>
     <string name="widget_artwork_name">小组件 2 - 专辑图片（3x1）</string>
     <string name="widget_lyrics_name">小组件 3 - 歌词（3x2）</string>
@@ -609,13 +614,13 @@
     <string name="explorer_unavailable">此位置不可用，或不属于可访问的共享存储。请重新连接设备、恢复权限，或选择其他位置。</string>
     <string name="explorer_read_only">此文件夹无法用于写入。请通过安卓选择器授予可写的文件夹权限，或选择其他位置。</string>
     <string name="explorer_read_access">允许存储访问后，可在安卓 6–9 上浏览共享内部存储与可读取的 USB 存储。音乐文件不会被修改。请在停车后设置存储。</string>
-    <string name="explorer_write_access">允许存储访问后，可在安卓 6–9 上保存备份或选择歌词缓存文件夹。写入仅用于所选备份及播放器自己的歌词缓存记录，不会修改音乐文件。</string>
+    <string name="explorer_write_access">允许存储访问后，可在安卓 6–9 上导出备份或电台列表，或选择歌词缓存文件夹。写入仅用于所选导出文件及播放器自己的歌词缓存记录，不会修改音乐文件。</string>
     <string name="explorer_permission_denied">无法访问存储。请在应用设置中允许访问，使用已授权文件夹，或尝试安卓选择器。</string>
     <string name="explorer_legacy_unavailable">直接浏览共享存储仅适用于安卓 6–9。较新安卓版本请通过安卓选择器授予文件夹权限，或使用已收录的设备音乐。</string>
-    <string name="explorer_filename">备份文件名</string>
-    <string name="explorer_invalid_name">请输入不含路径分隔符或控制字符的文件名（含 .zip 最多 255 个 UTF-8 字节）。</string>
+    <string name="explorer_filename">导出文件名</string>
+    <string name="explorer_invalid_name">请输入不含路径分隔符或控制字符的文件名（含扩展名最多 255 个 UTF-8 字节）。</string>
     <string name="explorer_exists">已存在同名文件或文件夹。请更换文件名；现有文件不会被覆盖。</string>
-    <string name="explorer_create_failed">存储提供程序无法创建所需的备份文件。</string>
+    <string name="explorer_create_failed">存储提供程序无法创建所需的导出文件。</string>
     <string name="explorer_select_folder">使用此文件夹</string>
     <string name="explorer_select_images">使用图片（%1$d）</string>
     <string name="explorer_selection_limit">最多选择 %1$d 张图片。</string>

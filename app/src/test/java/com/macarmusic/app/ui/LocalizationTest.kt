@@ -7,14 +7,14 @@ import java.nio.file.Paths
 import javax.xml.parsers.DocumentBuilderFactory
 
 class LocalizationTest {
-    private fun strings(directory: String): Map<String, List<String>> {
-        val file = Paths.get("src", "main", "res", directory, "strings.xml").toFile()
+    private fun strings(directory: String, name: String = "strings.xml"): Map<String, List<String>> {
+        val file = Paths.get("src", "main", "res", directory, name).toFile()
         val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file)
         val nodes = document.documentElement.childNodes
         return buildMap {
             for (index in 0 until nodes.length) {
                 val node = nodes.item(index)
-                if (node !is Element) continue
+                if (node !is Element || node.tagName !in listOf("string", "plurals")) continue
                 val values = if (node.tagName == "plurals") {
                     val items = node.getElementsByTagName("item")
                     (0 until items.length).map { items.item(it).textContent }
@@ -22,6 +22,19 @@ class LocalizationTest {
                 put(node.getAttribute("name"), values)
             }
         }
+    }
+
+    @Test fun radioHasCompleteChineseCopyAndMatchingFormatArguments() {
+        val english = strings("values", "radio.xml")
+        val chinese = strings("values-zh", "radio.xml")
+        assertEquals(english.keys, chinese.keys)
+        val placeholders = Regex("%\\d+\\$[ds]")
+        for ((key, value) in english) {
+            assertTrue(chinese.getValue(key).single().isNotBlank())
+            assertEquals(key, placeholders.findAll(value.single()).map { it.value }.toList(),
+                placeholders.findAll(chinese.getValue(key).single()).map { it.value }.toList())
+        }
+        assertEquals(16, english.keys.count { it.matches(Regex("radio_cnr_\\d+")) })
     }
 
     @Test fun chineseCoversEveryEnglishResourceAndItsFormatArguments() {
@@ -39,6 +52,19 @@ class LocalizationTest {
         }
     }
 
+    @Test fun radioLiveSettingsAndRegionsHaveMatchingLocalizedFormats() {
+        val english = strings("values", "radio_live.xml")
+        val chinese = strings("values-zh", "radio_live.xml")
+        assertEquals(english.keys, chinese.keys)
+        val placeholders = Regex("%\\d+\\$(?:\\.\\d+)?[dsf]")
+        for ((key, value) in english) {
+            assertTrue(chinese.getValue(key).single().isNotBlank())
+            assertEquals(key, placeholders.findAll(value.single()).map { it.value }.toList(),
+                placeholders.findAll(chinese.getValue(key).single()).map { it.value }.toList())
+        }
+        assertEquals(37, english.keys.count { it.startsWith("radio_region_") })
+    }
+
     @Test fun playerCopyDoesNotAdvertiseNetworkRestrictions() {
         val wording = Regex("no network|offline|internet|无需联网|无网络|离线", RegexOption.IGNORE_CASE)
         for ((name, values) in strings("values").toList() + strings("values-zh").toList()) {
@@ -49,8 +75,8 @@ class LocalizationTest {
     @Test fun playerBrandingMatchesEachLanguage() {
         val english = strings("values")
         val chinese = strings("values-zh")
-        assertEquals(listOf("ManaMusicPlayer"), english["app_name"])
-        assertEquals(listOf("小悦音乐播放器"), chinese["app_name"])
+        assertEquals(listOf("ManaMusicRadio"), english["app_name"])
+        assertEquals(listOf("小悦音乐广播"), chinese["app_name"])
         for (values in english.values + chinese.values) {
             assertTrue("Old player name remains visible",
                 values.none { it.contains("MaCarMusic") || it.contains("ManaPlayer") || it.contains("小悦播放器") })

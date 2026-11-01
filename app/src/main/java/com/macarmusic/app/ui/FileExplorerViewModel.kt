@@ -338,7 +338,7 @@ internal class FileExplorerViewModel(application: Application, private val saved
             error(context.getString(R.string.explorer_read_only))
             return
         }
-        if (mode != ExplorerMode.BACKUP_EXPORT) {
+        if (!mode.export) {
             finish(listOf(location.uri), Intent.FLAG_GRANT_READ_URI_PERMISSION or
                 if (mode.writable) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
             return
@@ -353,7 +353,8 @@ internal class FileExplorerViewModel(application: Application, private val saved
                     if (entries.any { it.name.equals(name, true) })
                         throw IOException(context.getString(R.string.explorer_exists))
                     ensureActive()
-                    val uri = DocumentsContract.createDocument(resolver, DocumentUris.document(parent), "application/zip", name)
+                    val uri = DocumentsContract.createDocument(resolver, DocumentUris.document(parent),
+                        checkNotNull(mode.exportMime), name)
                         ?: throw IOException(context.getString(R.string.explorer_create_failed))
                     if (uri.scheme != "content" || uri.authority != parent.authority ||
                         entries.any { documents.identity(Uri.parse(it.uri)) == documents.identity(uri) })
@@ -365,7 +366,7 @@ internal class FileExplorerViewModel(application: Application, private val saved
         }
     }
 
-    fun validFilename(): String? = try { ExplorerMode.backupName(filename) }
+    fun validFilename(): String? = try { mode.exportName(filename) }
     catch (_: IllegalArgumentException) { error(context.getString(R.string.explorer_invalid_name)); null }
 
     fun externalResult(uris: List<Uri>, flags: Int) {

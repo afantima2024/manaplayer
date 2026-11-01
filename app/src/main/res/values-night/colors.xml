@@ -1,5 +1,6 @@
 <resources>
     <color name="primary">#67E3CB</color>
+    <color name="radio_pinned">#FFD54F</color>
     <color name="on_primary">#00382F</color>
     <color name="primary_container">#194A43</color>
     <color name="surface">#101B24</color>

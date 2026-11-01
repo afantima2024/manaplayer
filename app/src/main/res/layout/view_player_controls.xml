@@ -59,6 +59,16 @@
                 android:textColor="?attr/colorPrimary"
                 android:textSize="14sp" />
             <TextView
+                android:id="@+id/radioStreamStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:maxLines="3"
+                android:ellipsize="end"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="14sp"
+                android:visibility="gone" />
+            <TextView
                 android:id="@+id/playbackOptions"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

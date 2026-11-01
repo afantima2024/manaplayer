@@ -21,7 +21,7 @@ import com.macarmusic.app.model.BlockOutline
 import com.macarmusic.app.model.BlockStyle
 import com.macarmusic.app.R
 
-class BlockButtonStyler(root: ViewGroup, private val preserveMargins: Boolean = false) {
+class BlockButtonStyler(root: View, private val preserveMargins: Boolean = false) {
     private class Original(val view: View) {
         val background = view.background
         val foreground = view.foreground

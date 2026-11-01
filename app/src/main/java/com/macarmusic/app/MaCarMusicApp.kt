@@ -40,6 +40,26 @@ class MaCarMusicApp : Application() {
     val collections by lazy { CollectionPositionRepository(localizedContext, applicationScope, ::report) }
     val backups by lazy { LocalBackupRepository(this) }
     val playbackSettings by lazy { PlaybackSettings(this) }
+    val radio by lazy { com.macarmusic.app.radio.RadioSettings(this) }
+    val radioTraffic by lazy { com.macarmusic.app.radio.RadioTraffic() }
+    val radioLogos by lazy { com.macarmusic.app.radio.RadioLogoRepository(this) }
+    private val savedRadioCatalog = lazy {
+        com.macarmusic.app.radio.RadioCatalogRepository(
+            com.macarmusic.app.data.AtomicTextStore(java.io.File(filesDir, "radio-stations.json")), applicationScope,
+            loadDefaults = { com.macarmusic.app.radio.RadioDefaults.bundled },
+        ) { error ->
+            android.util.Log.e("RadioCatalog", "Cannot read or restore saved radio stations", error)
+            report(text(R.string.radio_list_load_failed))
+        }.also { catalog ->
+            applicationScope.launch(Dispatchers.Main) {
+                catalog.awaitReady()
+                val state = catalog.state.value
+                if (state.error == null) radio.retainStations(state.programs.mapTo(hashSetOf()) { it.id })
+            }
+        }
+    }
+    val radioCatalog get() = savedRadioCatalog.value
+    internal val radioCatalogInitialized get() = savedRadioCatalog.isInitialized()
     lateinit var displaySettings: DisplaySettings
         private set
     val backgrounds by lazy { BackgroundRepository(localizedContext) }

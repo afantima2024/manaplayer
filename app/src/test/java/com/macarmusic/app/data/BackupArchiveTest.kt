@@ -1,6 +1,10 @@
 package com.macarmusic.app.data
 
 import com.macarmusic.app.model.*
+import com.macarmusic.app.radio.CnrRadio
+import com.macarmusic.app.radio.RadioFavorites
+import com.macarmusic.app.radio.RadioList
+import com.macarmusic.app.radio.RadioListEntry
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -115,6 +119,123 @@ class BackupArchiveTest {
         assertEquals(LyricCacheExpiry.THIRTY_DAYS, restored.settings.display.internalLyricExpiry)
         assertEquals(LyricCacheExpiry.NEVER, restored.settings.display.portableLyricExpiry)
         assertEquals(LyricAppearance(), restored.settings.display.lyricAppearance)
+        assertNull(restored.settings.radio)
+        assertNull(restored.settings.radioPrograms)
+    }
+
+    @Test fun radioFavoritesRoundTripWithoutSavingStreamUrlsOrSwitchingPlayback() {
+        val value = backup().copy(settings = settings.copy(
+            radio = RadioFavorites(CnrRadio.stations.take(3).map { it.id }.toSet(), true)))
+        assertEquals(value, read(raw(value)))
+        val text = fullJson.encodeToString(value)
+        assertFalse(text.contains("m3u8"))
+        assertFalse(text.contains("radioActive"))
+    }
+
+    @Test fun disabledRadioRoundTripsAndOldRadioBackupsDefaultToEnabled() {
+        val radio = RadioFavorites(setOf(CnrRadio.stations.first().id), favoritesOnly = true, enabled = false)
+        val value = backup().copy(settings = settings.copy(radio = radio))
+        assertEquals(radio, read(raw(value)).settings.radio)
+        val oldJson = fullJson.encodeToString(value).replace(",\"enabled\":false", "")
+        val restored = checkNotNull(read(raw(value, text = oldJson)).settings.radio)
+        assertTrue(restored.enabled)
+        assertEquals(radio.stations, restored.stations)
+        assertTrue(restored.favoritesOnly)
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun arbitraryRadioSourcesCannotEnterABackup() {
+        read(raw(backup().copy(settings = settings.copy(radio = RadioFavorites(setOf("https://example.com/live"))))))
+    }
+
+    @Test fun editableRadioProgramsAndTheirFavoritesRoundTripWithoutPlaybackState() {
+        val programs = RadioList.merge(emptyList(), listOf(RadioListEntry("Custom", "https://example.com/live")), emptyMap()).programs
+        val value = backup().copy(settings = settings.copy(radioPrograms = programs,
+            radio = RadioFavorites(setOf(programs.single().id, CnrRadio.stations.first().id))))
+        assertEquals(value, read(raw(value)))
+        assertFalse(fullJson.encodeToString(value).contains("radioActive"))
+        val missing = value.copy(settings = value.settings.copy(radioPrograms = emptyList()))
+        try { read(raw(missing)); fail("Dangling custom favorite accepted") } catch (_: IllegalArgumentException) { }
+    }
+
+    @Test fun radioPinsSourcesAndLiveSettingsRoundTripWhileLegacyFormatRemainsReadable() {
+        val station = CnrRadio.stations.first().program.copy(alternateUris = listOf("https://example.com/backup"),
+            sourceIndex = 1, logoUri = "https://example.com/logo.png", group = "My group")
+        val radio = RadioFavorites(pins = listOf(station.id), tuning = com.macarmusic.app.radio.RadioTuning(
+            bufferSeconds = 60, startSeconds = 5, retries = 1, autoSource = true, downloadLogos = false))
+        val value = backup().copy(settings = settings.copy(radioPrograms = listOf(station), radio = radio))
+        assertEquals(value, read(raw(value)))
+        assertEquals("ManaMusicPlayer", value.format)
+        for (pins in listOf(List(11) { station.id }, listOf("radio:unknown"))) {
+            try {
+                read(raw(value.copy(settings = value.settings.copy(radio = radio.copy(pins = pins)))))
+                fail("Invalid pins accepted")
+            } catch (_: IllegalArgumentException) { }
+        }
+    }
+
+    @Test fun newBundledChannelPinsRoundTripWithoutRequiringAUserOverride() {
+        val station = com.macarmusic.app.radio.RadioDefaults.bundled.single { it.name == "RTHK Radio 1" }
+        val value = backup().copy(settings = settings.copy(
+            radio = RadioFavorites(stations = setOf(station.id), pins = listOf(station.id)),
+            radioPrograms = emptyList()))
+        assertEquals(value, read(raw(value)))
+    }
+
+    @Test fun radioPinColorsRoundTripAndOlderBackupsRetainThemeAwareDefaults() {
+        val value = backup().copy(settings = settings.copy(
+            radio = RadioFavorites(pins = listOf(CnrRadio.stations.first().id), pinColor = 0x123456)))
+        assertEquals(value, read(raw(value)))
+        val oldJson = fullJson.encodeToString(value).replace(",\"pinColor\":1193046", "")
+        val restored = checkNotNull(read(raw(value, text = oldJson)).settings.radio)
+        assertNull(restored.pinColor)
+        assertEquals(value.settings.radio!!.pins, restored.pins)
+    }
+
+    @Test fun navigationAndRadioSelectionChoicesRoundTripWithCompatibleLegacyDefaults() {
+        for (bits in 0..7) {
+            val display = settings.display.copy(showLibrary = bits and 1 != 0, showQueue = bits and 2 != 0,
+                showPlaylists = bits and 4 != 0)
+            val value = backup().copy(settings = settings.copy(display = display,
+                radio = RadioFavorites(openPlayerOnSelection = true)))
+            assertEquals(value, read(raw(value)))
+        }
+        val value = backup().copy(settings = settings.copy(
+            display = settings.display.copy(showLibrary = false, showQueue = false, showPlaylists = false),
+            radio = RadioFavorites(openPlayerOnSelection = true)))
+        val legacy = fullJson.encodeToString(value).replace(",\"showLibrary\":false", "")
+            .replace(",\"showQueue\":false", "").replace(",\"showPlaylists\":false", "")
+            .replace(",\"openPlayerOnSelection\":true", "")
+        val restored = read(raw(value, text = legacy)).settings
+        assertTrue(restored.display.showLibrary)
+        assertTrue(restored.display.showQueue)
+        assertTrue(restored.display.showPlaylists)
+        assertFalse(checkNotNull(restored.radio).openPlayerOnSelection)
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun invalidRadioPinColorIsRejectedByBackupImport() {
+        val value = backup().copy(settings = settings.copy(radio = RadioFavorites(pinColor = 0x123456)))
+        read(raw(value, text = fullJson.encodeToString(value).replace("\"pinColor\":1193046", "\"pinColor\":16777216")))
+    }
+
+    @Test fun replacementCatalogBackupRoundTripsWithoutAddingUnlistedBuiltins() {
+        val stations = RadioList.merge(emptyList(), listOf(RadioListEntry("Only", "https://example.com/live")),
+            emptyMap()).programs
+        val value = backup().copy(settings = settings.copy(
+            radioPrograms = stations, radioIncludeDefaults = false,
+            radio = RadioFavorites(pins = listOf(stations.single().id))))
+        assertEquals(value, read(raw(value)))
+        val legacy = fullJson.encodeToString(value).replace(",\"radioIncludeDefaults\":false", "")
+        assertTrue(read(raw(value, text = legacy)).settings.radioIncludeDefaults)
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun replacementBackupRejectsPinsForMissingBuiltins() {
+        val invalid = backup().copy(settings = settings.copy(radioPrograms = emptyList(), radioIncludeDefaults = false,
+            radio = RadioFavorites(pins = listOf(CnrRadio.stations.first().id))))
+        read(raw(invalid))
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun replacementBackupMustIncludeItsCatalog() {
+        read(raw(backup().copy(settings = settings.copy(radioIncludeDefaults = false))))
     }
 
     @Test(expected = IllegalArgumentException::class) fun invalidKaraokeColorIsRejectedByBackupImport() {

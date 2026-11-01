@@ -4,9 +4,18 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
 import com.macarmusic.app.model.Track
 import com.macarmusic.app.model.PlaybackCollection
 import com.macarmusic.app.model.CollectionKind
+
+internal fun MediaItem.hasSource(id: String, uri: String?): Boolean =
+    uri != null && mediaId == id && localConfiguration?.uri?.toString() == uri
+
+internal fun Player.isActiveSource(id: String, uri: String?): Boolean =
+    playWhenReady && playerError == null &&
+        (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING) &&
+        currentMediaItem?.hasSource(id, uri) == true
 
 fun MediaItem.withCollection(collection: PlaybackCollection): MediaItem = buildUpon()
     .setRequestMetadata(requestMetadata.buildUpon().setExtras(Bundle().apply {

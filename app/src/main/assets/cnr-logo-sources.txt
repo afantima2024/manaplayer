@@ -1,0 +1,37 @@
+Radio station identification image sources
+
+These image addresses identify broadcasts from China National Radio / CMG.
+The logos and station marks belong to their respective broadcaster. Their use
+does not imply affiliation or endorsement. They are not original app artwork.
+
+Source: the public CNR web-player catalogue, POST https://apppc.cnr.cn/national
+Field: other_info6. Retrieved 2026-10-31. No station images are bundled.
+Only the selected, playing station may download a logo when enabled. Downloads
+are bounded to 512 KiB, decoded and resized to at most 128 pixels, and cached
+as PNG in private app files until the user clears radio logos. Imported M3U
+tvg-logo addresses follow the same policy.
+
+Resource code | Original broadcaster URL
+zgzs | https://cnvod.cnr.cn/audio2017/ondemand/media/1100/20210425/1619317448858.jpg
+jjzs | https://cnvod.cnr.cn/audio2017/ondemand/img/1100/20230315/1678868245687.png
+yyzs | https://cnvod.cnr.cn/audio2017/ondemand/img/1100/20191224/1577155745280.png
+dszs | https://cnvod.cnr.cn/audio2017/ondemand/img/1100/20200108/1578449381052.png
+zhzs | https://cnvod.cnr.cn/audio2017/ondemand/img/1100/20230612/1686554758307.png
+szzs | https://cnvod.cnr.cn/audio2017/ondemand/img/1100/20230612/1686554715652.png
+hxzs | https://cnvod.cnr.cn/audio2017/ondemand/img/1100/20230612/1686554680065.png
+xgzs | https://cnvod.cnr.cn/audio2017/ondemand/img/1100/20230612/1686554792374.png
+mzzs | https://cnvod.cnr.cn/audio2016/default/2014/9/18/1411026604061.jpg
+wyzs | https://cnvod.cnr.cn/audio2016/default/2014/9/18/1411025674178.jpg
+lnzs | https://cnvod.cnr.cn/audio2016/default/2014/9/18/1411025684693.jpg
+zygb | https://cnvod.cnr.cn/audio2016/default/2014/9/18/1411025710246.jpg
+wygb | https://cnvod.cnr.cn/audio2016/default/2014/9/18/1411025697139.jpg
+gsgljtgb | https://cnvod.cnr.cn/audio2017/ondemand/img/1100/20221211/1670743148470.jpg
+xczs | https://cnvod.cnr.cn/audio2017/ondemand/media/1100/20210425/1619318057428.jpg
+hygb | https://cnvod.cnr.cn/audio2016/default/2014/12/29/1419837253068.jpg
+
+CRI Global Information Radio (Global News / 环球资讯广播)
+Official player: https://newsradio.cri.cn/hqzx/index.shtml
+Live source: https://sk.cri.cn/905.m3u8
+Logo: https://p1crires.cri.cn/photoAlbum/cri/templet/common/DEPA1629939674468309/hqzx_logo.png
+The official page declares the HTTPS source. A no-cache manifest and its audio
+segment were reachable during development; availability is not guaranteed.

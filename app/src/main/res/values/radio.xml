@@ -1,0 +1,97 @@
+<resources>
+    <item type="id" name="radioList" />
+    <item type="id" name="radioSearch" />
+    <item type="id" name="radioFavorites" />
+    <item type="id" name="radioReturnMusic" />
+    <item type="id" name="radioImport" />
+    <item type="id" name="radioReset" />
+    <item type="id" name="radioAbout" />
+    <item type="id" name="radioFormat" />
+    <item type="id" name="radioControls" />
+    <item type="id" name="radioQuickStations" />
+    <string name="radio">Radio</string>
+    <string name="radio_enabled">Enable Internet radio</string>
+    <string name="radio_open_player">Open Playing after station selection</string>
+    <string name="radio_open_player_help">Off by default: stay on the Radio page, keeping your search and expanded group while audio plays. On: open Playing after selecting a station or source. You can always open Playing yourself.</string>
+    <string name="radio_enabled_help">Off hides radio and stops reception, returning to the saved music queue paused. Stations, pins and cached logos are kept. Radio loads on demand even when enabled; ordinary music startup does not fetch radio data.</string>
+    <string name="radio_disabled">Radio is disabled. Enable it under Settings &gt; Radio to listen.</string>
+    <string name="radio_quick_stations">Switch radio station</string>
+    <string name="radio_selected_station">Current station</string>
+    <string name="radio_button_options">Station options: pin, edit or switch source</string>
+    <string name="radio_button_favorite">%1$s ♥</string>
+    <string name="radio_catalog_hint">%1$d stations · Up to 10 pinned blocks · Hold for options</string>
+    <string name="radio_about">About radio</string>
+    <string name="radio_station_summary">CNR %1$d · Internet radio</string>
+    <string name="radio_cnr">China National Radio</string>
+    <string name="radio_live">LIVE</string>
+    <string name="radio_stop">Stop radio</string>
+    <string name="radio_stopped">Stopped · Play to join the live broadcast</string>
+    <string name="radio_connecting">Connecting to radio…</string>
+    <string name="radio_search">Search radio stations</string>
+    <string name="radio_all">All stations</string>
+    <string name="radio_favorites">Favorite stations</string>
+    <string name="radio_return_music">Return to music</string>
+    <string name="radio_music_saved">Your music queue is saved. Return to music to resume it.</string>
+    <string name="radio_music_restored">Music queue restored, paused</string>
+    <string name="radio_empty">No matching stations. Try another search or show all stations.</string>
+    <string name="radio_favorites_empty">No favorite stations yet. Hold a station button to add one, or use the heart while listening.</string>
+    <string name="radio_help_title">Internet radio</string>
+    <string name="radio_help">The bundled catalog includes national, provincial and selected international stations. Up to 10 channels can be pinned as shortcuts; eight are pinned initially. Pinned stations also stay in their normal groups with a configurable color. Groups start collapsed. Tap a group or press remote OK to open it; opening another closes the first. Changing search closes groups. Expanded channels use two columns on wide screens, one on narrow screens or with larger fonts. Hold a channel, or focus it and press remote Menu, to pin/unpin, edit addresses or choose a source. Playing shows pinned shortcuts in the lyrics area. National names and region headings follow English/Chinese; supplied station names and groups are retained.\n\nRadio settings contains import/export, reset, return to music, pin color, buffering, retries, source fallback, logos and live status. M3U groups take precedence; otherwise names identify regions, with unknown names in Others.\n\nExport M3U saves the complete current list for offline editing. Import always asks whether to keep and merge or replace all current stations. Merge skips identical sources and adds different URLs to matching stations. Replace all keeps only valid file entries, including after restart; unlisted built-ins stay removed until Reset built-ins. Pins survive only for retained IDs. Keep exported IDs when renaming. Reset restores the whole bundled catalog while keeping additional user-created channels and remaining pins. Imports never edit the source file or delete music.\n\nAudio uses the Internet, not an FM tuner. Stop disconnects; Play rejoins live audio. Rewind/forward selects the previous/next source of the SAME station without wrapping; unavailable directions are disabled. Local music keeps its 10-second seek controls. Radio has no recording or timeline seeking. Automatic source fallback is optional and bounded.\n\nNo logos are bundled. Only the playing station downloads its configured logo, at most 512 KiB, resized to at most 128 pixels. Disk copies remain until cleared. Browsing, import/export and startup never fetch streams or logos. Marks belong to their broadcasters and imply no endorsement.\n\nActual list changes stop radio, not local music. Export does not interrupt playback. The catalog loads off the main thread only when needed. Disabling Radio returns to the saved music queue paused; enabling never autoplays. Availability depends on the broadcaster and network. Some supplied URLs are old or unencrypted; TDM Macau links may be unreachable outside supported networks.</string>
+    <string name="radio_station_details">CNR %1$d · HTTPS live audio\n%2$s\n\nThe temporary playback address comes from CNR’s public catalogue when you play.</string>
+    <string name="radio_failed">Cannot play %1$s (%2$s). Check your connection or try Play again. Some stations may be off air.</string>
+    <string name="radio_command_failed">Radio operation failed: %1$s</string>
+    <string name="radio_station_invalid">This station or address is not in your saved radio list.</string>
+    <string name="radio_queue_only">Radio stations cannot be added to the music queue.</string>
+    <string name="radio_internet">Internet radio</string>
+    <string name="radio_catalog_count">%1$d stations</string>
+    <string name="radio_import">Import TXT / M3U</string>
+    <string name="radio_export">Export M3U</string>
+    <string name="radio_export_help">Save the complete radio list to local storage or USB for offline editing, not just the search results or pinned stations. The UTF-8 M3U contains names, stable IDs, groups, logo URLs and every playing source; no audio or images are downloaded. Keep a station’s ID when renaming it. Import the edited file to merge it or replace the entire list.</string>
+    <string name="radio_export_done">Radio list exported: %1$d stations, %2$d playing sources. Edit the UTF-8 M3U and import it when ready.</string>
+    <string name="radio_export_empty">There are no stations to export. Import a list or reset the built-ins first.</string>
+    <string name="radio_export_too_large">The complete export exceeds the import limit of 1 MiB or 5,000 source entries. No partial list was written. A local ZIP backup can preserve the full catalog.</string>
+    <string name="radio_import_apply">Import valid stations</string>
+    <string name="radio_reset">Reset built-ins</string>
+    <string name="radio_reset_confirm">Restore the names, groups, logos and addresses of ALL bundled stations, including regional and international channels? Edits to those stations will be reset. Additional user-created channels and pins are kept. Radio reception stops; local music and its queue are unchanged.</string>
+    <string name="radio_reset_done">The complete bundled catalog was restored. Additional channels and pins were kept.</string>
+    <string name="radio_list_format">List format</string>
+    <string name="radio_list_format_body">Save as UTF-8 TXT/M3U/M3U8, up to 1 MiB, 5,000 source entries and 32 sources per station. Export M3U writes the complete current list in this format, without downloading audio or logos.\n\nTXT: name,URL per line; commas inside the URL are preserved. Stable IDs use three tab-separated columns: ID, name, URL. A line Province,#genre# sets the group for following TXT channels.\n\nM3U:\n#EXTM3U\n#EXTINF:-1 tvg-id=\"radio:cnr:zgzs\" group-title=\"National\",Voice of China\nhttps://ngcdn001.cnr.cn/live/zgzs/index.m3u8\n\nOptional tvg-logo=\"https://…/logo.png\" is downloaded only during playback. #EXTGRP groups are supported. Repeat the same ID/name for each different source URL. Export repeats its metadata for each source; edit all entries of that station consistently. The last entry supplies the name and supplied group/logo. Empty group-title or tvg-logo restores automatic grouping or the built-in logo. Backslash-escape quotes and backslashes inside quoted attributes.\n\nImport always asks: Keep and merge retains current stations/addresses, skips identical sources, and adds different sources to matching names. Replace all stations keeps only valid file entries, removing unlisted stations and old sources, including built-ins. Cancel changes nothing. Reset built-ins restores the bundled catalog.\n\nKeep exported IDs when renaming. Known existing IDs take precedence; otherwise known URLs/names or normalized names match stations, even when a new list supplies a different provider ID. Use direct HTTP/HTTPS audio or HLS URLs, not web pages, local paths, nested playlists or HLS manifests. Custom headers are ignored. Only import trusted lists; HTTP audio and logos are unencrypted. Old URLs may not work.</string>
+    <string name="radio_import_preview">Valid station/source entries: %1$d\nCurrent stations: %2$d\nInvalid/ignored lines: %3$d\n\nNo changes yet. Next, choose whether to keep and merge the current list or replace it completely with valid entries from this file. Repeated names with different URLs become playing sources; identical sources are not duplicated. Catalog changes stop radio reception, not local music. The file is read only.</string>
+    <string name="radio_import_http_warning">%1$d imported addresses use unencrypted HTTP. Only continue if you trust this list and its broadcasters.</string>
+    <string name="radio_import_no_stations">No valid stations found. Check the list format and UTF-8 encoding.</string>
+    <string name="radio_import_issue">Line %1$d: %2$s</string>
+    <string name="radio_import_done">Radio list saved: %1$d added, %2$d updated, %3$d unchanged, %4$d removed.</string>
+    <string name="radio_list_too_large">The radio list exceeds 1 MiB. No stations were changed.</string>
+    <string name="radio_list_too_many">The radio list exceeds 5,000 entries. No stations were changed.</string>
+    <string name="radio_list_encoding">The list is not valid UTF-8. Save it as UTF-8 and import again.</string>
+    <string name="radio_list_hls_manifest">This is an HLS segment/variant manifest, not a station list. Put its online URL in a named TXT/M3U station entry instead.</string>
+    <string name="radio_list_bad_name">Missing/invalid station name or group (maximum 256 characters).</string>
+    <string name="radio_list_bad_url">Use an absolute HTTP/HTTPS URL without embedded credentials, fragments or control characters.</string>
+    <string name="radio_list_bad_id">Invalid station ID.</string>
+    <string name="radio_list_missing_url">The station has no following URL.</string>
+    <string name="radio_list_bad_format">Expected name,URL or an #EXTINF station followed by its URL.</string>
+    <string name="radio_list_ignored_option">Custom player/header options are ignored.</string>
+    <string name="radio_list_load_failed">The radio catalog could not be read. Saved data has not been overwritten. Available built-in stations are still shown.</string>
+    <string name="radio_list_changed">The station list changed after this preview. Import the file again to review the current changes.</string>
+    <string name="radio_list_busy">A station-list or backup operation is already running.</string>
+    <string name="radio_list_updated_paused">Radio list updated. Reception stopped; press Play to use the current address.</string>
+    <string name="radio_program_details">ID: %1$s\n%2$s\n%3$s</string>
+    <string name="radio_address_direct">Direct imported audio address. HTTP is unencrypted; availability depends on this broadcaster.</string>
+    <string name="radio_address_official">Current playback addresses are obtained from CNR’s public HTTPS catalogue.</string>
+    <string name="radio_cnr_1">Voice of China</string>
+    <string name="radio_cnr_2">Business Radio</string>
+    <string name="radio_cnr_3">Music Radio</string>
+    <string name="radio_cnr_4">Classic Music Radio</string>
+    <string name="radio_cnr_5">Voice of the Taiwan Strait</string>
+    <string name="radio_cnr_6">Voice of Shenzhou</string>
+    <string name="radio_cnr_7">Voice of the Greater Bay Area</string>
+    <string name="radio_cnr_8">Voice of Hong Kong</string>
+    <string name="radio_cnr_9">Ethnic Radio</string>
+    <string name="radio_cnr_10">Literature and Arts Radio</string>
+    <string name="radio_cnr_11">Voice of the Elderly</string>
+    <string name="radio_cnr_12">Tibetan Radio</string>
+    <string name="radio_cnr_13">Uyghur Radio</string>
+    <string name="radio_cnr_16">China Traffic Radio</string>
+    <string name="radio_cnr_17">Voice of Rural China</string>
+    <string name="radio_cnr_25">Kazakh Radio</string>
+</resources>

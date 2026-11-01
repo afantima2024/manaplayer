@@ -60,6 +60,9 @@ import com.macarmusic.app.model.ExplorerMode
 import com.macarmusic.app.model.LegacyDocumentPaths
 import com.macarmusic.app.model.Library
 import com.macarmusic.app.model.LibraryEdits
+import com.macarmusic.app.radio.CnrRadio
+import com.macarmusic.app.radio.RadioList
+import com.macarmusic.app.radio.RadioDefaults
 import com.macarmusic.app.ui.ExplorerLocation
 import com.macarmusic.app.ui.ExplorerPlace
 import com.macarmusic.app.ui.FileExplorerActivity
@@ -177,6 +180,243 @@ class FileExplorerTest {
         return DocumentsContract.buildDocumentUriUsingTree(LegacyStorage.tree(app, root), id)
     }
 
+    @Test fun radioListsUseGrantedUsbStyleFoldersAndSurvivePreviewRecreationWithoutWritingSources() {
+        val name = "Radio stations.M3U"
+        val content = "#EXTM3U\n#EXTINF:-1 tvg-id=\"${CnrRadio.stations.first().id}\",Renamed CNR\n" +
+            "https://radio.example/live/index.m3u8\n#EXTINF:-1,Custom\nhttp://radio.example/custom/index.m3u8\n"
+        val document = DocumentsContract.createDocument(resolver, DocumentUris.document(cacheRoot), "text/plain", name)!!
+        resolver.openOutputStream(document, "wt")!!.use { it.write(content.toByteArray()) }
+        val original = runBlocking { app.radioCatalog.snapshot() }
+        val originalOptions = app.radio.backup()
+        try {
+            runBlocking { app.radioCatalog.withReplacement(emptyList()) { Unit } }
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                lateinit var main: MainActivity
+                lateinit var viewModel: MusicViewModel
+                scenario.onActivity { main = it; viewModel = ViewModelProvider(it)[MusicViewModel::class.java] }
+                var stableSince = SystemClock.uptimeMillis()
+                await { onMainResult {
+                    val active = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<MainActivity>().singleOrNull()
+                    if (active != null && active !== main) {
+                        main = active
+                        viewModel = ViewModelProvider(active)[MusicViewModel::class.java]
+                        stableSince = SystemClock.uptimeMillis()
+                    }
+                    active?.hasWindowFocus() == true && SystemClock.uptimeMillis() - stableSince >= 500 &&
+                        main.findViewById<View>(R.id.nav_radio)?.isShown == true
+                } }
+                onMain { main.findViewById<View>(R.id.nav_radio).performClick() }
+                await { main.findViewById<View>(R.id.radioSettings)?.isShown == true }
+                onMain { main.findViewById<View>(R.id.radioSettings).performClick() }
+                await { main.findViewById<View>(R.id.radioImport)?.isEnabled == true }
+                onMain { main.findViewById<View>(R.id.radioImport).performClick() }
+                lateinit var picker: FileExplorerActivity
+                lateinit var pickerModel: FileExplorerViewModel
+                await {
+                    val found = onMainResult { ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<FileExplorerActivity>().firstOrNull() }
+                    if (found == null) false else { picker = found; true }
+                }
+                onMain {
+                    pickerModel = ViewModelProvider(picker)[FileExplorerViewModel::class.java]
+                    assertEquals(ExplorerMode.RADIO_IMPORT, pickerModel.mode)
+                    pickerModel.addGrant(cacheRoot, read)
+                }
+                await { !pickerModel.state.value.loading && pickerModel.state.value.items.any { it.name == name } }
+                nativeRow(picker, name)
+                await { viewModel.preparedRadioImport.value != null && !viewModel.radioImportBusy.value }
+                assertTrue(app.radioCatalog.state.value.saved.isEmpty())
+                assertEquals(2, viewModel.preparedRadioImport.value!!.parsed.entries.size)
+                assertEquals(RadioDefaults.bundled.size, viewModel.preparedRadioImport.value!!.currentCount)
+                screenshot("radio131-import-preview")
+                scenario.recreate()
+                scenario.onActivity { main = it; viewModel = ViewModelProvider(it)[MusicViewModel::class.java] }
+                await { viewModel.preparedRadioImport.value != null }
+                onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click())
+                await { viewModel.preparedRadioImport.value == null }
+                assertTrue(app.radioCatalog.state.value.saved.isEmpty())
+                onMain { viewModel.previewRadioList(document) }
+                await { viewModel.preparedRadioImport.value != null && !viewModel.radioImportBusy.value }
+                onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+                onView(withText(R.string.radio_import_replace)).inRoot(isDialog()).perform(click())
+                await { app.radioCatalog.state.value.programs.size == 2 &&
+                    !viewModel.radioImportBusy.value }
+                assertFalse(app.radioCatalog.state.value.includeDefaults)
+                assertEquals("Renamed CNR", app.radioCatalog.find(CnrRadio.stations.first().id)!!.name)
+                assertEquals(content, resolver.openInputStream(document)!!.bufferedReader().use { it.readText() })
+                val alternate = DocumentsContract.createDocument(resolver, DocumentUris.document(cacheRoot),
+                    "text/plain", "Alternate.txt")!!
+                val alternateText = "Custom,https://radio.example/backup/index.m3u8"
+                resolver.openOutputStream(alternate, "wt")!!.use { it.write(alternateText.toByteArray()) }
+                onMain { viewModel.previewRadioList(alternate) }
+                await { viewModel.preparedRadioImport.value != null && !viewModel.radioImportBusy.value }
+                onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+                screenshot("radio133-import-modes")
+                onView(withText(R.string.radio_import_append)).inRoot(isDialog()).perform(click())
+                await { app.radioCatalog.state.value.programs.last().sources.size == 2 && !viewModel.radioImportBusy.value }
+                assertEquals(listOf("http://radio.example/custom/index.m3u8", "https://radio.example/backup/index.m3u8"),
+                    app.radioCatalog.state.value.programs.last().sources)
+                onMain { viewModel.previewRadioList(alternate) }
+                await { viewModel.preparedRadioImport.value != null && !viewModel.radioImportBusy.value }
+                onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+                onView(withText(R.string.radio_import_replace)).inRoot(isDialog()).perform(click())
+                await { app.radioCatalog.state.value.programs.last().sources == listOf("https://radio.example/backup/index.m3u8") &&
+                    !viewModel.radioImportBusy.value }
+                assertEquals(alternateText, resolver.openInputStream(alternate)!!.bufferedReader().use { it.readText() })
+                resolver.call(cacheRoot, "cacheFixture", null, Bundle().apply { putBoolean("unavailable", true) })
+                assertEquals(1, app.radioCatalog.state.value.programs.size)
+                onMain { main.findViewById<View>(R.id.radioReset).performClick() }
+                onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+                await { app.radioCatalog.state.value.saved.size == 1 && app.radioCatalog.state.value.includeDefaults &&
+                    !viewModel.radioImportBusy.value }
+                assertEquals(RadioDefaults.bundled.size + 1, app.radioCatalog.state.value.programs.size)
+                assertEquals(CnrRadio.stations.first().program, app.radioCatalog.state.value.programs.first())
+                assertEquals("Custom", app.radioCatalog.state.value.programs.last().name)
+                screenshot("radio131-reset-builtins")
+            }
+        } finally {
+            resolver.call(cacheRoot, "cacheFixture", null, Bundle().apply { putBoolean("unavailable", false) })
+            runBlocking { app.radioCatalog.withReplacement(original.programs, original.includeDefaults) { Unit } }
+            assertTrue(app.radio.writeBackup(app.getSharedPreferences("settings", Context.MODE_PRIVATE).edit(), originalOptions).commit())
+            onMain { app.radio.publishRestored() }
+        }
+    }
+
+    @Test fun radioM3uExportUsesTheSameSafExplorerAndCanBeEditedAndReimported() {
+        val original = runBlocking { app.radioCatalog.snapshot() }
+        val options = app.radio.backup()
+        try {
+            onMain { app.radio.setEnabled(true) }
+            runBlocking { app.radioCatalog.withReplacement(emptyList()) { Unit } }
+            val custom = runBlocking {
+                app.radioCatalog.merge(RadioList.parse(("Export station,https://radio.example/one\n" +
+                    "Export station,https://radio.example/two").byteInputStream()).entries, emptyMap()).programs.single()
+            }
+            onMain { assertTrue(app.radio.pin(custom)) }
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                mainTap(scenario, R.id.nav_radio)
+                lateinit var viewModel: MusicViewModel
+                scenario.onActivity {
+                    viewModel = ViewModelProvider(it)[MusicViewModel::class.java]
+                    it.findViewById<android.widget.EditText>(R.id.radioSearch).setText("Nothing matches this search")
+                }
+                mainTap(scenario, R.id.radioSettings)
+                val before = app.radioCatalog.state.value
+                mainTap(scenario, R.id.radioExport)
+                var picker = explorerAtSaf(ExplorerMode.RADIO_EXPORT)
+                onMain { picker.findViewById<View>(R.id.explorerCancel).performClick() }
+                assertSame(before, app.radioCatalog.state.value)
+                mainTap(scenario, R.id.radioExport)
+                picker = explorerAtSaf(ExplorerMode.RADIO_EXPORT)
+                onMain {
+                    picker.findViewById<android.widget.EditText>(R.id.explorerFilename).setText("Editable stations")
+                    assertTrue(picker.findViewById<View>(R.id.explorerSelect).isEnabled)
+                    picker.findViewById<View>(R.id.explorerSelect).performClick()
+                }
+                await { !viewModel.radioImportBusy.value &&
+                    app.notice.value?.text == app.text(R.string.radio_export_done, before.programs.size,
+                        before.programs.sumOf { it.sources.size }) }
+                val exported = runBlocking {
+                    documents.children(cacheRoot.toString(), documents.rootId(cacheRoot.toString()), allFiles = true)
+                        .single { it.name == "Editable stations.m3u" }
+                }
+                val exportedUri = Uri.parse(exported.uri)
+                val text = resolver.openInputStream(exportedUri)!!.bufferedReader().use { it.readText() }
+                val parsed = RadioList.parse(text.byteInputStream())
+                assertEquals(0, parsed.invalid)
+                assertEquals(before.programs.sumOf { it.sources.size }, parsed.entries.size)
+                assertEquals(before.programs.map { it.id }.toSet(), parsed.entries.map { it.id }.toSet())
+                assertSame("Export must not rewrite the catalog", before, app.radioCatalog.state.value)
+                assertEquals(custom.sources, parsed.entries.filter { it.id == custom.id }.map { it.uri })
+                val edited = "#EXTM3U\n#EXTINF:-1 tvg-id=\"${custom.id}\" group-title=\"Offline edits\",Renamed offline\n" +
+                    "https://radio.example/two\n#EXTINF:-1 tvg-id=\"${custom.id}\" group-title=\"Offline edits\",Renamed offline\n" +
+                    "https://radio.example/new\n"
+                resolver.openOutputStream(exportedUri, "wt")!!.use { it.write(edited.toByteArray()) }
+                mainTap(scenario, R.id.radioImport)
+                picker = explorerAtSaf(ExplorerMode.RADIO_IMPORT)
+                nativeRow(picker, exported.name)
+                await { viewModel.preparedRadioImport.value != null && !viewModel.radioImportBusy.value }
+                onView(withText(R.string.radio_import_apply)).inRoot(isDialog()).perform(click())
+                screenshot("radio135-replace-or-merge")
+                onView(withText(R.string.cancel)).inRoot(isDialog()).perform(click())
+                assertSame(before, app.radioCatalog.state.value)
+                onMain { viewModel.previewRadioList(exportedUri) }
+                await { viewModel.preparedRadioImport.value != null && !viewModel.radioImportBusy.value }
+                onView(withText(R.string.radio_import_apply)).inRoot(isDialog()).perform(click())
+                onView(withText(R.string.radio_import_replace)).inRoot(isDialog()).perform(click())
+                await { app.radioCatalog.state.value.programs.size == 1 && !viewModel.radioImportBusy.value }
+                val replaced = app.radioCatalog.state.value.programs.single()
+                assertEquals(custom.id, replaced.id)
+                assertEquals("Renamed offline", replaced.name)
+                assertEquals("Offline edits", replaced.group)
+                assertEquals(listOf("https://radio.example/two", "https://radio.example/new"), replaced.sources)
+                assertFalse(app.radioCatalog.state.value.includeDefaults)
+                assertEquals(listOf(custom.id), app.radio.options.value.pins)
+                assertEquals(edited, resolver.openInputStream(exportedUri)!!.bufferedReader().use { it.readText() })
+                scenario.recreate()
+                scenario.onActivity { viewModel = ViewModelProvider(it)[MusicViewModel::class.java] }
+                onMain { viewModel.previewRadioList(exportedUri) }
+                await { viewModel.preparedRadioImport.value != null && !viewModel.radioImportBusy.value }
+                val unchanged = app.radioCatalog.state.value
+                onView(withText(R.string.radio_import_apply)).inRoot(isDialog()).perform(click())
+                onView(withText(R.string.radio_import_append)).inRoot(isDialog()).perform(click())
+                await { viewModel.preparedRadioImport.value == null && !viewModel.radioImportBusy.value }
+                assertSame("Identical offline file must not change or duplicate the catalog", unchanged, app.radioCatalog.state.value)
+                mainTap(scenario, R.id.nav_radio)
+                scenario.onActivity { it.findViewById<android.widget.EditText>(R.id.radioSearch).setText("") }
+                screenshot("radio135-reimported-catalog")
+            }
+        } finally {
+            runBlocking { app.radioCatalog.withReplacement(original.programs, original.includeDefaults) { Unit } }
+            assertTrue(app.radio.writeBackup(app.getSharedPreferences("settings", Context.MODE_PRIVATE).edit(), options).commit())
+            onMain { app.radio.publishRestored() }
+        }
+    }
+
+    @Test fun radioExportSystemPickerUsesCreateDocumentAndATemporaryWriteGrant() {
+        val output = DocumentsContract.createDocument(resolver, DocumentUris.document(cacheRoot),
+            "audio/x-mpegurl", "External.m3u")!!
+        val filter = android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            addDataType("audio/x-mpegurl")
+        }
+        val monitor = android.app.Instrumentation.ActivityMonitor(filter,
+            android.app.Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(output).addFlags(write)), true)
+        val before = resolver.persistedUriPermissions.map { it.uri }
+        instrumentation.addMonitor(monitor)
+        try {
+            ActivityScenario.launchActivityForResult<FileExplorerActivity>(
+                FileExplorerActivity.intent(app, ExplorerMode.RADIO_EXPORT, "External.m3u")).use { scenario ->
+                await { !model(scenario).state.value.loading }
+                tap(scenario, R.id.explorerAndroidPicker)
+                assertEquals(Activity.RESULT_OK, scenario.result.resultCode)
+                assertEquals(output, scenario.result.resultData!!.data)
+                assertEquals(write, scenario.result.resultData!!.flags and (read or write or persist))
+                assertEquals(1, monitor.hits)
+                assertEquals(before, resolver.persistedUriPermissions.map { it.uri })
+            }
+        } finally { instrumentation.removeMonitor(monitor) }
+    }
+
+    @Test fun radioTxtCanBeSelectedFromLocalStorageWithExtensionFallback() {
+        seedFiles()
+        File(files, "Stations.txt").writeText("Local radio,https://radio.example/live/index.m3u8")
+        ActivityScenario.launchActivityForResult<FileExplorerActivity>(
+            FileExplorerActivity.intent(app, ExplorerMode.RADIO_IMPORT)).use { scenario ->
+            goToFiles(scenario)
+            val names = model(scenario).state.value.items.map { it.name }
+            assertTrue("Stations.txt" in names)
+            assertFalse("消防.wav" in names)
+            tapRow(scenario, "Stations.txt")
+            assertEquals(Activity.RESULT_OK, scenario.result.resultCode)
+            val chosen = scenario.result.resultData!!.data!!
+            val parsed = resolver.openInputStream(chosen)!!.use { RadioList.parse(it) }
+            assertEquals("Local radio", parsed.entries.single().name)
+            assertEquals("Local radio,https://radio.example/live/index.m3u8", File(files, "Stations.txt").readText())
+        }
+    }
+
     @Test fun legacyProviderScansOnlyTheChosenFolderAndReadsLocalLyrics() = runBlocking(Dispatchers.IO) {
         seedFiles()
         val root = uri()
@@ -225,11 +465,13 @@ class FileExplorerTest {
         val outside = DocumentsContract.buildDocumentUriUsingTree(uri(), "$parent:../outside.wav")
         rejected { documents.describe(outside) }
         assertArrayEquals(before, song.readBytes())
-        val created = DocumentsContract.createDocument(resolver, uri(), "application/zip", "New backup.zip")!!
-        resolver.openOutputStream(created, "wt")!!.use { it.write("Synthetic backup".toByteArray()) }
-        assertEquals("Synthetic backup", File(files, "New backup.zip").readText())
-        rejected { DocumentsContract.createDocument(resolver, uri(), "application/zip", "New backup.zip") }
-        assertEquals("Synthetic backup", File(files, "New backup.zip").readText())
+        for ((mime, name) in listOf("application/zip" to "New backup.zip", "audio/x-mpegurl" to "New radio.m3u")) {
+            val created = DocumentsContract.createDocument(resolver, uri(), mime, name)!!
+            resolver.openOutputStream(created, "wt")!!.use { it.write("Synthetic export".toByteArray()) }
+            assertEquals("Synthetic export", File(files, name).readText())
+            rejected { DocumentsContract.createDocument(resolver, uri(), mime, name) }
+            assertEquals("Synthetic export", File(files, name).readText())
+        }
     }
 
     @Test fun pathPolicyRejectsSymlinkFilesDirectoriesAndCycles() {
@@ -639,42 +881,55 @@ class FileExplorerTest {
         }
     }
 
-    @Test fun backupExportCreatesANewFileAndRefusesExistingNames() {
+    @Test fun backupAndRadioExportsCreateNewFilesAndRefuseExistingNames() {
         seedFiles()
-        File(files, "Keep.zip").writeText("Existing backup must stay")
-        ActivityScenario.launchActivityForResult<FileExplorerActivity>(
-            FileExplorerActivity.intent(app, ExplorerMode.BACKUP_EXPORT, "Keep.zip")).use { scenario ->
-            goToFiles(scenario)
-            tap(scenario, R.id.explorerSelect)
-            await { model(scenario).state.value.error != null && !model(scenario).state.value.saving }
-            assertEquals("Existing backup must stay", File(files, "Keep.zip").readText())
-            onView(withId(R.id.explorerFilename)).perform(click(), replaceText("New backup"), pressImeActionButton())
-            await {
-                var ready = false
-                scenario.onActivity {
-                    ready = !it.findViewById<View>(R.id.explorerFilename).hasFocus() &&
-                        it.findViewById<View>(R.id.explorerList).height >= 144 * it.resources.displayMetrics.density
+        for (mode in listOf(ExplorerMode.BACKUP_EXPORT, ExplorerMode.RADIO_EXPORT)) {
+            val existing = mode.exportName("Keep")
+            File(files, existing).writeText("Existing file must stay")
+            ActivityScenario.launchActivityForResult<FileExplorerActivity>(
+                FileExplorerActivity.intent(app, mode, existing)).use { scenario ->
+                goToFiles(scenario)
+                tap(scenario, R.id.explorerSelect)
+                await { model(scenario).state.value.error != null && !model(scenario).state.value.saving }
+                assertEquals("Existing file must stay", File(files, existing).readText())
+                onView(withId(R.id.explorerFilename)).perform(click(), replaceText("New export"), pressImeActionButton())
+                scenario.recreate()
+                await { !model(scenario).state.value.loading }
+                assertEquals("New export", model(scenario).filename)
+                await {
+                    var ready = false
+                    scenario.onActivity {
+                        ready = !it.findViewById<View>(R.id.explorerFilename).hasFocus() &&
+                            it.findViewById<View>(R.id.explorerList).height >= 144 * it.resources.displayMetrics.density
+                    }
+                    ready
                 }
-                ready
+                val viewModel = model(scenario)
+                tap(scenario, R.id.explorerSelect)
+                await { !viewModel.state.value.saving &&
+                    (viewModel.state.value.result != null || viewModel.state.value.error != null) }
+                assertNull(viewModel.state.value.error)
+                assertEquals(Activity.RESULT_OK, scenario.result.resultCode)
+                val file = File(files, mode.exportName("New export"))
+                assertTrue(file.isFile)
+                assertEquals(uri(file), scenario.result.resultData!!.data)
             }
-            tap(scenario, R.id.explorerSelect)
-            assertEquals(Activity.RESULT_OK, scenario.result.resultCode)
-            assertTrue(File(files, "New backup.zip").isFile)
-            assertEquals(uri(File(files, "New backup.zip")), scenario.result.resultData!!.data)
         }
     }
 
     @Test fun readOnlySafFolderCannotBecomeAWritableDestination() {
         val readonly = DocumentsContract.buildTreeDocumentUri("com.macarmusic.app.test.cache", "readonly")
         resolver.takePersistableUriPermission(readonly, read or write)
-        ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, ExplorerMode.LYRIC_CACHE)).use { scenario ->
-            await { !model(scenario).state.value.loading }
-            val row = model(scenario).state.value.items.single { it.location?.uri == readonly.toString() }
-            tapRow(scenario, row.name)
-            assertFalse(model(scenario).state.value.canSelectFolder)
-            scenario.onActivity {
-                assertFalse(it.findViewById<View>(R.id.explorerSelect).isEnabled)
-                assertEquals(it.getString(R.string.explorer_read_only), it.findViewById<TextView>(R.id.explorerStatus).text)
+        for (mode in listOf(ExplorerMode.LYRIC_CACHE, ExplorerMode.RADIO_EXPORT)) {
+            ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, mode, "Radio.m3u")).use { scenario ->
+                await { !model(scenario).state.value.loading }
+                val row = model(scenario).state.value.items.single { it.location?.uri == readonly.toString() }
+                tapRow(scenario, row.name)
+                assertFalse(model(scenario).state.value.canSelectFolder)
+                scenario.onActivity {
+                    assertFalse(it.findViewById<View>(R.id.explorerSelect).isEnabled)
+                    assertEquals(it.getString(R.string.explorer_read_only), it.findViewById<TextView>(R.id.explorerStatus).text)
+                }
             }
         }
     }
@@ -1024,6 +1279,21 @@ class FileExplorerTest {
         return activity
     }
 
+    private fun explorerAtSaf(mode: ExplorerMode): FileExplorerActivity {
+        var picker: FileExplorerActivity? = null
+        await { onMainResult {
+            picker = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                .filterIsInstance<FileExplorerActivity>().singleOrNull()
+            picker?.hasWindowFocus() == true
+        } }
+        val activity = checkNotNull(picker)
+        val model = onMainResult { ViewModelProvider(activity)[FileExplorerViewModel::class.java] }
+        assertEquals(mode, model.mode)
+        onMain { model.addGrant(cacheRoot, read or persist or if (mode.writable) write else 0) }
+        await { !model.state.value.loading && model.state.value.path.lastOrNull()?.uri == cacheRoot.toString() }
+        assertNull(model.state.value.error)
+        return activity
+    }
     private fun nativeRow(activity: FileExplorerActivity, name: String) {
         val model = onMainResult { ViewModelProvider(activity)[FileExplorerViewModel::class.java] }
         val position = model.state.value.items.indexOfFirst { it.name == name }

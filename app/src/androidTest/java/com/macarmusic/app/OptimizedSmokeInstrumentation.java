@@ -63,6 +63,22 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
     private boolean colorPickerOnly;
     private boolean systemControlsOnly;
     private boolean homeWidgetsOnly;
+    private boolean radioOnly;
+    private boolean radioBaselineOnly;
+    private boolean radioResumeOnly;
+    private boolean radioListOnly;
+    private boolean radioListResumeOnly;
+    private boolean radioExchangeOnly;
+    private boolean radioExchangeResumeOnly;
+    private boolean radioReselectionOnly;
+    private boolean musicReselectionOnly;
+    private boolean navigationPreferencesOnly;
+    private boolean navigationPreferencesResumeOnly;
+    private boolean radioButtonsOnly;
+    private boolean radioDisabledResumeOnly;
+    private boolean radioLiveOnly;
+    private boolean radioLiveResumeOnly;
+    private String radioSamplePath;
     private boolean lyricCacheOnly;
     private boolean spectrumLyricsOnly;
     private boolean queueOnly;
@@ -90,6 +106,22 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
         colorPickerOnly = arguments != null && "true".equals(arguments.getString("colorPickerOnly"));
         systemControlsOnly = arguments != null && "true".equals(arguments.getString("systemControlsOnly"));
         homeWidgetsOnly = arguments != null && "true".equals(arguments.getString("homeWidgetsOnly"));
+        radioOnly = arguments != null && "true".equals(arguments.getString("radioOnly"));
+        radioBaselineOnly = arguments != null && "true".equals(arguments.getString("radioBaselineOnly"));
+        radioResumeOnly = arguments != null && "true".equals(arguments.getString("radioResumeOnly"));
+        radioListOnly = arguments != null && "true".equals(arguments.getString("radioListOnly"));
+        radioListResumeOnly = arguments != null && "true".equals(arguments.getString("radioListResumeOnly"));
+        radioExchangeOnly = arguments != null && "true".equals(arguments.getString("radioExchangeOnly"));
+        radioExchangeResumeOnly = arguments != null && "true".equals(arguments.getString("radioExchangeResumeOnly"));
+        radioReselectionOnly = arguments != null && "true".equals(arguments.getString("radioReselectionOnly"));
+        musicReselectionOnly = arguments != null && "true".equals(arguments.getString("musicReselectionOnly"));
+        navigationPreferencesOnly = arguments != null && "true".equals(arguments.getString("navigationPreferencesOnly"));
+        navigationPreferencesResumeOnly = arguments != null && "true".equals(arguments.getString("navigationPreferencesResumeOnly"));
+        radioButtonsOnly = arguments != null && "true".equals(arguments.getString("radioButtonsOnly"));
+        radioDisabledResumeOnly = arguments != null && "true".equals(arguments.getString("radioDisabledResumeOnly"));
+        radioLiveOnly = arguments != null && "true".equals(arguments.getString("radioLiveOnly"));
+        radioLiveResumeOnly = arguments != null && "true".equals(arguments.getString("radioLiveResumeOnly"));
+        radioSamplePath = arguments == null ? null : arguments.getString("radioSamplePath");
         lyricCacheOnly = arguments != null && "true".equals(arguments.getString("lyricCacheOnly"));
         spectrumLyricsOnly = arguments != null && "true".equals(arguments.getString("spectrumLyricsOnly"));
         queueOnly = arguments != null && "true".equals(arguments.getString("queueOnly"));
@@ -141,7 +173,16 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             monitor = new ActivityMonitor(audioPicker, new ActivityResult(Activity.RESULT_OK,
                 new Intent().setData(audio).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)), true);
             addMonitor(monitor);
-            if (queueOnly || lyricDownloadsOnly || playerUiOnly || remoteNavigationOnly) writeQueueFixture(tree, audio);
+            if (queueOnly || lyricDownloadsOnly || playerUiOnly || remoteNavigationOnly || radioBaselineOnly)
+                writeQueueFixture(tree, audio);
+            if (radioBaselineOnly) getTargetContext().getSharedPreferences("settings", 0).edit()
+                .putBoolean("radioFavoritesOnly", true)
+                .putStringSet("radioFavorites", java.util.Collections.singleton("radio:cnr:zgzs")).commit();
+            FixtureRadioNetwork radioNetwork = radioBaselineOnly || radioOnly || radioResumeOnly || radioListOnly || radioListResumeOnly ||
+                radioButtonsOnly || radioDisabledResumeOnly || radioLiveOnly || radioLiveResumeOnly ||
+                radioExchangeOnly || radioExchangeResumeOnly || radioReselectionOnly ||
+                navigationPreferencesOnly || navigationPreferencesResumeOnly
+                ? FixtureRadioNetwork.install() : null;
             if (bulkRemovalOnly && !bulkRemovalRestart) writeBulkRemovalFixture(tree, audio);
             {
                 Bundle options = new Bundle();
@@ -176,6 +217,81 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             });
             check(connected.await(25, TimeUnit.SECONDS) && controller != null, "Media session connection failed");
             await(() -> controller.getPlaybackState() != null);
+            if (navigationPreferencesOnly || navigationPreferencesResumeOnly) {
+                verifyNavigationPreferences(radioNetwork);
+                result.putString("result", "PASS");
+                result.putString("checks", navigationPreferencesResumeOnly
+                    ? "Exact release: hidden pages and radio selection option survive a fresh process; no autoplay/network; required pages stay accessible and all optional pages can be restored"
+                    : "Exact release: upgrade defaults and saved music retained; three independent navigation switches, safe Settings Back, uninterrupted audio, grouped radio stays by default, optional Playing navigation, English/Chinese settings");
+                return;
+            }
+            if (radioOnly || radioResumeOnly || radioListOnly || radioListResumeOnly || radioButtonsOnly ||
+                radioDisabledResumeOnly || radioLiveOnly || radioLiveResumeOnly || radioExchangeOnly ||
+                radioExchangeResumeOnly || radioReselectionOnly) {
+                int openPlayer = getTargetContext().getResources().getIdentifier("radioOpenPlayer", "id", PACKAGE);
+                if (openPlayer != 0) {
+                    openRadioSettings();
+                    if (!((CompoundButton) activity.findViewById(openPlayer)).isChecked())
+                        tap(() -> activity.findViewById(openPlayer));
+                    tap(() -> activity.findViewById(id("nav_player")));
+                }
+            }
+            if (radioReselectionOnly || musicReselectionOnly) {
+                if (radioReselectionOnly) verifyRadioReselection(radioNetwork);
+                else verifyMusicReselection();
+                result.putString("result", "PASS");
+                result.putString("checks", radioReselectionOnly
+                    ? "Exact release: same station, pinned/quick buttons and selected source keep their connection; alternate source and stopped-stream retry reconnect; local music remains paused and intact"
+                    : "Exact release: upgrade retains 100 songs and paused position; current queue row, paused resume and library selection retain position; another song still starts normally");
+                return;
+            }
+            if (radioExchangeOnly || radioExchangeResumeOnly) {
+                verifyRadioExchange(radioNetwork, result);
+                result.putString("result", "PASS");
+                result.putString("checks", radioExchangeResumeOnly
+                    ? "Exact release: replacement-only stations, sources and pin survive a fresh process; no startup fetch/autoplay; original music queue and reset retained"
+                    : "Exact release: in-place upgrade, complete M3U export through the shared SAF explorer, offline edit, cancel/merge/deduplication/replace-all, unchanged import during playback, original music retained");
+                return;
+            }
+            if (radioLiveOnly || radioLiveResumeOnly) {
+                verifyRadioLiveOptions(radioNetwork);
+                result.putString("result", "PASS");
+                result.putString("checks", radioLiveResumeOnly
+                    ? "Exact release: multi-source/tuning/pin restoration, paused startup with no fetch, selected source playback and preserved local queue"
+                    : "Exact release: station editor, source switching/count, buffer/retry/status/logo controls, persistent logo clear and multi-source import");
+                return;
+            }
+            if (radioButtonsOnly || radioDisabledResumeOnly) {
+                verifyRadioButtons(radioNetwork);
+                result.putString("result", "PASS");
+                result.putString("checks", radioDisabledResumeOnly
+                    ? "Exact release: Radio-off restored across a fresh process, hidden tab, retained music/catalog/pins, no autoplay/network, re-enabled without autoplay"
+                    : "Exact release: pinned native buttons, grouped list, responsive toolbar, remote Menu, quick switching, English/Chinese branding, disable/enable and uninterrupted local playback");
+                return;
+            }
+            if (radioListOnly || radioListResumeOnly) {
+                verifyRadioLists(radioNetwork, result);
+                result.putString("result", "PASS");
+                result.putString("checks", radioListResumeOnly
+                    ? "Exact release: imported station/pin restored paused without fetching; radio playback and saved local queue retained"
+                    : "Exact release: same explorer TXT/M3U selection, cancel/apply, built-in address override, HTTP playback, reset retaining custom station/pin, source-file independence");
+                return;
+            }
+            if (radioBaselineOnly) {
+                verifyRadioMusicBaseline();
+                seedRadioUpgrade();
+                result.putString("result", "PASS");
+                result.putString("checks", "Baseline release: 100 local songs, saved folder/playlist, paused queue at song 76 / 20 seconds, edited two-source station, selected second source and explicit unpin");
+                return;
+            }
+            if (radioOnly || radioResumeOnly) {
+                verifyRadio(radioNetwork);
+                result.putString("result", "PASS");
+                result.putString("checks", radioResumeOnly
+                    ? "Exact optimized APK: fresh-process paused radio restore, saved pins, no startup connection, retained local music queue"
+                    : "Exact optimized APK: in-place baseline update, CNR search/pins, synthetic AAC/HLS, live controls, screen-off playback, notification, four cross-UID widgets, disconnected Stop and paused music restoration");
+                return;
+            }
             if (progressiveScanOnly) {
                 result.putLong("launchMs", SystemClock.uptimeMillis() - launchStarted);
                 verifyProgressiveScan(tree, result);
@@ -436,7 +552,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             }
         } finally {
             if (monitor != null) removeMonitor(monitor);
-            if (homeWidgetsOnly || karaokeOnly) widgetCommand("finish", "");
+            if (homeWidgetsOnly || karaokeOnly || radioOnly) widgetCommand("finish", "");
             onMain(() -> {
                 if (controller != null) controller.getTransportControls().pause();
                 if (browser != null) browser.disconnect();
@@ -447,6 +563,1132 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
     }
 
     private int id(String name) { return resource(name, "id"); }
+
+    private void verifyNavigationPreferences(FixtureRadioNetwork network) throws Exception {
+        verifyRadioMusicBaseline();
+        check(network.requests.isEmpty(), "Navigation settings must not add startup network work");
+        android.content.SharedPreferences saved = getTargetContext().getSharedPreferences("settings", 0);
+        String[][] pages = {{"nav_library", "settingsShowLibrary", "showLibrary"},
+            {"nav_queue", "settingsShowQueue", "showQueue"},
+            {"nav_playlists", "settingsShowPlaylists", "showPlaylists"}};
+        StringBuilder finite = new StringBuilder("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n");
+        for (int i = 0; i < 30; i++) finite.append("#EXTINF:4.0,\ntone").append(i).append(".aac\n");
+        network.customPlaylist = finite.append("#EXT-X-ENDLIST\n").toString();
+        if (navigationPreferencesResumeOnly) {
+            verifyOptionalNavigation(false);
+            for (String[] page : pages) check(!saved.getBoolean(page[2], true), "Hidden page preference was lost");
+            check(saved.getBoolean("radioOpenPlayerOnSelection", false), "Radio selection choice was lost");
+            openRadioSettings();
+            check(((CompoundButton) activity.findViewById(id("radioOpenPlayer"))).isChecked(), "Radio switch did not restore");
+            tap(() -> activity.findViewById(id("radioOpenPlayer")));
+            check(network.requests.isEmpty(), "Changing navigation preferences connected radio");
+            tap(() -> activity.findViewById(id("nav_radio")));
+            onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("jjzs"));
+            String title = activity.getString(resource("radio_cnr_2", "string"));
+            tap(() -> descriptionView(radioGrid("radioList"), title));
+            await(() -> "radio:cnr:jjzs".equals(mediaId()) &&
+                controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+            check(activity.findViewById(id("nav_radio")).isSelected(), "Turning off automatic navigation must stay in Radio");
+            openRadioSettings();
+            tap(() -> activity.findViewById(id("radioReturnMusic")));
+            verifyRadioMusicBaseline();
+            tap(() -> activity.findViewById(id("action_settings")));
+            verifySettingsPage("categoryGeneral", "settingsGeneralPanel");
+            for (String[] page : pages) {
+                check(!((CompoundButton) activity.findViewById(id(page[1]))).isChecked(), "Hidden switch did not restore");
+                tap(() -> activity.findViewById(id(page[1])));
+            }
+            verifyOptionalNavigation(true);
+            tap(() -> activity.findViewById(id("nav_player")));
+            verifyNavigationLabels();
+            saveScreenshot("navigation1360-restored-pages.png");
+            return;
+        }
+        verifyOptionalNavigation(true);
+        for (String[] page : pages) check(saved.getBoolean(page[2], true), "Upgrade must retain visible navigation by default");
+        check(!saved.getBoolean("radioOpenPlayerOnSelection", false), "Radio should stay on its page by default");
+        onMain(() -> controller.getTransportControls().play());
+        await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        for (String[] page : pages) {
+            tap(() -> activity.findViewById(id(page[0])));
+            tap(() -> activity.findViewById(id("action_settings")));
+            verifySettingsPage("categoryGeneral", "settingsGeneralPanel");
+            check(((CompoundButton) activity.findViewById(id(page[1]))).isChecked(), "Optional navigation should initially be enabled");
+            tap(() -> activity.findViewById(id(page[1])));
+            await(() -> !saved.getBoolean(page[2], true) &&
+                activity.findViewById(id(page[0])).getVisibility() == View.GONE);
+            sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+            await(() -> !activity.findViewById(id("settingsPanel")).isShown() &&
+                activity.findViewById(id("nav_player")).isSelected());
+            check("queue-fixture-76".equals(mediaId()) && controller.getQueue().size() == 100 &&
+                controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+                controller.getPlaybackState().getPosition() >= 20_000,
+                "Hiding navigation changed or interrupted music");
+        }
+        verifyOptionalNavigation(false);
+        tap(() -> activity.findViewById(id("nav_folders")));
+        saveScreenshot("navigation1360-hidden-pages.png");
+        onMain(() -> { controller.getTransportControls().pause(); controller.getTransportControls().seekTo(20_000); });
+        await(() -> restoredAt(20_000));
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("Upgrade 134 CNR"));
+        expandRadioGroup("radio_group_national");
+        tap(() -> descriptionView(radioGrid("radioList"), "Upgrade 134 CNR"));
+        await(() -> "radio:cnr:zgzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        int connections = network.manifests.get();
+        for (int i = 0; i < 3; i++) tap(() -> descriptionView(radioGrid("radioList"), "Upgrade 134 CNR"));
+        check(network.manifests.get() == connections, "Repeated station selection restarted audio");
+        onMain(() -> {
+            check(activity.findViewById(id("nav_radio")).isSelected(), "Default station selection left Radio");
+            check("Upgrade 134 CNR".contentEquals(((EditText) activity.findViewById(id("radioSearch"))).getText()),
+                "Station selection cleared the search");
+            check(descriptionView(radioGrid("radioList"), "Upgrade 134 CNR") != null, "Station selection collapsed its group");
+        });
+        saveScreenshot("navigation1360-radio-stays.png");
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("jjzs"));
+        String title = activity.getString(resource("radio_cnr_2", "string"));
+        tap(() -> descriptionView(radioGrid("radioList"), title));
+        await(() -> "radio:cnr:jjzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        check(activity.findViewById(id("nav_radio")).isSelected(), "Selecting another station left Radio");
+        connections = network.manifests.get();
+        tap(() -> activity.findViewById(id("radioSettings")));
+        check(!((CompoundButton) activity.findViewById(id("radioOpenPlayer"))).isChecked(), "Radio choice should initially be off");
+        tap(() -> activity.findViewById(id("radioOpenPlayer")));
+        sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
+        await(() -> activity.findViewById(id("radioSearch")).isShown());
+        tap(() -> descriptionView(radioGrid("radioList"), title));
+        await(() -> activity.findViewById(id("nav_player")).isSelected() &&
+            activity.findViewById(id("radioQuickStations")) != null &&
+            activity.findViewById(id("radioQuickStations")).isShown());
+        check(network.manifests.get() == connections, "Open Playing preference reopened an unchanged station");
+        saveScreenshot("navigation1360-open-playing.png");
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("radioReturnMusic")));
+        verifyRadioMusicBaseline();
+        tap(() -> activity.findViewById(id("action_settings")));
+        verifySettingsPage("categoryGeneral", "settingsGeneralPanel");
+        tap(() -> activity.findViewById(id("settingsLanguage")));
+        tap(() -> windowText(activity.getString(resource("language_chinese", "string"))));
+        await(() -> "zh".equals(activity.getResources().getConfiguration().locale.getLanguage()) && activity.hasWindowFocus());
+        tap(() -> activity.findViewById(id("settingsShowPlaylists")));
+        tap(() -> activity.findViewById(id("settingsShowPlaylists")));
+        saveScreenshot("navigation1360-settings-zh.png");
+        verifySettingsPage("categoryRadio", "settingsRadioPanel");
+        onMain(() -> check(((CompoundButton) activity.findViewById(id("radioOpenPlayer"))).isChecked(),
+            "Language change lost radio navigation preference"));
+        tap(() -> activity.findViewById(id("radioOpenPlayer")));
+        tap(() -> activity.findViewById(id("radioOpenPlayer")));
+        onMain(() -> check(((CompoundButton) activity.findViewById(id("radioOpenPlayer"))).isChecked(),
+            "Chinese radio navigation switch did not retain its choice"));
+        saveScreenshot("navigation1360-radio-setting-zh.png");
+        tap(() -> activity.findViewById(id("nav_player")));
+        verifyOptionalNavigation(false);
+        verifyRadioMusicBaseline();
+    }
+
+    private void verifyOptionalNavigation(boolean shown) {
+        onMain(() -> {
+            for (String name : new String[] {"nav_library", "nav_queue", "nav_playlists"})
+                check(activity.findViewById(id(name)).getVisibility() == (shown ? View.VISIBLE : View.GONE),
+                    "Wrong optional page visibility: " + name);
+            for (String name : new String[] {"nav_player", "nav_folders"}) {
+                View button = activity.findViewById(id(name));
+                check(button.isShown() && button.isEnabled(), "Required page is unavailable: " + name);
+                float minimum = 48 * activity.getResources().getDisplayMetrics().density;
+                check(button.getWidth() >= minimum && button.getHeight() >= minimum,
+                    "Required navigation target is too small: " + name);
+            }
+        });
+    }
+
+    private void verifyMusicReselection() throws Exception {
+        verifyRadioMusicBaseline();
+        tap(() -> activity.findViewById(id("nav_queue")));
+        await(() -> queueRow("Queue 076") != null);
+        onMain(() -> controller.getTransportControls().play());
+        await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        for (int index = 0; index < 3; index++) tap(() -> queueRow("Queue 076").findViewById(id("title")));
+        SystemClock.sleep(500);
+        check(controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+            controller.getPlaybackState().getPosition() >= 20_000,
+            "Current queue selection restarted the song");
+        onMain(() -> {
+            controller.getTransportControls().pause();
+            controller.getTransportControls().seekTo(23_000);
+        });
+        await(() -> pausedAt(23_000));
+        tap(() -> queueRow("Queue 076").findViewById(id("title")));
+        await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        check(controller.getPlaybackState().getPosition() >= 23_000, "Paused music selection restarted instead of resuming");
+        tap(() -> activity.findViewById(id("nav_library")));
+        await(() -> visibleEditor(activity.getWindow().getDecorView()) != null);
+        onMain(() -> visibleEditor(activity.getWindow().getDecorView()).setText("Queue 076"));
+        await(() -> {
+            ViewGroup list = activity.findViewById(id("libraryList"));
+            return list != null && list.getChildCount() == 1 && textView(list, "Queue 076") != null;
+        });
+        tap(() -> textView(activity.findViewById(id("libraryList")), "Queue 076"));
+        await(() -> controller.getQueue().size() == 1 &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        check("queue-fixture-76".equals(mediaId()) && controller.getPlaybackState().getPosition() >= 23_000,
+            "Library selection rebuilt the current audio instead of only changing its queue");
+        saveScreenshot("reselect1351-music.png");
+        tap(() -> activity.findViewById(id("nav_library")));
+        onMain(() -> visibleEditor(activity.getWindow().getDecorView()).setText("Queue 002"));
+        await(() -> textView(activity.findViewById(id("libraryList")), "Queue 002") != null);
+        tap(() -> textView(activity.findViewById(id("libraryList")), "Queue 002"));
+        await(() -> "queue-fixture-2".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        check(controller.getPlaybackState().getPosition() < 5_000, "A different music selection did not start normally");
+        onMain(() -> {
+            controller.getTransportControls().pause();
+            controller.getTransportControls().seekTo(12_000);
+        });
+        await(() -> pausedAt(12_000));
+    }
+
+    private void verifyRadioReselection(FixtureRadioNetwork network) throws Exception {
+        check(network.requests.isEmpty(), "Startup connected radio without a selection");
+        check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING, "Startup unexpectedly played audio");
+        if (mediaId() != null && mediaId().startsWith("radio:")) {
+            openRadioSettings();
+            tap(() -> activity.findViewById(id("radioReturnMusic")));
+            await(() -> mediaId() != null && !mediaId().startsWith("radio:"));
+        }
+        String music = mediaId();
+        int musicCount = controller.getQueue().size();
+        long musicPosition = controller.getPlaybackState().getPosition();
+        StringBuilder finite = new StringBuilder("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n");
+        for (int i = 0; i < 30; i++) finite.append("#EXTINF:4.0,\ntone").append(i).append(".aac\n");
+        network.customPlaylist = finite.append("#EXT-X-ENDLIST\n").toString();
+        String title = activity.getString(resource("radio_cnr_2", "string"));
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("jjzs"));
+        tap(() -> descriptionView(radioGrid("radioList"), title));
+        await(() -> "radio:cnr:jjzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+            activity.findViewById(id("radioQuickStations")) != null &&
+            descriptionView(radioGrid("radioQuickStations"), title) != null);
+        int connections = network.manifests.get();
+        for (int index = 0; index < 3; index++) tap(() -> descriptionView(radioGrid("radioQuickStations"), title));
+        SystemClock.sleep(500);
+        check(network.manifests.get() == connections, "Current radio quick selection reopened the stream");
+        tap(() -> activity.findViewById(id("nav_radio")));
+        tap(() -> descriptionView(radioGrid("radioList"), title));
+        SystemClock.sleep(300);
+        check(network.manifests.get() == connections, "Current radio station button reopened the stream");
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("Upgrade 134 CNR"));
+        expandRadioGroup("radio_group_national");
+        tap(() -> descriptionView(radioGrid("radioList"), "Upgrade 134 CNR"));
+        await(() -> "radio:cnr:zgzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        connections = network.manifests.get();
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> descriptionView(radioGrid("radioList"), "Upgrade 134 CNR").performLongClick());
+        chooseRadioOption(2);
+        int sourceIndex = savedRadioPrograms().getJSONObject(0).optInt("sourceIndex", 0);
+        String sourceUri = "https://radio.example/upgrade-" + (sourceIndex == 0 ? "a" : "b") + "/index.m3u8";
+        String selectedSource = activity.getString(resource("radio_source_item", "string"), sourceIndex + 1, sourceUri);
+        tap(() -> windowText(selectedSource));
+        await(() -> ownedPanel() == null &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        SystemClock.sleep(300);
+        check(network.manifests.get() == connections, "Selecting the current source reopened the stream");
+        tap(() -> activity.findViewById(id("nav_player")));
+        tap(() -> activity.findViewById(id(sourceIndex == 0 ? "forward" : "rewind")));
+        final int previousConnections = connections;
+        await(() -> network.manifests.get() == previousConnections + 1 &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        saveScreenshot("reselect1351-radio.png");
+        onMain(() -> controller.getTransportControls().pause());
+        await(() -> radioStopped() && network.active.get() == 0);
+        tap(() -> activity.findViewById(id("nav_radio")));
+        tap(() -> descriptionView(radioGrid("radioList"), "Upgrade 134 CNR"));
+        await(() -> network.manifests.get() == previousConnections + 2 &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("radioReturnMusic")));
+        await(() -> music.equals(mediaId()) && controller.getQueue().size() == musicCount && restoredAt(musicPosition));
+        check(savedLibrary().getJSONArray("tracks").length() == 100, "Radio selection changed local music");
+    }
+
+    private void verifyRadioMusicBaseline() throws Exception {
+        await(() -> controller.getQueue() != null && controller.getQueue().size() == 100 &&
+            "queue-fixture-76".equals(mediaId()) && restoredAt(20_000));
+        org.json.JSONObject library = savedLibrary();
+        check(library.getJSONArray("tracks").length() == 100, "Music library was lost during update");
+        check(library.getJSONArray("sources").length() == 1, "Saved folder was lost during update");
+        check(library.getJSONArray("playlists").getJSONObject(0).getJSONArray("trackIds").length() == 100,
+            "Local playlist was lost during update");
+        check("OFF".equals(getTargetContext().getSharedPreferences("settings", 0).getString("loopMode", "")),
+            "Music playback preferences were lost during update");
+    }
+
+    private String mediaId() {
+        return controller.getMetadata() == null ? null : controller.getMetadata().getDescription().getMediaId();
+    }
+
+    private boolean radioStopped() {
+        PlaybackState state = controller.getPlaybackState();
+        return state != null && (state.getState() == PlaybackState.STATE_STOPPED ||
+            state.getState() == PlaybackState.STATE_NONE || state.getState() == PlaybackState.STATE_PAUSED);
+    }
+
+    private void verifyRadio(FixtureRadioNetwork network) throws Exception {
+        if (radioResumeOnly) {
+            await(() -> "radio:cnr:zgzs".equals(mediaId()) && radioStopped());
+            SystemClock.sleep(1200);
+            check(network.requests.isEmpty(), "Restored radio connected without Play");
+            android.content.SharedPreferences saved = getTargetContext().getSharedPreferences("settings", 0);
+            check(saved.getString("radioPins", "").contains("radio:cnr:zgzs"),
+                "Radio pins were lost across process restart");
+            check(saved.getInt("radioPinColor", -1) == 0x13579b, "Custom pin color was lost across process restart");
+            openRadioSettings();
+            tap(() -> activity.findViewById(id("radioPinColor")));
+            await(() -> colorDialog() != null);
+            tap(() -> colorDialog().findViewById(android.R.id.button3));
+            await(() -> colorDialog() == null && saved.getInt("radioPinColor", -1) == -1);
+            tap(() -> activity.findViewById(id("radioReturnMusic")));
+            verifyRadioMusicBaseline();
+            return;
+        }
+        verifyRadioMusicBaseline();
+        check(network.requests.isEmpty(), "Updating or launching caused a radio connection");
+        check("ManaMusicRadio".equals(activity.getString(resource("app_name", "string"))), "New English branding missing");
+        verifyRadioUpgrade(network);
+        verifyRadioPinColor(network);
+        tap(() -> activity.findViewById(id("nav_radio")));
+        await(() -> activity.findViewById(id("radioSearch")) != null);
+        verifyBundledRadioRows(network);
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("zgzs"));
+        await(() -> ((ViewGroup) activity.findViewById(id("radioList"))).getChildCount() == 2);
+        check(network.requests.isEmpty(), "Browsing or searching connected to radio");
+        saveScreenshot("cnr130-radio-list.png");
+        tap(() -> ((ViewGroup) activity.findViewById(id("radioList"))).getChildAt(0));
+        await(() -> "radio:cnr:zgzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        check(controller.getQueue().size() == 417, "The complete packaged station catalog was not loaded");
+        check(network.catalogues.get() == 1 && network.segments.get() > 0, "CNR catalogue/HLS/AAC was not exercised");
+        long prohibited = PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_FAST_FORWARD | PlaybackState.ACTION_REWIND;
+        check((controller.getPlaybackState().getActions() & prohibited) == 0, "Live radio advertises seeking");
+        onMain(() -> {
+            for (String name : new String[] {"seek", "rewind", "forward", "shuffle", "repeat"})
+                check(!activity.findViewById(id(name)).isEnabled(), "Live-only control remains enabled: " + name);
+        });
+        await(() -> mediaNotification() != null);
+        tap(() -> activity.findViewById(id("favorite")));
+        check(!getTargetContext().getSharedPreferences("settings", 0).getString("radioPins", "").contains("radio:cnr:zgzs"),
+            "The main action must unpin the default station");
+        tap(() -> activity.findViewById(id("favorite")));
+        check(getTargetContext().getSharedPreferences("settings", 0).getString("radioPins", "").contains("radio:cnr:zgzs"),
+            "The main action must pin the station again");
+        tap(() -> activity.findViewById(id("next")));
+        await(() -> "radio:cnr:jjzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        onMain(() -> controller.getTransportControls().skipToPrevious());
+        await(() -> "radio:cnr:zgzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        saveScreenshot("cnr130-radio-playing.png");
+        getContext().startActivity(new Intent().setClassName(PACKAGE + ".test", PACKAGE + ".FixtureWidgetHostActivity")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        await(() -> widgetStatus().getInt("count") == 4 &&
+            activity.getString(resource("radio_stop", "string")).equals(widgetStatus().getString("play3")));
+        check(widgetStatus().getInt("uid") != Process.myUid(), "Widget host must have its own UID");
+        check(activity.getString(resource("radio_live", "string")).equals(widgetStatus().getString("time0")),
+            "Radio widget must show LIVE instead of a seek position");
+        check(!widgetStatus().getBoolean("previousEnabled0"), "First station must not offer Previous");
+        widgetCommand("click", "0:widget_next");
+        await(() -> "radio:cnr:jjzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        await(() -> activity.getString(resource("radio_cnr_2", "string")).equals(widgetStatus().getString("title0")));
+        SystemClock.sleep(700);
+        int updates = widgetStatus().getInt("updates");
+        SystemClock.sleep(1400);
+        check(widgetStatus().getInt("updates") == updates, "Live widgets are running a periodic progress ticker");
+        saveScreenshot("cnr130-radio-widgets.png");
+        long position = controller.getPlaybackState().getPosition();
+        String screenOffStation = mediaId();
+        int audioRequests = network.segments.get();
+        shellRadio("input keyevent 223");
+        await(() -> !getTargetContext().getSystemService(android.os.PowerManager.class).isInteractive());
+        SystemClock.sleep(4500);
+        PlaybackState screenOffState = controller.getPlaybackState();
+        android.util.Log.i("RadioRelease", "Screen-off playback=" + screenOffState + "; prior position=" + position);
+        // A live position is relative to the sliding HLS window, not a monotonically increasing song clock.
+        check(screenOffState.getState() == PlaybackState.STATE_PLAYING && screenOffState.getPlaybackSpeed() > 0 &&
+            screenOffStation.equals(mediaId()), "Screen-off radio state: " + screenOffState);
+        await(() -> network.segments.get() > audioRequests);
+        check(!getTargetContext().getSystemService(android.os.PowerManager.class).isInteractive(),
+            "Radio must continue receiving audio before the screen is woken");
+        shellRadio("input keyevent 224");
+        shellRadio("input keyevent 82");
+        widgetCommand("click", "1:widget_play");
+        await(() -> radioStopped() && network.active.get() == 0);
+        int requests = network.requests.size();
+        SystemClock.sleep(1200);
+        check(network.requests.size() == requests, "Stop kept receiving radio");
+        widgetCommand("click", "3:widget_play");
+        await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        check(network.requests.size() > requests, "Play did not reconnect to live audio");
+        widgetCommand("finish", "");
+        await(() -> activity.hasWindowFocus());
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("radioReturnMusic")));
+        verifyRadioMusicBaseline();
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("zgzs"));
+        await(() -> ((ViewGroup) activity.findViewById(id("radioList"))).getChildCount() == 2);
+        tap(() -> ((ViewGroup) activity.findViewById(id("radioList"))).getChildAt(0));
+        await(() -> "radio:cnr:zgzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        tap(() -> activity.findViewById(id("play")));
+        await(() -> radioStopped() && network.active.get() == 0);
+        check(savedLibrary().getJSONArray("tracks").length() == 100, "Stations entered the music library");
+    }
+
+    private void shellRadio(String command) throws Exception {
+        try (InputStream input = new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                getUiAutomation().executeShellCommand(command))) {
+            byte[] buffer = new byte[512];
+            while (input.read(buffer) != -1) { }
+        }
+    }
+
+    private org.json.JSONArray savedRadioPrograms() {
+        File file = new File(getTargetContext().getFilesDir(), "radio-stations.json");
+        if (!file.exists()) return new org.json.JSONArray();
+        try { return new org.json.JSONObject(fileText(file)).getJSONArray("programs"); }
+        catch (org.json.JSONException error) { throw new AssertionError("Invalid saved radio catalog", error); }
+    }
+
+    private void openRadioList(String filename) {
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("radioImport")));
+        await(() -> explorer != null && explorer.hasWindowFocus());
+        tap(() -> textView(explorer.findViewById(id("explorerList")), "root"));
+        tap(() -> textView(explorer.findViewById(id("explorerList")), filename));
+        await(() -> dialogButton(activity.getString(resource("radio_import_apply", "string"))) != null);
+    }
+
+    private void openRadioSettings() {
+        boolean[] showing = {false};
+        onMain(() -> showing[0] = activity.findViewById(id("settingsPanel")) != null &&
+            activity.findViewById(id("settingsPanel")).isShown());
+        if (!showing[0]) tap(() -> activity.findViewById(id("action_settings")));
+        verifySettingsPage("categoryRadio", "settingsRadioPanel");
+    }
+
+    private void applyRadioList(String mode) {
+        tap(() -> dialogButton(activity.getString(resource("radio_import_apply", "string"))));
+        clickDialogAction(mode);
+        tap(() -> activity.findViewById(id("nav_radio")));
+    }
+
+    private org.json.JSONObject radioSnapshot() {
+        try { return new org.json.JSONObject(fileText(new File(getTargetContext().getFilesDir(), "radio-stations.json"))); }
+        catch (org.json.JSONException error) { throw new AssertionError("Invalid radio snapshot", error); }
+    }
+
+    private void waitRadioExchange() {
+        openRadioSettings();
+        await(() -> activity.findViewById(id("radioExport")).isEnabled() && ownedPanel() == null);
+    }
+
+    private void verifyRadioExchange(FixtureRadioNetwork network, Bundle result) throws Exception {
+        android.content.SharedPreferences settings = getTargetContext().getSharedPreferences("settings", 0);
+        if (radioExchangeResumeOnly) {
+            check(!radioSnapshot().getBoolean("includeDefaults") && savedRadioPrograms().length() == 2,
+                "Bundled stations returned after a fresh process");
+            org.json.JSONObject custom = savedRadioPrograms().getJSONObject(1);
+            String customId = custom.getString("id");
+            check(savedRadioPrograms().getJSONObject(0).getJSONArray("alternateUris").length() == 1,
+                "Replacement source list did not persist");
+            await(() -> customId.equals(mediaId()) && radioStopped() && controller.getQueue().size() == 2);
+            SystemClock.sleep(500);
+            check(network.requests.isEmpty(), "Replacement catalog restoration fetched media");
+            check(settings.getString("radioPins", "").equals(customId), "Removed pins returned");
+            onMain(() -> controller.getTransportControls().play());
+            await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+            check(network.requests.contains("radio.example/custom135/index.m3u8"), "Restored imported source did not play");
+            onMain(() -> controller.getTransportControls().pause());
+            await(() -> radioStopped() && network.active.get() == 0);
+            openRadioSettings();
+            tap(() -> activity.findViewById(id("radioReturnMusic")));
+            verifyRadioMusicBaseline();
+            openRadioSettings();
+            tap(() -> activity.findViewById(id("radioReset")));
+            clickDialogAction("radio_reset");
+            waitRadioExchange();
+            check(radioSnapshot().getBoolean("includeDefaults") && savedRadioPrograms().length() == 1,
+                "Explicit reset must restore defaults and retain the extra custom station");
+            tap(() -> activity.findViewById(id("nav_radio")));
+            onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText(""));
+            await(() -> textView(activity.getWindow().getDecorView(),
+                activity.getString(resource("radio_catalog_hint", "string"), 418)) != null);
+            saveScreenshot("radio135-restored-after-reset.png");
+            return;
+        }
+        verifyRadioMusicBaseline();
+        check(network.requests.isEmpty(), "Upgrade fetched radio data");
+        org.json.JSONObject upgraded = savedRadioPrograms().getJSONObject(0);
+        check(savedRadioPrograms().length() == 1 && upgraded.getInt("sourceIndex") == 1 &&
+            upgraded.getJSONArray("alternateUris").length() == 1 &&
+            "Upgrade 134 CNR".equals(upgraded.getString("name")), "Upgrade lost station edits or selected source");
+        check(!settings.getString("radioPins", "").contains("radio:cnr:zgzs"), "Upgrade re-pinned an unpinned station");
+        android.content.ContentResolver resolver = getTargetContext().getContentResolver();
+        Uri root = DocumentsContract.buildTreeDocumentUri(PACKAGE + ".test.cache", "root");
+        resolver.takePersistableUriPermission(root, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        Bundle reset = new Bundle();
+        reset.putBoolean("reset", true);
+        resolver.call(root, "cacheFixture", null, reset);
+        Uri parent = DocumentsContract.buildDocumentUriUsingTree(root, "root");
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("no matching stations"));
+        openRadioSettings();
+        String before = radioSnapshot().toString();
+        tap(() -> activity.findViewById(id("radioExport")));
+        await(() -> explorer != null && explorer.hasWindowFocus());
+        tap(() -> textView(explorer.findViewById(id("explorerList")), "root"));
+        onMain(() -> ((EditText) explorer.findViewById(id("explorerFilename"))).setText("Offline135"));
+        saveScreenshot("radio135-export-destination.png");
+        tap(() -> explorer.findViewById(id("explorerSelect")));
+        await(() -> activity.hasWindowFocus() && activity.findViewById(id("radioExport")).isEnabled());
+        Uri output = cacheChild(parent, "Offline135.m3u");
+        String exported = documentText(output);
+        java.util.regex.Matcher headers = java.util.regex.Pattern.compile("^#EXTINF:", java.util.regex.Pattern.MULTILINE).matcher(exported);
+        int count = 0;
+        while (headers.find()) count++;
+        check(count >= 418 && exported.contains("tvg-id=\"radio:cnr:zgzs\"") &&
+            exported.contains("upgrade-a/index.m3u8") && exported.contains("upgrade-b/index.m3u8") &&
+            exported.contains("KEXP") && exported.contains("tvg-logo=") && exported.contains("group-title="),
+            "Export was partial or lost station metadata and sources");
+        result.putInt("exportSourceEntries", count);
+        result.putInt("exportBytes", exported.getBytes(StandardCharsets.UTF_8).length);
+        check(before.equals(radioSnapshot().toString()) && network.requests.isEmpty(), "Export mutated data or fetched media");
+        openRadioList("Offline135.m3u");
+        applyRadioList("radio_import_append");
+        waitRadioExchange();
+        check(before.equals(radioSnapshot().toString()), "Unedited full export introduced redundant overrides");
+        String edited = "#EXTM3U\n#EXTINF:-1 tvg-id=\"radio:cnr:zgzs\" group-title=\"Offline edits\" tvg-logo=\"\",Offline edited CNR\n" +
+            "https://radio.example/upgrade-b/index.m3u8\n" +
+            "#EXTINF:-1 tvg-id=\"radio:cnr:zgzs\" group-title=\"Offline edits\" tvg-logo=\"\",Offline edited CNR\n" +
+            "https://radio.example/new135/index.m3u8\n" +
+            "#EXTINF:-1 tvg-id=\"radio:cnr:zgzs\" group-title=\"Offline edits\" tvg-logo=\"\",Offline edited CNR\n" +
+            "https://RADIO.EXAMPLE:443/new135/index.m3u8\n" +
+            "#EXTINF:-1 tvg-id=\"fixture135\" group-title=\"Offline edits\" tvg-logo=\"\",Offline custom\n" +
+            "https://radio.example/custom135/index.m3u8\n";
+        try (OutputStream stream = resolver.openOutputStream(output, "wt")) { stream.write(edited.getBytes(StandardCharsets.UTF_8)); }
+        openRadioList("Offline135.m3u");
+        tap(() -> dialogButton(activity.getString(resource("radio_import_apply", "string"))));
+        saveScreenshot("radio135-import-choice.png");
+        clickDialogAction("cancel");
+        check(before.equals(radioSnapshot().toString()), "Cancel changed the radio catalog");
+        openRadioList("Offline135.m3u");
+        applyRadioList("radio_import_append");
+        waitRadioExchange();
+        check(savedRadioPrograms().length() == 2 && radioSnapshot().getBoolean("includeDefaults") &&
+            savedRadioPrograms().getJSONObject(0).getJSONArray("alternateUris").length() == 2 &&
+            savedRadioPrograms().getJSONObject(0).getInt("sourceIndex") == 1,
+            "Merge did not retain old sources, deduplicate equivalent URLs or preserve the selection");
+        openRadioList("Offline135.m3u");
+        applyRadioList("radio_import_replace");
+        waitRadioExchange();
+        check(savedRadioPrograms().length() == 2 && !radioSnapshot().getBoolean("includeDefaults") &&
+            savedRadioPrograms().getJSONObject(0).getJSONArray("alternateUris").length() == 1 &&
+            savedRadioPrograms().getJSONObject(0).getInt("sourceIndex") == 0,
+            "Replace all kept unlisted stations or old sources");
+        check(settings.contains("radioPins") && settings.getString("radioPins", "").isEmpty(),
+            "Removed station pins still occupy slots");
+        check(edited.equals(documentText(output)) && network.requests.isEmpty(), "Import wrote its input or fetched media");
+        verifyRadioMusicBaseline();
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("Offline custom"));
+        tap(() -> descriptionView(radioGrid("radioList"), "Offline edits"));
+        tap(() -> descriptionView(radioGrid("radioList"), "Offline custom"));
+        String customId = savedRadioPrograms().getJSONObject(1).getString("id");
+        await(() -> customId.equals(mediaId()) && controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        tap(() -> activity.findViewById(id("favorite")));
+        before = radioSnapshot().toString();
+        openRadioList("Offline135.m3u");
+        applyRadioList("radio_import_append");
+        waitRadioExchange();
+        check(before.equals(radioSnapshot().toString()), "Identical import rewrote the replacement catalog");
+        check(customId.equals(mediaId()) && controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING,
+            "Identical import interrupted radio reception");
+        onMain(() -> controller.getTransportControls().pause());
+        await(() -> radioStopped() && network.active.get() == 0);
+        check(savedLibrary().getJSONArray("tracks").length() == 100, "Radio exchange touched the music library");
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText(""));
+        saveScreenshot("radio135-replacement-list.png");
+    }
+
+    private void verifyRadioLists(FixtureRadioNetwork network, Bundle result) throws Exception {
+        if (radioListResumeOnly) {
+            org.json.JSONObject saved = savedRadioPrograms().getJSONObject(0);
+            check(savedRadioPrograms().length() == 1, "Reset should retain just the custom entry");
+            String stationId = saved.getString("id");
+            await(() -> stationId.equals(mediaId()) && radioStopped());
+            SystemClock.sleep(900);
+            check(network.requests.isEmpty(), "Imported station connected during restoration");
+            check(getTargetContext().getSharedPreferences("settings", 0).getString("radioPins", "").contains(stationId),
+                "Imported station pin was lost");
+            onMain(() -> controller.getTransportControls().play());
+            await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+            check(network.catalogues.get() == 0 && network.segments.get() > 0, "Restored custom HLS did not play");
+            onMain(() -> controller.getTransportControls().pause());
+            await(() -> radioStopped() && network.active.get() == 0);
+            openRadioSettings();
+            tap(() -> activity.findViewById(id("radioReturnMusic")));
+            verifyRadioMusicBaseline();
+            return;
+        }
+        verifyRadioMusicBaseline();
+        android.content.ContentResolver resolver = getTargetContext().getContentResolver();
+        Uri root = DocumentsContract.buildTreeDocumentUri(PACKAGE + ".test.cache", "root");
+        await(() -> getTargetContext().checkUriPermission(root, Process.myPid(), Process.myUid(),
+            Intent.FLAG_GRANT_READ_URI_PERMISSION) == PackageManager.PERMISSION_GRANTED);
+        resolver.takePersistableUriPermission(root, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        Bundle reset = new Bundle();
+        reset.putBoolean("reset", true);
+        resolver.call(root, "cacheFixture", null, reset);
+        Uri parent = DocumentsContract.buildDocumentUriUsingTree(root, "root");
+        String text = "#EXTM3U\n#EXTINF:-1 tvg-id=\"radio:cnr:zgzs\",CNR edited\n" +
+            "https://radio.example/cnr/index.m3u8\n#EXTINF:-1 tvg-id=\"fixture131\",Custom 131\n" +
+            "http://radio.example/custom/index.m3u8\n";
+        Uri list = DocumentsContract.createDocument(resolver, parent, "text/plain", "Stations.m3u");
+        try (OutputStream output = resolver.openOutputStream(list, "wt")) { output.write(text.getBytes(StandardCharsets.UTF_8)); }
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText(""));
+        openRadioList("Stations.m3u");
+        saveScreenshot("radio131-import-preview.png");
+        check(network.requests.isEmpty() && savedRadioPrograms().length() == 0, "Preview changed data or fetched a stream");
+        clickDialogAction("cancel");
+        check(savedRadioPrograms().length() == 0, "Cancel applied an import");
+        openRadioList("Stations.m3u");
+        applyRadioList("radio_import_replace");
+        await(() -> savedRadioPrograms().length() == 2);
+        check(text.equals(documentText(list)), "Import changed the source file");
+        check(network.requests.isEmpty(), "Import connected to a station");
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("CNR edited"));
+        tap(() -> descriptionView(activity.findViewById(id("radioList")), "CNR edited"));
+        await(() -> "radio:cnr:zgzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        check(network.catalogues.get() == 0, "Overridden CNR URL ignored its imported address");
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("radioReset")));
+        clickDialogAction("radio_reset");
+        await(() -> savedRadioPrograms().length() == 1 && radioStopped() && network.active.get() == 0);
+        check("Custom 131".equals(savedRadioPrograms().getJSONObject(0).getString("name")), "Reset removed the custom station");
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("Custom 131"));
+        expandRadioGroup("radio_group_other");
+        tap(() -> descriptionView(activity.findViewById(id("radioList")), "Custom 131"));
+        String customId = savedRadioPrograms().getJSONObject(0).getString("id");
+        await(() -> customId.equals(mediaId()) && controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        tap(() -> activity.findViewById(id("favorite")));
+        tap(() -> activity.findViewById(id("play")));
+        await(() -> radioStopped() && network.active.get() == 0);
+        Uri update = DocumentsContract.createDocument(resolver, parent, "text/plain", "Stations.txt");
+        String replacement = customId + "\tCustom 131 renamed\thttps://radio.example/updated/index.m3u8\n";
+        try (OutputStream output = resolver.openOutputStream(update, "wt")) { output.write(replacement.getBytes(StandardCharsets.UTF_8)); }
+        openRadioList("Stations.txt");
+        applyRadioList("radio_import_replace");
+        await(() -> savedRadioPrograms().length() == 1 &&
+            "Custom 131 renamed".equals(savedRadioPrograms().optJSONObject(0).optString("name")));
+        check(getTargetContext().getSharedPreferences("settings", 0)
+            .getString("radioPins", "").contains(customId), "Updating lost the pin");
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("Custom 131 renamed"));
+        saveScreenshot("radio131-imported-station.png");
+        if (radioSamplePath != null) {
+            Uri sample = DocumentsContract.createDocument(resolver, parent, "text/plain", "Provided.m3u");
+            try (InputStream input = new java.io.FileInputStream(radioSamplePath);
+                 OutputStream output = resolver.openOutputStream(sample, "wt")) {
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            }
+            int requests = network.requests.size();
+            openRadioList("Provided.m3u");
+            saveScreenshot("radio131-user-list-preview.png");
+            String[] preview = {""};
+            onMain(() -> preview[0] = ((TextView) ownedPanel().findViewById(android.R.id.message)).getText().toString());
+            java.util.regex.Matcher counts = java.util.regex.Pattern.compile("\\d+").matcher(preview[0]);
+            int[] totals = new int[3];
+            for (int i = 0; i < totals.length; i++) {
+                check(counts.find(), "Missing sample import counts");
+                totals[i] = Integer.parseInt(counts.group());
+            }
+            check(totals[0] == 424 && totals[2] == 0,
+                "The supplied 424-station example must parse without rejected lines: " + preview[0]);
+            result.putInt("sampleAccepted", 424);
+            result.putInt("sampleCurrentStations", totals[1]);
+            check(network.requests.size() == requests, "Sample preview made network requests");
+            clickDialogAction("cancel");
+            tap(() -> activity.findViewById(id("nav_radio")));
+            check(savedRadioPrograms().length() == 1, "Cancelled sample changed the catalog");
+            result.putString("sample", "Provided local M3U previewed through the real explorer without fetching or applying");
+        }
+        Bundle unavailable = new Bundle();
+        unavailable.putBoolean("unavailable", true);
+        resolver.call(root, "cacheFixture", null, unavailable);
+        try {
+            tap(() -> descriptionView(activity.findViewById(id("radioList")), "Custom 131 renamed"));
+            await(() -> customId.equals(mediaId()) && controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+            check(network.requests.contains("radio.example/updated/index.m3u8"), "Playback still used the old imported URL");
+            tap(() -> activity.findViewById(id("play")));
+            await(() -> radioStopped() && network.active.get() == 0);
+        } finally { resolver.call(root, "cacheFixture", null, new Bundle()); }
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("radioReset")));
+        clickDialogAction("radio_reset");
+        await(() -> radioSnapshot().optBoolean("includeDefaults") && savedRadioPrograms().length() == 1);
+    }
+
+    private void verifyRadioButtons(FixtureRadioNetwork network) throws Exception {
+        verifyRadioMusicBaseline();
+        android.content.SharedPreferences saved = getTargetContext().getSharedPreferences("settings", 0);
+        check(network.requests.isEmpty(), "Local startup must not fetch radio data");
+        String catalog = savedRadioPrograms().toString();
+        String pins = saved.getString("radioPins", "");
+        check(savedRadioPrograms().length() == 1, "The preceding imported station must survive");
+        if (radioDisabledResumeOnly) {
+            check(!saved.getBoolean("radioEnabled", true), "Radio-off setting was lost across process restart");
+            onMain(() -> {
+                check(activity.findViewById(id("nav_radio")).getVisibility() == View.GONE, "Disabled Radio is visible");
+                check(activity.findViewById(id("radioQuickStations")) == null, "Disabled startup inflated radio buttons");
+            });
+            openRadioSettings();
+            check(!((android.widget.CompoundButton) activity.findViewById(id("settingsRadio"))).isChecked(),
+                "Radio-off setting is not reflected in the switch");
+            saveScreenshot("radio132-disabled-restored.png");
+            tap(() -> activity.findViewById(id("settingsRadio")));
+            await(() -> saved.getBoolean("radioEnabled", false) &&
+                activity.findViewById(id("nav_radio")).getVisibility() == View.VISIBLE);
+            verifyRadioMusicBaseline();
+            check(network.requests.isEmpty(), "Re-enabling Radio must not connect");
+            check(catalog.equals(savedRadioPrograms().toString()) &&
+                pins.equals(saved.getString("radioPins", "")),
+                "Radio-off restart changed saved station data");
+            return;
+        }
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText(""));
+        await(() -> radioGrid("radioList").getChildCount() >= 2);
+        verifyRadioToolbar();
+        onMain(() -> {
+            ViewGroup grid = radioGrid("radioList");
+            for (int i = 0; i < Math.min(pins.split("\n").length, grid.getChildCount()); i++) {
+                View button = grid.getChildAt(i);
+                check(button instanceof android.widget.Button && button.isFocusable(), "Station is not a native focusable button");
+                check(((TextView) button).getCompoundDrawablesRelative()[1] != null, "Station logo is missing");
+            }
+        });
+        saveScreenshot("radio132-buttons-en.png");
+        setInTouchMode(false);
+        sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_DOWN);
+        waitForIdleSync();
+        await(() -> !radioGrid("radioList").isInTouchMode() && activity.hasWindowFocus());
+        onMain(() -> {
+            View button = radioGrid("radioList").getChildAt(0);
+            check(button.requestFocus(), "Radio button cannot accept remote focus: shown=" + button.isShown() +
+                ", focusable=" + button.isFocusable() + ", touch=" + button.isInTouchMode());
+        });
+        sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_MENU);
+        tap(() -> windowText(activity.getString(resource("details", "string"))));
+        clickDialogAction("close");
+        check(network.requests.isEmpty(), "Radio browsing/logo/details must remain offline");
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("zgzs"));
+        tap(() -> descriptionView(radioGrid("radioList"), activity.getString(resource("radio_cnr_1", "string"))));
+        await(() -> "radio:cnr:zgzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        await(() -> activity.findViewById(id("radioQuickStations")) != null &&
+            radioGrid("radioQuickStations").isShown() && radioGrid("radioQuickStations").getChildCount() >= 2);
+        String[] quickTitle = {""};
+        onMain(() -> quickTitle[0] = radioGrid("radioQuickStations").getChildAt(1).getContentDescription().toString());
+        tap(() -> radioGrid("radioQuickStations").getChildAt(1));
+        await(() -> quickTitle[0].equals(controller.getMetadata().getDescription().getTitle().toString()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        onMain(() -> check(!activity.findViewById(id("artwork")).isShown() &&
+            !activity.findViewById(id("lyricsList")).isShown(), "Radio must replace the lyrics/artwork area"));
+        saveScreenshot("radio132-quick-en.png");
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("settingsRadio")));
+        await(() -> !saved.getBoolean("radioEnabled", true) && network.active.get() == 0 &&
+            activity.findViewById(id("nav_radio")).getVisibility() == View.GONE && "queue-fixture-76".equals(mediaId()));
+        verifyRadioMusicBaseline();
+        int requests = network.requests.size();
+        check(catalog.equals(savedRadioPrograms().toString()) &&
+            pins.equals(saved.getString("radioPins", "")),
+            "Disabling Radio erased station data");
+        tap(() -> activity.findViewById(id("settingsRadio")));
+        await(() -> saved.getBoolean("radioEnabled", false) &&
+            activity.findViewById(id("nav_radio")).getVisibility() == View.VISIBLE);
+        verifyRadioMusicBaseline();
+        onMain(() -> controller.getTransportControls().play());
+        await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        tap(() -> activity.findViewById(id("settingsRadio")));
+        await(() -> !saved.getBoolean("radioEnabled", true));
+        check("queue-fixture-76".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING, "Disabling Radio interrupted local music");
+        onMain(() -> { controller.getTransportControls().pause(); controller.getTransportControls().seekTo(20_000); });
+        await(() -> restoredAt(20_000));
+        check(network.requests.size() == requests, "Enable/disable unexpectedly connected a radio stream");
+        tap(() -> activity.findViewById(id("settingsRadio")));
+        verifySettingsPage("categoryGeneral", "settingsGeneralPanel");
+        tap(() -> activity.findViewById(id("settingsLanguage")));
+        tap(() -> windowText(activity.getString(resource("language_chinese", "string"))));
+        await(() -> "zh".equals(activity.getResources().getConfiguration().locale.getLanguage()) && activity.hasWindowFocus());
+        check("\u5c0f\u60a6\u97f3\u4e50\u5e7f\u64ad".equals(activity.getString(resource("app_name", "string"))),
+            "New Chinese branding missing");
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText(""));
+        await(() -> radioGrid("radioList").getChildCount() >= 2);
+        verifyRadioToolbar();
+        saveScreenshot("radio132-buttons-zh.png");
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("zgzs"));
+        tap(() -> descriptionView(radioGrid("radioList"), activity.getString(resource("radio_cnr_1", "string"))));
+        await(() -> "radio:cnr:zgzs".equals(mediaId()) &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+            activity.findViewById(id("radioQuickStations")).isShown());
+        saveScreenshot("radio132-quick-zh.png");
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("settingsRadio")));
+        await(() -> !saved.getBoolean("radioEnabled", true) && network.active.get() == 0 &&
+            "queue-fixture-76".equals(mediaId()));
+        verifyRadioMusicBaseline();
+        check(catalog.equals(savedRadioPrograms().toString()) &&
+            pins.equals(saved.getString("radioPins", "")),
+            "Station data changed after language/source switches");
+    }
+
+    private ViewGroup radioGrid(String name) { return activity.findViewById(id(name)); }
+
+    private void seedRadioUpgrade() throws Exception {
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("zgzs"));
+        await(() -> descriptionView(radioGrid("radioList"), activity.getString(resource("radio_cnr_1", "string"))) != null);
+        onMain(() -> descriptionView(radioGrid("radioList"),
+            activity.getString(resource("radio_cnr_1", "string"))).performLongClick());
+        chooseRadioOption(3);
+        await(() -> ownedPanel() != null && ownedPanel().findViewById(id("radioEditSources")) != null);
+        onMain(() -> {
+            ((EditText) ownedPanel().findViewById(id("radioEditName"))).setText("Upgrade 134 CNR");
+            ((EditText) ownedPanel().findViewById(id("radioEditSources")))
+                .setText("https://radio.example/upgrade-a/index.m3u8\nhttps://radio.example/upgrade-b/index.m3u8");
+        });
+        clickDialogAction("save");
+        await(() -> savedRadioPrograms().length() == 1 &&
+            descriptionView(radioGrid("radioList"), "Upgrade 134 CNR") != null);
+        onMain(() -> descriptionView(radioGrid("radioList"), "Upgrade 134 CNR").performLongClick());
+        chooseRadioOption(2);
+        await(() -> windowText(activity.getString(resource("radio_source_item", "string"), 2,
+            "https://radio.example/upgrade-b/index.m3u8")) != null);
+        chooseRadioOption(1);
+        await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING &&
+            savedRadioPrograms().optJSONObject(0).optInt("sourceIndex") == 1);
+        tap(() -> activity.findViewById(id("nav_player")));
+        tap(() -> activity.findViewById(id("favorite")));
+        await(() -> !getTargetContext().getSharedPreferences("settings", 0)
+            .getString("radioPins", "").contains("radio:cnr:zgzs"));
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("radioReturnMusic")));
+        verifyRadioMusicBaseline();
+    }
+
+    private void verifyRadioUpgrade(FixtureRadioNetwork network) throws Exception {
+        check(savedRadioPrograms().length() == 1, "Upgrade lost the saved station override");
+        org.json.JSONObject station = savedRadioPrograms().getJSONObject(0);
+        check("Upgrade 134 CNR".equals(station.getString("name")) &&
+            station.getInt("sourceIndex") == 1 && station.getJSONArray("alternateUris").length() == 1,
+            "Upgrade lost the edited name, addresses or selected source");
+        check(!getTargetContext().getSharedPreferences("settings", 0).getString("radioPins", "").contains("radio:cnr:zgzs"),
+            "Catalog expansion must not re-pin an unpinned default");
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("Upgrade 134 CNR"));
+        expandRadioGroup("radio_group_national");
+        await(() -> descriptionView(radioGrid("radioList"), "Upgrade 134 CNR") != null);
+        onMain(() -> check(((TextView) descriptionView(radioGrid("radioList"), "Upgrade 134 CNR"))
+            .getText().toString().contains(activity.getString(resource("radio_source_count", "string"), 2)),
+            "Expanded catalog did not overlay the saved multi-source station"));
+        check(network.requests.isEmpty(), "Upgrade restoration or browsing fetched audio or a logo");
+        saveScreenshot("radio134-upgraded-override.png");
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("radioReset")));
+        clickDialogAction("radio_reset");
+        await(() -> savedRadioPrograms().length() == 0);
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("zgzs"));
+        expandRadioGroup("radio_group_national");
+        await(() -> descriptionView(radioGrid("radioList"), activity.getString(resource("radio_cnr_1", "string"))) != null);
+        onMain(() -> descriptionView(radioGrid("radioList"),
+            activity.getString(resource("radio_cnr_1", "string"))).performLongClick());
+        chooseRadioOption(1);
+        await(() -> getTargetContext().getSharedPreferences("settings", 0)
+            .getString("radioPins", "").contains("radio:cnr:zgzs"));
+    }
+
+    private void verifyBundledRadioRows(FixtureRadioNetwork network) throws Exception {
+        String[][] stations = {
+            {"KEXP", "radio_region_usa"}, {"BBC World Service", "radio_region_uk"},
+            {"TDM Macau FM100.7", "radio_region_macao"}, {"BCC\u4e2d\u5e7f\u65b0\u95fb", "radio_region_taiwan"},
+            {"\u5b89\u5fbd\u4ea4\u901a\u5e7f\u64ad", "radio_region_anhui"}
+        };
+        for (String[] station : stations) {
+            String name = station[0];
+            onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText(name));
+            await(() -> descriptionView(radioGrid("radioList"), activity.getString(resource(station[1], "string"))) != null &&
+                radioGrid("radioList").getChildCount() == 1);
+            onMain(() -> check(descriptionView(radioGrid("radioList"), name) == null,
+                "A fresh search must show only collapsed group names"));
+            expandRadioGroup(station[1]);
+            await(() -> descriptionView(radioGrid("radioList"), name) != null);
+        }
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("RTHK Radio"));
+        expandRadioGroup("radio_region_hongkong");
+        await(() -> descriptionView(radioGrid("radioList"), "RTHK Radio 1") != null &&
+            descriptionView(radioGrid("radioList"), "RTHK Radio 2") != null &&
+            !radioGrid("radioList").isLayoutRequested());
+        onMain(() -> {
+            ViewGroup grid = radioGrid("radioList");
+            View first = descriptionView(grid, "RTHK Radio 1");
+            View second = descriptionView(grid, "RTHK Radio 2");
+            check("RTHK Radio 1".contentEquals(((TextView) first).getText()),
+                "Single-address rows should not waste space on source counts");
+            float density = activity.getResources().getDisplayMetrics().density;
+            float scale = Math.max(1f, activity.getResources().getConfiguration().fontScale);
+            float available = (grid.getWidth() - grid.getPaddingLeft() - grid.getPaddingRight()) / density;
+            Rect one = bounds(first);
+            Rect two = bounds(second);
+            if (available >= 520 * scale) {
+                check(one.top == two.top && one.right <= two.left,
+                    "Wide release radio rows must use two non-overlapping columns");
+                check(Math.abs(one.width() - two.width()) <= 1, "Radio columns must have equal width");
+            } else {
+                check(one.left == two.left && one.bottom <= two.top,
+                    "Narrow release radio rows must use one column");
+            }
+            View heading = textView(grid, activity.getString(resource("radio_region_hongkong", "string")));
+            check(heading != null && heading.getWidth() >= grid.getWidth() - 24 * density,
+                "Region headings must span the full row");
+            check(first.isFocusable() && second.isFocusable(), "Compact channel rows must retain remote focus");
+        });
+        check(network.requests.isEmpty(), "Loading the full bundled catalog must not fetch streams or logos");
+        saveScreenshot("radio134-regional-columns.png");
+    }
+
+    private void expandRadioGroup(String label) throws Exception {
+        String title = activity.getString(resource(label, "string"));
+        await(() -> descriptionView(radioGrid("radioList"), title) != null);
+        tap(() -> descriptionView(radioGrid("radioList"), title));
+    }
+
+    private void verifyRadioPinColor(FixtureRadioNetwork network) throws Exception {
+        openRadioSettings();
+        verifyColorPicker("radioPinColor");
+        verifyCustomColor("radioPinColor", "radioPinColor", false);
+        android.content.SharedPreferences saved = getTargetContext().getSharedPreferences("settings", 0);
+        tap(() -> activity.findViewById(id("nav_radio")));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText(""));
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("zgzs"));
+        await(() -> radioGrid("radioList").getChildCount() == 2);
+        onMain(() -> check(((TextView) radioGrid("radioList").getChildAt(0)).getCurrentTextColor() == 0xff13579b,
+            "Pinned shortcut must use the chosen color"));
+        expandRadioGroup("radio_group_national");
+        await(() -> {
+            radioGrid("radioList").scrollBy(0, 100000);
+            return pinnedRadioListRow() != null && !radioGrid("radioList").isLayoutRequested();
+        });
+        onMain(() -> {
+            TextView station = pinnedRadioListRow();
+            check(station.getCurrentTextColor() == 0xff13579b,
+                "Pinned station must remain in its group with the chosen color and pin marker");
+            station.performLongClick();
+        });
+        chooseRadioOption(1);
+        await(() -> !saved.getString("radioPins", "").contains("radio:cnr:zgzs") &&
+            radioGrid("radioList").getChildCount() == 2 && !radioGrid("radioList").isLayoutRequested());
+        onMain(() -> {
+            TextView station = (TextView) radioGrid("radioList").getChildAt(1);
+            check(station.getCurrentTextColor() != 0xff13579b && station.getCompoundDrawablesRelative()[0] == null,
+                "Unpin must remove the marker/color, not the station");
+            check(activity.getString(resource("radio_cnr_1", "string")).contentEquals(station.getContentDescription()),
+                "Unpin removed the station from the open group");
+            station.performLongClick();
+        });
+        chooseRadioOption(1);
+        await(() -> saved.getString("radioPins", "").contains("radio:cnr:zgzs"));
+        await(() -> {
+            radioGrid("radioList").scrollBy(0, 100000);
+            return pinnedRadioListRow() != null && !radioGrid("radioList").isLayoutRequested();
+        });
+        check(network.requests.isEmpty(), "Pin/color changes must not fetch streams or artwork");
+        saveScreenshot("radio1342-pinned-list-color.png");
+    }
+
+    private TextView pinnedRadioListRow() {
+        ViewGroup grid = radioGrid("radioList");
+        String title = activity.getString(resource("radio_cnr_1", "string"));
+        for (int i = 0; i < grid.getChildCount(); i++) {
+            View child = grid.getChildAt(i);
+            if (child instanceof TextView && title.contentEquals(((TextView) child).getContentDescription()) &&
+                ((TextView) child).getCompoundDrawablesRelative()[0] != null) return (TextView) child;
+        }
+        return null;
+    }
+
+    private void verifyRadioToolbar() {
+        onMain(() -> {
+            View search = activity.findViewById(id("radioSearch"));
+            View configure = activity.findViewById(id("radioSettings"));
+            if (activity.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                check(Math.abs(bounds(search).centerY() - bounds(configure).centerY()) <=
+                    24 * activity.getResources().getDisplayMetrics().density, "Landscape search must share the action row");
+            } else {
+                check(bounds(search).centerY() < bounds(configure).centerY(), "Portrait toolbar must retain stacked rows");
+            }
+        });
+    }
+
+    private void chooseRadioOption(int position) {
+        waitForIdleSync();
+        await(() -> ownedPanel() != null && ownedPanel().findViewById(id("playerDialogList")) != null);
+        android.widget.ListView[] selected = {null};
+        onMain(() -> {
+            selected[0] = ownedPanel().findViewById(id("playerDialogList"));
+            selected[0].setSelection(position);
+        });
+        tap(() -> {
+            android.widget.ListView list = selected[0];
+            int child = position - list.getFirstVisiblePosition();
+            return child < 0 || child >= list.getChildCount() ? null : list.getChildAt(child);
+        });
+        waitForIdleSync();
+    }
+
+    private void verifyRadioLiveOptions(FixtureRadioNetwork network) throws Exception {
+        android.content.SharedPreferences saved = getTargetContext().getSharedPreferences("settings", 0);
+        String stationId = savedRadioPrograms().getJSONObject(0).getString("id");
+        String secondary = "https://radio.example/secondary/index.m3u8";
+        if (radioLiveResumeOnly) {
+            await(() -> stationId.equals(mediaId()) && radioStopped());
+            SystemClock.sleep(900);
+            check(network.requests.isEmpty(), "Restored source/tuning must not fetch audio or logos");
+            org.json.JSONObject station = savedRadioPrograms().getJSONObject(0);
+            check(station.getJSONArray("alternateUris").length() == 1 && station.getInt("sourceIndex") == 1,
+                "Multi-source selection was lost after restart");
+            org.json.JSONObject tuning = new org.json.JSONObject(saved.getString("radioTuning", "{}"));
+            check(tuning.getInt("bufferSeconds") == 30 && tuning.getInt("startSeconds") == 3 &&
+                tuning.getInt("retries") == 3 && tuning.getBoolean("autoSource") && !tuning.getBoolean("downloadLogos"),
+                "Radio settings were lost after restart");
+            check(saved.getString("radioPins", "").contains(stationId), "Station pin was lost after restart");
+            onMain(() -> controller.getTransportControls().play());
+            await(() -> controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+            check(network.requests.contains("radio.example/secondary/index.m3u8") && network.logos.get() == 0,
+                "Restored source or logo switch was ignored");
+            onMain(() -> controller.getTransportControls().pause());
+            await(() -> radioStopped() && network.active.get() == 0);
+            openRadioSettings();
+            tap(() -> activity.findViewById(id("radioReturnMusic")));
+            verifyRadioMusicBaseline();
+            return;
+        }
+        verifyRadioMusicBaseline();
+        check(network.requests.isEmpty(), "Editing setup must remain offline");
+        android.content.ContentResolver resolver = getTargetContext().getContentResolver();
+        Uri root = DocumentsContract.buildTreeDocumentUri(PACKAGE + ".test.cache", "root");
+        String extraName = "Additional133-" + SystemClock.uptimeMillis() + ".txt";
+        Uri extra = DocumentsContract.createDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(root, "root"),
+            "text/plain", extraName);
+        check(extra != null, "Could not create the synthetic additional-source file");
+        String text = stationId + "\tCustom 131 renamed\t" + secondary + "\n";
+        try (OutputStream output = resolver.openOutputStream(extra, "wt")) { output.write(text.getBytes(StandardCharsets.UTF_8)); }
+        openRadioList(extraName);
+        applyRadioList("radio_import_append");
+        await(() -> savedRadioPrograms().optJSONObject(0).optJSONArray("alternateUris") != null &&
+            savedRadioPrograms().optJSONObject(0).optJSONArray("alternateUris").length() == 1);
+        check(text.equals(documentText(extra)), "Appending addresses modified the source file");
+        onMain(() -> ((EditText) activity.findViewById(id("radioSearch"))).setText("Custom 131 renamed"));
+        await(() -> descriptionView(radioGrid("radioList"), "Custom 131 renamed") != null);
+        onMain(() -> check(descriptionView(radioGrid("radioList"), "Custom 131 renamed").performLongClick(),
+            "Station must expose its long-press editor"));
+        chooseRadioOption(3);
+        await(() -> ownedPanel() != null && ownedPanel().findViewById(id("radioEditSources")) != null);
+        onMain(() -> {
+            ((EditText) ownedPanel().findViewById(id("radioEditGroup"))).setText("Zhejiang");
+            ((EditText) ownedPanel().findViewById(id("radioEditSources")))
+                .setText("https://radio.example/updated/index.m3u8\n" + secondary);
+            ((EditText) ownedPanel().findViewById(id("radioEditLogo"))).setText("https://radio.example/logo.png");
+        });
+        saveScreenshot("radio133-release-editor.png");
+        clickDialogAction("save");
+        await(() -> "Zhejiang".equals(savedRadioPrograms().optJSONObject(0).optString("group")));
+        check(network.requests.isEmpty(), "Importing/editing must not fetch logos or audio");
+        await(() -> descriptionView(radioGrid("radioList"), "Custom 131 renamed") != null);
+        onMain(() -> descriptionView(radioGrid("radioList"), "Custom 131 renamed").performLongClick());
+        chooseRadioOption(2);
+        saveScreenshot("radio133-release-sources.png");
+        chooseRadioOption(1);
+        await(() -> stationId.equals(mediaId()) && controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        check(savedRadioPrograms().getJSONObject(0).getInt("sourceIndex") == 1, "Source selection was not saved");
+        check(!network.requests.contains("radio.example/updated/index.m3u8"), "The unselected source was fetched");
+        await(() -> network.logos.get() == 1 && new File(getTargetContext().getFilesDir(), "radio-logos").listFiles().length > 0);
+        tap(() -> activity.findViewById(id("nav_player")));
+        await(() -> activity.findViewById(id("radioStreamStatus")).isShown());
+        onMain(() -> check(((TextView) activity.findViewById(id("album"))).getText().toString().contains("2/2"),
+            "Playing must identify the active source"));
+        onMain(() -> {
+            check(activity.findViewById(id("rewind")).isEnabled(), "Second source must offer Previous source");
+            check(!activity.findViewById(id("forward")).isEnabled(), "Last source must not wrap to the first");
+            check(activity.getString(resource("radio_source_previous", "string"))
+                .equals(activity.findViewById(id("rewind")).getContentDescription()), "Radio source label missing");
+        });
+        tap(() -> activity.findViewById(id("rewind")));
+        await(() -> savedRadioPrograms().optJSONObject(0).optInt("sourceIndex") == 0 &&
+            activity.findViewById(id("forward")).isEnabled() &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        check(stationId.equals(mediaId()) && network.requests.contains("radio.example/updated/index.m3u8"),
+            "Previous source changed station or failed to reconnect");
+        onMain(() -> {
+            check(!activity.findViewById(id("rewind")).isEnabled(), "First source must not wrap backwards");
+            activity.findViewById(id("forward")).performClick();
+            activity.findViewById(id("forward")).performClick();
+        });
+        await(() -> savedRadioPrograms().optJSONObject(0).optInt("sourceIndex") == 1 &&
+            !activity.findViewById(id("forward")).isEnabled() &&
+            controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING);
+        check(stationId.equals(mediaId()), "Next source changed station");
+        saveScreenshot("radio133-release-status.png");
+        tap(() -> activity.findViewById(id("play")));
+        await(() -> radioStopped() && network.active.get() == 0);
+        onMain(() -> check(((TextView) activity.findViewById(id("radioStreamStatus"))).getText().toString().contains("0.0 KB/s"),
+            "Stopped radio must not retain an active receive rate"));
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("radioBuffer")));
+        chooseRadioOption(3);
+        tap(() -> activity.findViewById(id("radioStartBuffer")));
+        chooseRadioOption(2);
+        tap(() -> activity.findViewById(id("radioRetries")));
+        chooseRadioOption(3);
+        tap(() -> activity.findViewById(id("radioAutoSource")));
+        tap(() -> activity.findViewById(id("radioDownloadLogos")));
+        tap(() -> activity.findViewById(id("radioShowStatus")));
+        tap(() -> activity.findViewById(id("nav_player")));
+        await(() -> !activity.findViewById(id("radioStreamStatus")).isShown());
+        openRadioSettings();
+        tap(() -> activity.findViewById(id("radioShowStatus")));
+        tap(() -> activity.findViewById(id("radioClearCache")));
+        clickDialogAction("radio_clear_cache");
+        await(() -> new File(getTargetContext().getFilesDir(), "radio-logos").listFiles().length == 0);
+        saveScreenshot("radio133-release-settings.png");
+        check(saved.getString("radioPins", "").contains(stationId), "Radio settings changed station pins");
+        check(savedLibrary().getJSONArray("tracks").length() == 100, "Radio settings changed the music library");
+        check(savedRadioPrograms().getJSONObject(0).getJSONArray("alternateUris").length() == 1,
+            "Clearing logos erased source addresses");
+    }
 
     private void verifyProgressiveScan(Uri tree, Bundle result) throws Exception {
         check(controller.getPlaybackState().getState() != PlaybackState.STATE_PLAYING, "Scan launch must stay paused");
@@ -3191,6 +4433,7 @@ public class OptimizedSmokeInstrumentation extends Instrumentation {
             boolean besideIcons = landscape && !side;
             for (String name : new String[] {"nav_player", "nav_library", "nav_folders", "nav_queue", "nav_playlists"}) {
                 LinearLayout button = activity.findViewById(id(name));
+                if (button.getVisibility() != View.VISIBLE) continue;
                 View icon = button.getChildAt(0);
                 TextView label = (TextView) button.getChildAt(1);
                 float scale = button.isSelected() ? 1.2f : 1f;

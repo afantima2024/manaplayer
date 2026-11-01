@@ -36,6 +36,7 @@ object SystemMediaControls {
     }
 
     fun canSeek(player: Player): Boolean = player.duration > 0 && player.isCurrentMediaItemSeekable &&
+        !com.macarmusic.app.radio.RadioProgram.isRadio(player.currentMediaItem?.mediaId) &&
         player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
 
     fun seek(player: Player, deltaMs: Long): Boolean {

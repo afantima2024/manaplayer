@@ -41,7 +41,7 @@ internal class SafLyricCache(
         if (checked) return
         val children = children(root)
         val marker = children.singleOrNull { it.name == MARKER && !it.directory }
-            ?: throw IOException("This folder is not a ManaMusicPlayer lyric cache")
+            ?: throw IOException("This folder is not a ManaMusicRadio lyric cache")
         val value = try {
             Json.decodeFromString<Marker>(bytes(marker.uri, 1024).toString(Charsets.UTF_8))
         } catch (error: kotlinx.serialization.SerializationException) {

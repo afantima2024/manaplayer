@@ -1,6 +1,7 @@
 <resources>
     <color name="launch_background">#101B24</color>
     <color name="primary">#006B60</color>
+    <color name="radio_pinned">#8A6100</color>
     <color name="on_primary">#FFFFFF</color>
     <color name="primary_container">#C8F2E9</color>
     <color name="surface">#F5F8FA</color>

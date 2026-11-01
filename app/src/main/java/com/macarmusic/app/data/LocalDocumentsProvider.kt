@@ -190,7 +190,7 @@ class LocalDocumentsProvider : DocumentsProvider() {
 
     private companion object {
         const val TAG = "LocalDocuments"
-        val WRITE_EXTENSIONS = setOf("json", "zip")
+        val WRITE_EXTENSIONS = setOf("json", "zip", "m3u")
         val COLUMNS = arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE,
             Document.COLUMN_FLAGS, Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED)
     }

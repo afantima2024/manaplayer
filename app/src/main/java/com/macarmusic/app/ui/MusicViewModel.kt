@@ -36,6 +36,15 @@ import com.macarmusic.app.model.CollectionPositions
 import com.macarmusic.app.model.BackupEdits
 import com.macarmusic.app.data.PreparedBackup
 import com.macarmusic.app.data.BackupRestoreResult
+import com.macarmusic.app.radio.CnrRadio
+import com.macarmusic.app.radio.ParsedRadioList
+import com.macarmusic.app.radio.RadioList
+import com.macarmusic.app.radio.RadioListException
+import com.macarmusic.app.radio.RadioCatalogSnapshot
+import com.macarmusic.app.radio.RadioProgram
+import com.macarmusic.app.radio.RadioDefaults
+import com.macarmusic.app.radio.RadioImportMode
+import com.macarmusic.app.radio.RadioGroup
 import com.macarmusic.app.lyrics.LyricState
 import com.macarmusic.app.lyrics.LyricResult
 import com.macarmusic.app.lyrics.LyricIssue
@@ -83,17 +92,90 @@ data class DeviceMusicPicker(
     val selected: Set<String> = emptySet(),
     val browse: Boolean = false,
 )
+data class PreparedRadioImport(
+    val parsed: ParsedRadioList, val currentCount: Int,
+    val original: RadioCatalogSnapshot, val aliases: Map<String, String>,
+)
 
 class MusicViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
     val app = application as MaCarMusicApp
     val repository = app.repository
     val library = repository.library
-    val selectedScreen = saved.getStateFlow("screen", R.id.nav_player)
+    val selectedScreen = saved.run {
+        if (!isScreenVisible(get<Int>("screen") ?: R.id.nav_player)) set("screen", R.id.nav_player)
+        getStateFlow("screen", R.id.nav_player)
+    }
     val settingsCategory = saved.run {
         get<SettingsCategory>("settingsCategory")?.let { set("settingsCategory", it.current) }
         getStateFlow("settingsCategory", SettingsCategory.GENERAL)
     }
     val query = saved.getStateFlow("query", "")
+    val radioQuery = saved.getStateFlow("radioQuery", "")
+    private val expandedRadioGroup = MutableStateFlow<String?>(null)
+    fun radioQuery(value: String) {
+        if (value != radioQuery.value) expandedRadioGroup.value = null
+        saved["radioQuery"] = value
+    }
+    fun toggleRadioGroup(group: RadioGroup) {
+        expandedRadioGroup.value = if (expandedRadioGroup.value == group.id) null else group.id
+    }
+    private val mutableRadioImportBusy = MutableStateFlow(false)
+    val radioImportBusy = mutableRadioImportBusy.asStateFlow()
+    private val mutableRadioImport = MutableStateFlow<PreparedRadioImport?>(null)
+    val preparedRadioImport = mutableRadioImport.asStateFlow()
+    private val radioAliases by lazy {
+        buildMap {
+            for (locale in listOf(java.util.Locale.ENGLISH, java.util.Locale.SIMPLIFIED_CHINESE)) {
+                val context = app.createConfigurationContext(android.content.res.Configuration(app.resources.configuration).apply {
+                    setLocale(locale)
+                })
+                RadioDefaults.stations.forEach { put(RadioList.key(context.getString(it.title)), it.id) }
+            }
+            CnrRadio.stations.forEach { put(RadioList.key("CNR ${it.channel}"), it.id) }
+            put(RadioList.key("环球资讯"), RadioDefaults.CRI_ID)
+            put(RadioList.key("CRI News Radio"), RadioDefaults.CRI_ID)
+        }
+    }
+    private val radioSearchNames by lazy { radioAliases.entries.groupBy({ it.value }, { it.key }) }
+    private val radioPins = app.radio.options.map { it.pins }.distinctUntilChanged()
+    val radioPage by lazy {
+        combine(app.radioCatalog.state, radioQuery) { catalog, query ->
+            val matches = AudioFiles.searchMatcher(query)
+            catalog.programs.filter { station ->
+                matches("${station.name} ${station.group} ${radioSearchNames[station.id].orEmpty().joinToString(" ")}")
+            }
+        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(0), emptyList())
+    }
+    val radioQuickPage by lazy {
+        combine(app.radioCatalog.state, radioPins) { catalog, pins ->
+            pins.mapNotNull(catalog::find)
+        }.distinctUntilChanged().flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(0), emptyList())
+    }
+    val radioChannels by lazy {
+        radioPage.map(::RadioChannelRows).combine(expandedRadioGroup) { rows, expandedGroup ->
+            rows.visible(expandedGroup)
+        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(0), emptyList())
+    }
+    fun pinRadio(station: RadioProgram) {
+        if (!app.radio.pin(station)) app.inform(app.text(R.string.radio_pin_limit, RadioDefaults.MAX_PINS))
+    }
+
+    fun editRadio(original: RadioProgram, updated: RadioProgram) {
+        if (!startRadioEdit()) return
+        operation {
+            try {
+                app.radioCatalog.edit(original, updated)
+                app.inform(app.text(R.string.radio_station_saved))
+            } catch (error: RadioListException) { app.report(app.text(error.messageId)) }
+            finally { mutableRadioImportBusy.value = false }
+        }
+    }
+
+    fun clearRadioLogos() = operation {
+        app.radioLogos.clear()
+        app.inform(app.text(R.string.radio_cache_cleared))
+    }
     val favoritesOnly = saved.getStateFlow("favorites", false)
     val selectedPlaylist = saved.getStateFlow<String?>("playlist", null)
     // Large selections must not travel in Android's size-limited activity saved-state Bundle.
@@ -661,7 +743,28 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
 
     fun backgroundIndex(index: Int) { saved["backgroundIndex"] = index }
 
-    fun screen(id: Int) { saved["screen"] = id }
+    fun isScreenVisible(id: Int): Boolean = when (id) {
+        R.id.nav_library -> app.displaySettings.options.value.showLibrary
+        R.id.nav_queue -> app.displaySettings.options.value.showQueue
+        R.id.nav_playlists -> app.displaySettings.options.value.showPlaylists
+        R.id.nav_radio -> app.radio.options.value.enabled
+        else -> true
+    }
+
+    fun screen(id: Int) {
+        saved["screen"] = if (isScreenVisible(id)) id else R.id.nav_player
+    }
+
+    fun setRadioEnabled(enabled: Boolean) {
+        if (enabled == app.radio.options.value.enabled) return
+        if (radioImportBusy.value || backupBusy.value) {
+            app.inform(app.text(R.string.radio_list_busy))
+            return
+        }
+        if (!enabled) dismissRadioImport()
+        app.radio.setEnabled(enabled)
+        if (!enabled && selectedScreen.value == R.id.nav_radio) screen(R.id.nav_player)
+    }
     fun openSettings() {
         if (selectedScreen.value != R.id.action_settings) saved["settingsReturn"] = selectedScreen.value
         screen(R.id.action_settings)
@@ -1262,6 +1365,94 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
 
     fun consumedSharedBackup(uri: Uri) { mutableSharedBackup.compareAndSet(uri, null) }
 
+    fun previewRadioList(uri: Uri) {
+        if (!startRadioEdit()) return
+        mutableRadioImport.value = null
+        operation {
+            try {
+                mutableRadioImport.value = withContext(Dispatchers.IO) {
+                    repository.documents.requireContentUri(uri)
+                    val coroutine = currentCoroutineContext()
+                    val parsed = (app.contentResolver.openInputStream(uri)
+                        ?: throw IOException(app.text(R.string.document_unavailable))).use {
+                        RadioList.parse(it) { coroutine.ensureActive() }
+                    }
+                    val original = app.radioCatalog.snapshot()
+                    val count = RadioList.catalog(original.programs,
+                        if (original.includeDefaults) app.radioCatalog.state.value.defaults else emptyList()).size
+                    PreparedRadioImport(parsed, count, original, radioAliases)
+                }
+            } catch (error: RadioListException) {
+                Log.w(TAG, "Invalid radio list", error)
+                app.report(app.text(error.messageId))
+            } finally { mutableRadioImportBusy.value = false }
+        }
+    }
+
+    fun dismissRadioImport() { mutableRadioImport.value = null }
+
+    fun importRadioList(mode: RadioImportMode = RadioImportMode.APPEND) {
+        val preview = preparedRadioImport.value ?: return
+        if (preview.parsed.entries.isEmpty() || !startRadioEdit()) return
+        mutableRadioImport.value = null
+        operation {
+            try {
+                val result = app.radioCatalog.merge(preview.parsed.entries, preview.aliases, preview.original, mode)
+                app.radio.retainStations(app.radioCatalog.state.value.programs.mapTo(hashSetOf()) { it.id })
+                app.inform(app.text(R.string.radio_import_done, result.added, result.updated, result.unchanged, result.removed))
+            } catch (error: RadioListException) {
+                Log.w(TAG, "Radio import rejected", error)
+                app.report(app.text(error.messageId))
+            } finally { mutableRadioImportBusy.value = false }
+        }
+    }
+
+    fun exportRadioList(uri: Uri) {
+        if (!startRadioEdit()) return
+        operation {
+            try {
+                val counts = withContext(Dispatchers.IO) {
+                    repository.documents.requireContentUri(uri)
+                    val programs = app.radioCatalog.exportPrograms()
+                    val coroutine = currentCoroutineContext()
+                    val context = app.localizedContext
+                    val bytes = RadioList.exportM3u(programs, { it.title(context) }) { coroutine.ensureActive() }
+                    coroutine.ensureActive()
+                    (app.contentResolver.openOutputStream(uri, "wt")
+                        ?: throw IOException(app.text(R.string.document_unavailable))).use { it.write(bytes) }
+                    programs.size to programs.sumOf { it.sources.size }
+                }
+                app.inform(app.text(R.string.radio_export_done, counts.first, counts.second))
+            } catch (error: RadioListException) {
+                Log.w(TAG, "Radio export rejected", error)
+                app.report(app.text(error.messageId))
+            } finally { mutableRadioImportBusy.value = false }
+        }
+    }
+
+    fun resetRadioBuiltins() {
+        if (!startRadioEdit()) return
+        operation {
+            try {
+                app.radioCatalog.resetBuiltins()
+                app.inform(app.text(R.string.radio_reset_done))
+            } finally { mutableRadioImportBusy.value = false }
+        }
+    }
+
+    private fun startRadioEdit(): Boolean {
+        if (!app.radio.options.value.enabled) {
+            app.inform(app.text(R.string.radio_disabled))
+            return false
+        }
+        if (radioImportBusy.value || backupBusy.value) {
+            app.inform(app.text(R.string.radio_list_busy))
+            return false
+        }
+        mutableRadioImportBusy.value = true
+        return true
+    }
+
     fun exportBackup(uri: Uri, language: String) {
         if (!startBackup()) return
         operation {
@@ -1346,7 +1537,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     }
 
     private fun startBackup(): Boolean {
-        if (backupBusy.value || scanJob?.isCompleted == false || importingBackground.value ||
+        if (backupBusy.value || radioImportBusy.value || scanJob?.isCompleted == false || importingBackground.value ||
             lyricCacheBusy.value || lyricDownloadsBusy) {
             app.inform(app.text(R.string.backup_busy))
             return false

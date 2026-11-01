@@ -10,6 +10,7 @@ import android.widget.TextView
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.ConcatAdapter
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.macarmusic.app.R
@@ -75,6 +76,9 @@ class ListPanel @JvmOverloads constructor(context: Context, private val compact:
     fun configureBlocks(enabled: Boolean, outline: BlockOutline) {
         buttons.apply(enabled, outline)
         (list.adapter as? MusicRowAdapter)?.configureBlocks(enabled, outline)
+        (list.adapter as? RadioButtonAdapter)?.configureBlocks(enabled, outline)
+        (list.adapter as? ConcatAdapter)?.adapters?.filterIsInstance<RadioButtonAdapter>()
+            ?.forEach { it.configureBlocks(enabled, outline) }
     }
 
     fun empty(message: CharSequence, visible: Boolean) {

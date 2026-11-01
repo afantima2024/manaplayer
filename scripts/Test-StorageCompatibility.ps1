@@ -10,7 +10,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if (-not $DisposableDevice) { throw 'Use a disposable emulator. These tests replace its ManaMusicPlayer library.' }
+if (-not $DisposableDevice) { throw 'Use a disposable emulator. These tests replace its ManaMusicRadio library.' }
 if (-not $SdkPath) { $SdkPath = $env:ANDROID_SDK_ROOT }
 if (-not $SdkPath) { throw 'Set ANDROID_HOME or pass -SdkPath.' }
 $adb = Join-Path $SdkPath 'platform-tools\adb.exe'
@@ -24,7 +24,7 @@ if (((Adb shell getprop ro.kernel.qemu) -join '').Trim() -ne '1') {
 }
 $api = [int](((Adb shell getprop ro.build.version.sdk) -join '').Trim())
 if ($api -lt 23) {
-    throw 'ManaMusicPlayer requires an Android 6.0/API 23 or newer emulator.'
+    throw 'ManaMusicRadio requires an Android 6.0/API 23 or newer emulator.'
 }
 $audioPermission = if ($api -ge 33) { 'android.permission.READ_MEDIA_AUDIO' } else { 'android.permission.READ_EXTERNAL_STORAGE' }
 $installed = @(Adb shell pm list packages)

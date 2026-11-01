@@ -1,0 +1,156 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:visibility="gone">
+    <com.google.android.material.materialswitch.MaterialSwitch
+        android:id="@+id/settingsRadio"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:text="@string/radio_enabled"
+        android:textSize="16sp" />
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:text="@string/radio_enabled_help"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="14sp" />
+    <com.google.android.material.materialswitch.MaterialSwitch
+        android:id="@+id/radioOpenPlayer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:text="@string/radio_open_player"
+        android:textSize="16sp" />
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:text="@string/radio_open_player_help"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="14sp" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioPinColor"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_pin_color" />
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:text="@string/radio_pin_color_help"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="14sp" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioBuffer"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_buffer" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioStartBuffer"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_start_buffer" />
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:text="@string/radio_buffer_help"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="14sp" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioRetries"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_retries" />
+    <com.google.android.material.materialswitch.MaterialSwitch
+        android:id="@+id/radioAutoSource"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:text="@string/radio_auto_source"
+        android:textSize="16sp" />
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:text="@string/radio_retries_help"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="14sp" />
+    <com.google.android.material.materialswitch.MaterialSwitch
+        android:id="@+id/radioDownloadLogos"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:text="@string/radio_download_logos"
+        android:textSize="16sp" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioClearCache"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_clear_cache" />
+    <com.google.android.material.materialswitch.MaterialSwitch
+        android:id="@+id/radioShowStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:text="@string/radio_show_status"
+        android:textSize="16sp" />
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:text="@string/radio_status_help"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="14sp" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@id/radioImport"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_import" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioExport"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_export" />
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:text="@string/radio_export_help"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="14sp" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@id/radioReset"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_reset" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@id/radioFormat"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_list_format" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@id/radioReturnMusic"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_return_music" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@id/radioAbout"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_about" />
+</LinearLayout>
