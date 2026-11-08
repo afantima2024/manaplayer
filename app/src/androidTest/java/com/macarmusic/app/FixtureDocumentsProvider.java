@@ -38,6 +38,7 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
     private final AtomicInteger activeLyricReads = new AtomicInteger();
     private final AtomicInteger lyricReads = new AtomicInteger();
     private final AtomicInteger audioReads = new AtomicInteger();
+    private final AtomicInteger openRequests = new AtomicInteger();
     private final AtomicInteger childReads = new AtomicInteger();
     private final AtomicInteger deleteRequests = new AtomicInteger();
     private final AtomicInteger activeAudioReads = new AtomicInteger();
@@ -188,6 +189,7 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
 
     @Override public ParcelFileDescriptor openDocument(String id, String mode, CancellationSignal signal)
             throws FileNotFoundException {
+        openRequests.incrementAndGet();
         checkAvailable();
         if (!mode.equals("r")) throw new FileNotFoundException(id);
         if (id.equals("music/one") || id.equals("music/album/two") || id.matches("music/large-[0-9]+")) {
@@ -250,6 +252,7 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
                 extraRows = Math.max(0, Math.min(10000, extras.getInt("extraRows")));
                 if (extras.getBoolean("resetReads")) {
                     audioReads.set(0);
+                    openRequests.set(0);
                     childReads.set(0);
                     deleteRequests.set(0);
                     maxAudioReads.set(0);
@@ -257,6 +260,8 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             }
             Bundle result = new Bundle();
             result.putInt("audioReads", audioReads.get());
+            result.putInt("openRequests", openRequests.get());
+            result.putBoolean("unavailable", unavailable);
             result.putInt("childReads", childReads.get());
             result.putInt("activeAudioReads", activeAudioReads.get());
             result.putInt("maxAudioReads", maxAudioReads.get());
@@ -307,8 +312,13 @@ public class FixtureDocumentsProvider extends DocumentsProvider {
             return Bundle.EMPTY;
         }
         if (method.equals("setUnavailable")) {
-            unavailable = extras != null && extras.getBoolean("value");
-            return Bundle.EMPTY;
+            if (extras == null || !extras.containsKey("value")) {
+                throw new IllegalArgumentException("setUnavailable requires extras.value");
+            }
+            unavailable = extras.getBoolean("value");
+            Bundle result = new Bundle();
+            result.putBoolean("unavailable", unavailable);
+            return result;
         }
         if (method.equals("setLyricsMode")) {
             lyricsMode = arg == null ? "available" : arg;

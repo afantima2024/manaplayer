@@ -1,0 +1,104 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <attr name="buttonGradientStart" format="color" />
+    <attr name="buttonGradientFirst" format="color" />
+    <attr name="buttonGradientMiddle" format="color" />
+    <attr name="buttonGradientLast" format="color" />
+    <attr name="buttonGradientEnd" format="color" />
+    <color name="icon_original_start">#087C6C</color>
+    <color name="icon_original_first">#0E727F</color>
+    <color name="icon_original_middle">#146892</color>
+    <color name="icon_original_last">#1B5EA4</color>
+    <color name="icon_original_end">#2154B7</color>
+    <style name="ThemeOverlay.ManaPlayer.Icons.Original" parent="">
+        <item name="buttonGradientStart">@color/icon_original_start</item>
+        <item name="buttonGradientFirst">@color/icon_original_first</item>
+        <item name="buttonGradientMiddle">@color/icon_original_middle</item>
+        <item name="buttonGradientLast">@color/icon_original_last</item>
+        <item name="buttonGradientEnd">@color/icon_original_end</item>
+    </style>
+    <color name="icon_ocean_start">#007B95</color>
+    <color name="icon_ocean_first">#0D709D</color>
+    <color name="icon_ocean_middle">#1A64A4</color>
+    <color name="icon_ocean_last">#2758AC</color>
+    <color name="icon_ocean_end">#344DB4</color>
+    <style name="ThemeOverlay.ManaPlayer.Icons.Ocean" parent="">
+        <item name="buttonGradientStart">@color/icon_ocean_start</item>
+        <item name="buttonGradientFirst">@color/icon_ocean_first</item>
+        <item name="buttonGradientMiddle">@color/icon_ocean_middle</item>
+        <item name="buttonGradientLast">@color/icon_ocean_last</item>
+        <item name="buttonGradientEnd">@color/icon_ocean_end</item>
+    </style>
+    <color name="icon_aurora_start">#328000</color>
+    <color name="icon_aurora_first">#267E1C</color>
+    <color name="icon_aurora_middle">#197D38</color>
+    <color name="icon_aurora_last">#0C7C54</color>
+    <color name="icon_aurora_end">#007A70</color>
+    <style name="ThemeOverlay.ManaPlayer.Icons.Aurora" parent="">
+        <item name="buttonGradientStart">@color/icon_aurora_start</item>
+        <item name="buttonGradientFirst">@color/icon_aurora_first</item>
+        <item name="buttonGradientMiddle">@color/icon_aurora_middle</item>
+        <item name="buttonGradientLast">@color/icon_aurora_last</item>
+        <item name="buttonGradientEnd">@color/icon_aurora_end</item>
+    </style>
+    <color name="icon_sunset_start">#A55E00</color>
+    <color name="icon_sunset_first">#A8521A</color>
+    <color name="icon_sunset_middle">#AC4534</color>
+    <color name="icon_sunset_last">#B0384F</color>
+    <color name="icon_sunset_end">#B32C69</color>
+    <style name="ThemeOverlay.ManaPlayer.Icons.Sunset" parent="">
+        <item name="buttonGradientStart">@color/icon_sunset_start</item>
+        <item name="buttonGradientFirst">@color/icon_sunset_first</item>
+        <item name="buttonGradientMiddle">@color/icon_sunset_middle</item>
+        <item name="buttonGradientLast">@color/icon_sunset_last</item>
+        <item name="buttonGradientEnd">@color/icon_sunset_end</item>
+    </style>
+    <color name="icon_orchid_start">#6246B6</color>
+    <color name="icon_orchid_first">#7340AA</color>
+    <color name="icon_orchid_middle">#84399E</color>
+    <color name="icon_orchid_last">#943292</color>
+    <color name="icon_orchid_end">#A52C86</color>
+    <style name="ThemeOverlay.ManaPlayer.Icons.Orchid" parent="">
+        <item name="buttonGradientStart">@color/icon_orchid_start</item>
+        <item name="buttonGradientFirst">@color/icon_orchid_first</item>
+        <item name="buttonGradientMiddle">@color/icon_orchid_middle</item>
+        <item name="buttonGradientLast">@color/icon_orchid_last</item>
+        <item name="buttonGradientEnd">@color/icon_orchid_end</item>
+    </style>
+    <color name="icon_logo_start">#98640D</color>
+    <color name="icon_logo_first">#007F7B</color>
+    <color name="icon_logo_middle">#2B67CB</color>
+    <color name="icon_logo_last">#7648BD</color>
+    <color name="icon_logo_end">#B32A70</color>
+    <style name="ThemeOverlay.ManaPlayer.Icons.Logo" parent="">
+        <item name="buttonGradientStart">@color/icon_logo_start</item>
+        <item name="buttonGradientFirst">@color/icon_logo_first</item>
+        <item name="buttonGradientMiddle">@color/icon_logo_middle</item>
+        <item name="buttonGradientLast">@color/icon_logo_last</item>
+        <item name="buttonGradientEnd">@color/icon_logo_end</item>
+    </style>
+    <color name="icon_copilot_aurora_start">#B3367E</color>
+    <color name="icon_copilot_aurora_first">#8B44B3</color>
+    <color name="icon_copilot_aurora_middle">#4D51BD</color>
+    <color name="icon_copilot_aurora_last">#006BAE</color>
+    <color name="icon_copilot_aurora_end">#007D82</color>
+    <style name="ThemeOverlay.ManaPlayer.Icons.CopilotAurora" parent="">
+        <item name="buttonGradientStart">@color/icon_copilot_aurora_start</item>
+        <item name="buttonGradientFirst">@color/icon_copilot_aurora_first</item>
+        <item name="buttonGradientMiddle">@color/icon_copilot_aurora_middle</item>
+        <item name="buttonGradientLast">@color/icon_copilot_aurora_last</item>
+        <item name="buttonGradientEnd">@color/icon_copilot_aurora_end</item>
+    </style>
+    <color name="icon_copilot_sunrise_start">#405FC3</color>
+    <color name="icon_copilot_sunrise_first">#8144B4</color>
+    <color name="icon_copilot_sunrise_middle">#B12F85</color>
+    <color name="icon_copilot_sunrise_last">#B84636</color>
+    <color name="icon_copilot_sunrise_end">#98630B</color>
+    <style name="ThemeOverlay.ManaPlayer.Icons.CopilotSunrise" parent="">
+        <item name="buttonGradientStart">@color/icon_copilot_sunrise_start</item>
+        <item name="buttonGradientFirst">@color/icon_copilot_sunrise_first</item>
+        <item name="buttonGradientMiddle">@color/icon_copilot_sunrise_middle</item>
+        <item name="buttonGradientLast">@color/icon_copilot_sunrise_last</item>
+        <item name="buttonGradientEnd">@color/icon_copilot_sunrise_end</item>
+    </style>
+</resources>

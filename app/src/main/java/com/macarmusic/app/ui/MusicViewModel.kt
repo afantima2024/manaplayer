@@ -1,6 +1,7 @@
 package com.macarmusic.app.ui
 
 import android.app.Application
+import android.os.Bundle
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
@@ -45,6 +46,11 @@ import com.macarmusic.app.radio.RadioProgram
 import com.macarmusic.app.radio.RadioDefaults
 import com.macarmusic.app.radio.RadioImportMode
 import com.macarmusic.app.radio.RadioGroup
+import com.macarmusic.app.radio.RadioGroups
+import com.macarmusic.app.radio.RadioSubscription
+import com.macarmusic.app.radio.RadioSubscriptionProgress
+import com.macarmusic.app.radio.RadioSubscriptionResult
+import com.macarmusic.app.radio.RadioRefreshInterval
 import com.macarmusic.app.lyrics.LyricState
 import com.macarmusic.app.lyrics.LyricResult
 import com.macarmusic.app.lyrics.LyricIssue
@@ -65,11 +71,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOn
@@ -99,6 +109,9 @@ data class PreparedRadioImport(
 
 class MusicViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
     val app = application as MaCarMusicApp
+    internal val startupLaunch = app.startupPlayback.ActivityLaunch()
+    internal val focusPositions: Bundle = saved.get<Bundle>("focusPositions")
+        ?: Bundle().also { saved["focusPositions"] = it }
     val repository = app.repository
     val library = repository.library
     val selectedScreen = saved.run {
@@ -112,6 +125,27 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     val query = saved.getStateFlow("query", "")
     val radioQuery = saved.getStateFlow("radioQuery", "")
     private val expandedRadioGroup = MutableStateFlow<String?>(null)
+    var radioRevealId: String? = null
+        private set
+    fun revealPlayingRadio(station: RadioProgram) {
+        if (station.id in app.radio.options.value.pins) return
+        val group = RadioGroups.of(station)
+        if (group.id in app.radio.options.value.hiddenGroups) {
+            app.inform(app.text(R.string.radio_current_group_hidden))
+            return
+        }
+        radioQuery("")
+        expandedRadioGroup.value = group.id
+        radioRevealId = station.id
+    }
+    fun radioRevealed(id: String) { if (radioRevealId == id) radioRevealId = null }
+    fun setAppLogo(logo: com.macarmusic.app.model.AppLogo) = operation {
+        if (backupBusy.value) {
+            app.inform(app.text(R.string.backup_busy))
+            return@operation
+        }
+        app.displaySettings.update { it.copy(appLogo = logo) }
+    }
     fun radioQuery(value: String) {
         if (value != radioQuery.value) expandedRadioGroup.value = null
         saved["radioQuery"] = value
@@ -123,6 +157,12 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     val radioImportBusy = mutableRadioImportBusy.asStateFlow()
     private val mutableRadioImport = MutableStateFlow<PreparedRadioImport?>(null)
     val preparedRadioImport = mutableRadioImport.asStateFlow()
+    val radioSubscriptionsOpen = saved.getStateFlow("radioSubscriptionsOpen", false)
+    private val mutableSubscriptionProgress = MutableStateFlow<RadioSubscriptionProgress?>(null)
+    val subscriptionProgress = mutableSubscriptionProgress.asStateFlow()
+    private var subscriptionJob: Job? = null
+    fun openRadioSubscriptions() { saved["radioSubscriptionsOpen"] = true }
+    fun closeRadioSubscriptions() { saved["radioSubscriptionsOpen"] = false }
     private val radioAliases by lazy {
         buildMap {
             for (locale in listOf(java.util.Locale.ENGLISH, java.util.Locale.SIMPLIFIED_CHINESE)) {
@@ -139,26 +179,157 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     private val radioSearchNames by lazy { radioAliases.entries.groupBy({ it.value }, { it.key }) }
     private val radioPins = app.radio.options.map { it.pins }.distinctUntilChanged()
     val radioPage by lazy {
-        combine(app.radioCatalog.state, radioQuery) { catalog, query ->
+        combine(app.radioCatalog.state.map { it.programs }.distinctUntilChanged(), radioQuery) { programs, query ->
             val matches = AudioFiles.searchMatcher(query)
-            catalog.programs.filter { station ->
+            programs.filter { station ->
                 matches("${station.name} ${station.group} ${radioSearchNames[station.id].orEmpty().joinToString(" ")}")
             }
         }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(0), emptyList())
     }
     val radioQuickPage by lazy {
-        combine(app.radioCatalog.state, radioPins) { catalog, pins ->
+        combine(app.radioCatalog.state.distinctUntilChanged { old, new -> old.programs === new.programs }, radioPins) { catalog, pins ->
             pins.mapNotNull(catalog::find)
         }.distinctUntilChanged().flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(0), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily,
+                app.radio.options.value.pins.mapNotNull(app.radioCatalog.state.value::find))
     }
     val radioChannels by lazy {
-        radioPage.map(::RadioChannelRows).combine(expandedRadioGroup) { rows, expandedGroup ->
-            rows.visible(expandedGroup)
+        combine(radioPage.map(::RadioChannelRows), expandedRadioGroup,
+            app.radio.options.map { it.hiddenGroups }.distinctUntilChanged()) { rows, expandedGroup, hidden ->
+            rows.visible(expandedGroup, hidden)
         }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(0), emptyList())
     }
     fun pinRadio(station: RadioProgram) {
+        if (app.radioCatalog.find(station.id) == null) {
+            app.inform(app.text(R.string.radio_station_invalid))
+            return
+        }
         if (!app.radio.pin(station)) app.inform(app.text(R.string.radio_pin_limit, RadioDefaults.MAX_PINS))
+    }
+    fun reorderRadioPins(original: List<String>, reordered: List<String>): Boolean {
+        if (original.any { app.radioCatalog.find(it) == null } || !app.radio.reorderPins(original, reordered)) {
+            app.inform(app.text(R.string.radio_pin_order_changed))
+            return false
+        }
+        return true
+    }
+
+    fun saveRadioSubscription(name: String, url: String, original: RadioSubscription? = null) {
+        if (!startRadioEdit()) return
+        operation {
+            val subscription = try {
+                app.radioCatalog.saveSubscription(name, url, original).also {
+                    app.inform(app.text(R.string.radio_subscription_saved))
+                }
+            } catch (error: RadioListException) {
+                app.report(app.text(error.messageId))
+                return@operation
+            } finally { mutableRadioImportBusy.value = false }
+            if (original == null) refreshRadioSubscriptions(subscription.id)
+        }
+    }
+
+    fun changeRadioSubscription(original: RadioSubscription, enabled: Boolean? = null, remove: Boolean = false) {
+        if (!startRadioEdit()) return
+        operation {
+            try {
+                app.radioCatalog.changeSubscription(original, enabled, remove)
+                app.radio.retainStations(app.radioCatalog.state.value.knownIds)
+                app.inform(app.text(if (remove) R.string.radio_subscription_removed else R.string.radio_subscription_saved))
+            } catch (error: RadioListException) { app.report(app.text(error.messageId)) }
+            finally { mutableRadioImportBusy.value = false }
+        }
+    }
+
+    fun refreshRadioSubscriptions(id: String? = null) {
+        if (!startRadioEdit()) return
+        mutableSubscriptionProgress.value = RadioSubscriptionProgress("", 0, 0)
+        mutableRadioImportBusy.value = false
+        subscriptionJob = operation {
+            try {
+                val subscriptions = app.radioCatalog.snapshot().subscriptions.filter { it.enabled && (id == null || it.id == id) }
+                refreshRadioSubscriptions(subscriptions)
+            } finally { mutableSubscriptionProgress.value = null }
+        }
+    }
+
+    suspend fun refreshRadioWhileInUse() {
+        app.radio.options.map { it.refreshInterval }.distinctUntilChanged().collectLatest { interval ->
+            if (interval == RadioRefreshInterval.MANUAL) return@collectLatest
+            guard {
+                // This caller is RESUMED and has already displayed the restored player.
+                delay(60_000)
+                while (currentCoroutineContext().isActive) {
+                    if (radioAutoRefreshIdle()) {
+                        val subscriptions = app.radioCatalog.snapshot().subscriptions
+                        val now = System.currentTimeMillis()
+                        val due = interval.due(subscriptions, app.radio.lastAutomaticRefreshAttemptAtMs, now)
+                        if (due.isNotEmpty() && radioAutoRefreshIdle()) {
+                            mutableSubscriptionProgress.value = RadioSubscriptionProgress("", 0, due.size)
+                            try {
+                                coroutineScope {
+                                    val job = launch {
+                                        // An interrupted download must not be retried on every launch.
+                                        app.radio.recordAutomaticRefreshAttempt(now)
+                                        refreshRadioSubscriptions(due)
+                                    }
+                                    subscriptionJob = job
+                                    job.join()
+                                }
+                            } finally { mutableSubscriptionProgress.value = null }
+                        }
+                    }
+                    delay(60_000)
+                }
+            }
+        }
+    }
+
+    private fun radioAutoRefreshIdle() =
+        !radioImportBusy.value && !backupBusy.value && subscriptionProgress.value == null &&
+            preparedRadioImport.value == null && preparedBackup.value == null &&
+            logoProgress.value == null && scanJob?.isCompleted != false
+
+    private suspend fun refreshRadioSubscriptions(subscriptions: List<RadioSubscription>) {
+        try {
+            if (subscriptions.isEmpty()) {
+                app.inform(app.text(R.string.radio_subscription_none_enabled))
+                return
+            }
+            var updated = 0
+            var unchanged = 0
+            var failed = 0
+            var unavailable = 0
+            var ignoredLogos = 0
+            for ((index, subscription) in subscriptions.withIndex()) {
+                currentCoroutineContext().ensureActive()
+                mutableSubscriptionProgress.value = RadioSubscriptionProgress(subscription.name, index, subscriptions.size)
+                when (app.radioCatalog.refreshSubscription(subscription.id, radioAliases)) {
+                    RadioSubscriptionResult.UPDATED -> updated++
+                    RadioSubscriptionResult.UNCHANGED -> unchanged++
+                    RadioSubscriptionResult.FAILED -> failed++
+                }
+                app.radio.retainStations(app.radioCatalog.state.value.knownIds)
+                app.radioCatalog.state.value.subscriptions.find { it.id == subscription.id }?.let {
+                    unavailable += it.unavailableStations
+                    ignoredLogos += it.ignoredLogos
+                }
+            }
+            val result = app.text(R.string.radio_subscription_done, updated, unchanged, failed, unavailable) +
+                if (ignoredLogos == 0) "" else " " + app.text(R.string.radio_subscription_ignored_logos, ignoredLogos)
+            if (failed == 0) app.inform(result) else app.report(result)
+        } catch (error: RadioListException) {
+            app.report(app.text(error.messageId))
+        } catch (error: CancellationException) {
+            if (mutableSubscriptionProgress.value?.cancelling == true)
+                app.inform(app.text(R.string.radio_subscription_cancelled))
+            throw error
+        }
+    }
+
+    fun cancelRadioSubscriptions() {
+        mutableSubscriptionProgress.value?.let { mutableSubscriptionProgress.value = it.copy(cancelling = true) }
+        subscriptionJob?.cancel()
     }
 
     fun editRadio(original: RadioProgram, updated: RadioProgram) {
@@ -172,7 +343,69 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         }
     }
 
+    fun setRadioStationLogo(station: RadioProgram, logo: com.macarmusic.app.radio.RadioStationLogo?) {
+        if (backupBusy.value || radioImportBusy.value) {
+            app.inform(app.text(R.string.radio_list_busy))
+            return
+        }
+        app.radio.setStationLogo(station.id, logo)
+    }
+
+    data class LogoProgress(val name: String, val completed: Int, val total: Int, val cancelling: Boolean = false)
+    private val mutableLogoProgress = MutableStateFlow<LogoProgress?>(null)
+    val logoProgress = mutableLogoProgress.asStateFlow()
+    private var logoJob: Job? = null
+
+    fun downloadPinnedRadioLogos() {
+        if (logoJob?.isActive == true || backupBusy.value) {
+            app.inform(app.text(R.string.radio_list_busy))
+            return
+        }
+        mutableLogoProgress.value = LogoProgress("", 0, 0)
+        logoJob = operation {
+            try {
+                val catalog = app.radioCatalog.readyState()
+                val pins = app.radio.options.value.pins.mapNotNull(catalog::find)
+                if (pins.isEmpty()) {
+                    app.inform(app.text(R.string.radio_pins_empty))
+                    return@operation
+                }
+                var saved = 0
+                var cached = 0
+                var missing = 0
+                var failed = 0
+                for ((index, station) in pins.withIndex()) {
+                    currentCoroutineContext().ensureActive()
+                    mutableLogoProgress.value = LogoProgress(station.title(app), index, pins.size)
+                    try {
+                        when (app.radioLogos.download(station)) {
+                            com.macarmusic.app.radio.RadioLogoRepository.Download.SAVED -> saved++
+                            com.macarmusic.app.radio.RadioLogoRepository.Download.CACHED -> cached++
+                            com.macarmusic.app.radio.RadioLogoRepository.Download.NO_ADDRESS -> missing++
+                            com.macarmusic.app.radio.RadioLogoRepository.Download.CLEARED -> return@operation
+                        }
+                    } catch (error: IOException) {
+                        Log.w(TAG, "Cannot download pinned radio logo", error)
+                        failed++
+                    }
+                }
+                val message = app.text(R.string.radio_logos_done, saved, cached, missing, failed)
+                if (failed == 0) app.inform(message) else app.report(message)
+            } catch (error: CancellationException) {
+                if (mutableLogoProgress.value?.cancelling == true) app.inform(app.text(R.string.radio_logos_cancelled))
+                throw error
+            } finally { mutableLogoProgress.value = null }
+        }
+    }
+
+    fun cancelRadioLogos() {
+        mutableLogoProgress.value?.let { mutableLogoProgress.value = it.copy(cancelling = true) }
+        logoJob?.cancel()
+    }
+
     fun clearRadioLogos() = operation {
+        cancelRadioLogos()
+        logoJob?.join()
         app.radioLogos.clear()
         app.inform(app.text(R.string.radio_cache_cleared))
     }
@@ -192,6 +425,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(0, replayExpirationMillis = 0), LibraryPage())
     private val mutableBrowser = MutableStateFlow(BrowserState())
     val browser = mutableBrowser.asStateFlow()
+    private val mutableRecoveringSource = MutableStateFlow<String?>(null)
+    val recoveringSource = mutableRecoveringSource.asStateFlow()
     private val mutableScan = MutableStateFlow<ScanProgress?>(null)
     val scan = mutableScan.asStateFlow()
     val metadataProgress = repository.metadataProgress
@@ -747,7 +982,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         R.id.nav_library -> app.displaySettings.options.value.showLibrary
         R.id.nav_queue -> app.displaySettings.options.value.showQueue
         R.id.nav_playlists -> app.displaySettings.options.value.showPlaylists
-        R.id.nav_radio -> app.radio.options.value.enabled
+        R.id.nav_radio -> app.radio.options.value.showPanel
         else -> true
     }
 
@@ -755,15 +990,10 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         saved["screen"] = if (isScreenVisible(id)) id else R.id.nav_player
     }
 
-    fun setRadioEnabled(enabled: Boolean) {
-        if (enabled == app.radio.options.value.enabled) return
-        if (radioImportBusy.value || backupBusy.value) {
-            app.inform(app.text(R.string.radio_list_busy))
-            return
-        }
-        if (!enabled) dismissRadioImport()
-        app.radio.setEnabled(enabled)
-        if (!enabled && selectedScreen.value == R.id.nav_radio) screen(R.id.nav_player)
+    fun setRadioPanelVisible(visible: Boolean) {
+        if (visible == app.radio.options.value.showPanel) return
+        app.radio.setPanelVisible(visible)
+        if (!visible && selectedScreen.value == R.id.nav_radio) screen(R.id.nav_player)
     }
     fun openSettings() {
         if (selectedScreen.value != R.id.action_settings) saved["settingsReturn"] = selectedScreen.value
@@ -951,6 +1181,35 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         scanFolders(listOf(source))
     }
 
+    fun prepareFolderRecovery(sourceUri: String?) { saved["recoverySourceUri"] = sourceUri }
+
+    fun consumeFolderRecovery(): String? = saved.remove<String>("recoverySourceUri")
+
+    fun reselectFolder(sourceUri: String, uri: Uri, flags: Int) {
+        if (recoveringSource.value != null || scanJob?.isCompleted == false || backupBusy.value) {
+            app.inform(app.text(R.string.backup_busy))
+            return
+        }
+        mutableRecoveringSource.value = sourceUri
+        operation {
+            try {
+                repository.awaitReady()
+                val original = library.value.sources.firstOrNull { it.uri == sourceUri }
+                    ?: throw IOException(app.text(R.string.document_unavailable))
+                val previous = Uri.parse(sourceUri)
+                require(uri == previous ||
+                    com.macarmusic.app.data.DocumentUris.grant(uri) == com.macarmusic.app.data.DocumentUris.grant(previous) &&
+                    repository.documents.rootId(uri.toString()) == repository.documents.rootId(sourceUri)) {
+                    app.text(R.string.recovery_select_same_folder, original.name)
+                }
+                val source = repository.addSource(previous, flags)
+                if (browser.value.path.lastOrNull()?.sourceUri == sourceUri) refreshBrowser()
+                scanFolders(listOf(source))
+                app.inform(app.text(if (source.persisted) R.string.recovery_folder_ready else R.string.temporary_grant))
+            } finally { mutableRecoveringSource.value = null }
+        }
+    }
+
     fun prepareDeviceMusic(browse: Boolean) { saved["deviceMusicBrowse"] = browse }
 
     fun loadDeviceMusicFolders() {
@@ -1087,7 +1346,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             mutableBrowser.value = BrowserState()
             return
         }
-        mutableBrowser.value = BrowserState(path = path, loading = true)
+        mutableBrowser.value = BrowserState(path = path, loading = true,
+            error = browser.value.error.takeIf { browser.value.path == path })
         browserJob = viewModelScope.launch {
             try {
                 val location = path.last()
@@ -1136,6 +1396,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
             app.inform(app.text(R.string.scan_busy))
             return
         }
+        mutableScan.value = requests.firstOrNull()?.let { ScanProgress(it.first.name) }
         scanJob = viewModelScope.launch {
             val resultTracks = mutableListOf<Track>()
             val scannedFolders = mutableListOf<PlaylistFolder>()
@@ -1378,8 +1639,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
                         RadioList.parse(it) { coroutine.ensureActive() }
                     }
                     val original = app.radioCatalog.snapshot()
-                    val count = RadioList.catalog(original.programs,
-                        if (original.includeDefaults) app.radioCatalog.state.value.defaults else emptyList()).size
+                    val count = app.radioCatalog.state.value.programs.size
                     PreparedRadioImport(parsed, count, original, radioAliases)
                 }
             } catch (error: RadioListException) {
@@ -1398,7 +1658,7 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         operation {
             try {
                 val result = app.radioCatalog.merge(preview.parsed.entries, preview.aliases, preview.original, mode)
-                app.radio.retainStations(app.radioCatalog.state.value.programs.mapTo(hashSetOf()) { it.id })
+                app.radio.retainStations(app.radioCatalog.state.value.knownIds)
                 app.inform(app.text(R.string.radio_import_done, result.added, result.updated, result.unchanged, result.removed))
             } catch (error: RadioListException) {
                 Log.w(TAG, "Radio import rejected", error)
@@ -1440,12 +1700,38 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
         }
     }
 
-    private fun startRadioEdit(): Boolean {
-        if (!app.radio.options.value.enabled) {
-            app.inform(app.text(R.string.radio_disabled))
-            return false
+    fun hideRadioGroups(groups: Set<String>) {
+        if ((app.radio.options.value.hiddenGroups + groups).size > RadioList.MAX_PROGRAMS) {
+            app.report(app.text(R.string.radio_groups_limit))
+            return
         }
-        if (radioImportBusy.value || backupBusy.value) {
+        app.radio.hideGroups(groups)
+        if (expandedRadioGroup.value in groups) expandedRadioGroup.value = null
+        app.inform(app.text(R.string.radio_groups_hidden))
+    }
+
+    fun showRadioGroups(groups: Set<String>) {
+        app.radio.showGroups(groups)
+        app.inform(app.text(R.string.radio_groups_shown))
+    }
+
+    fun deleteRadioGroups(groups: Set<String>, expected: RadioCatalogSnapshot) {
+        if (!startRadioEdit()) return
+        operation {
+            try {
+                val count = app.radioCatalog.deleteGroups(groups, expected)
+                app.radio.retainStations(app.radioCatalog.state.value.knownIds)
+                if (expandedRadioGroup.value in groups) expandedRadioGroup.value = null
+                app.inform(app.text(R.string.radio_groups_deleted, count))
+            } catch (error: RadioListException) {
+                Log.w(TAG, "Radio country deletion rejected", error)
+                app.report(app.text(error.messageId))
+            } finally { mutableRadioImportBusy.value = false }
+        }
+    }
+
+    private fun startRadioEdit(): Boolean {
+        if (radioImportBusy.value || backupBusy.value || subscriptionProgress.value != null) {
             app.inform(app.text(R.string.radio_list_busy))
             return false
         }
@@ -1537,7 +1823,8 @@ class MusicViewModel(application: Application, private val saved: SavedStateHand
     }
 
     private fun startBackup(): Boolean {
-        if (backupBusy.value || radioImportBusy.value || scanJob?.isCompleted == false || importingBackground.value ||
+        if (backupBusy.value || radioImportBusy.value || subscriptionProgress.value != null || logoProgress.value != null ||
+            scanJob?.isCompleted == false || importingBackground.value ||
             lyricCacheBusy.value || lyricDownloadsBusy) {
             app.inform(app.text(R.string.backup_busy))
             return false

@@ -47,6 +47,11 @@ class MaCarMusicApp : Application() {
         com.macarmusic.app.radio.RadioCatalogRepository(
             com.macarmusic.app.data.AtomicTextStore(java.io.File(filesDir, "radio-stations.json")), applicationScope,
             loadDefaults = { com.macarmusic.app.radio.RadioDefaults.bundled },
+            loadSubscriptions = { com.macarmusic.app.radio.RadioBundledDefaults.load(::text) },
+            reportDefaults = { error ->
+                android.util.Log.e("RadioCatalog", "Bundled radio defaults were not applied; saved lists retained", error)
+                report(text(R.string.radio_bundled_defaults_failed))
+            },
         ) { error ->
             android.util.Log.e("RadioCatalog", "Cannot read or restore saved radio stations", error)
             report(text(R.string.radio_list_load_failed))
@@ -54,12 +59,32 @@ class MaCarMusicApp : Application() {
             applicationScope.launch(Dispatchers.Main) {
                 catalog.awaitReady()
                 val state = catalog.state.value
-                if (state.error == null) radio.retainStations(state.programs.mapTo(hashSetOf()) { it.id })
+                if (state.error == null) {
+                    radio.retainStations(state.knownIds)
+                    if (radio.needsBundledDefaults && state.initializeBundledSettings &&
+                        state.bundledRevision == com.macarmusic.app.radio.RadioBundledDefaults.REVISION) {
+                        val hidden = kotlinx.coroutines.withContext(Dispatchers.Default) {
+                            com.macarmusic.app.radio.RadioGroups.defaultHiddenGroups(state.programs)
+                        }
+                        radio.applyBundledDefaults(hidden)
+                    }
+                }
             }
         }
     }
     val radioCatalog get() = savedRadioCatalog.value
     internal val radioCatalogInitialized get() = savedRadioCatalog.isInitialized()
+    private var radioWarmup: Job? = null
+    internal val radioCatalogWarmed = MutableStateFlow(false)
+
+    @Synchronized internal fun warmRadioCatalog() {
+        if (radioWarmup != null) return
+        radioWarmup = applicationScope.launch {
+            radioCatalog.awaitReady()
+            radioCatalogWarmed.value = true
+        }
+    }
+
     lateinit var displaySettings: DisplaySettings
         private set
     val backgrounds by lazy { BackgroundRepository(localizedContext) }
@@ -74,6 +99,10 @@ class MaCarMusicApp : Application() {
         if (lyricRepository.isInitialized()) lyricRepository.value.trackChanged(trackId)
     }
     internal val playbackReady = MutableStateFlow(false)
+    internal val playbackActive = MutableStateFlow(false)
+    internal val playbackProblem = MutableStateFlow<com.macarmusic.app.model.PlaybackProblem?>(null)
+    internal val radioPreparing = MutableStateFlow(false)
+    internal val startupPlayback = com.macarmusic.app.playback.StartupPlayback()
     val spectrum by lazy { SpectrumSource(applicationScope) }
     private val widgets = lazy { HomeWidgets(this) }
     val homeWidgets get() = widgets.value
@@ -100,8 +129,9 @@ class MaCarMusicApp : Application() {
         noticeExpiry?.cancel()
         val notice = Notice(noticeSequence.incrementAndGet(), message, isError)
         mutableNotice.value = notice
+        val durationMs = displaySettings.options.value.noticeDurationSeconds * 1_000L
         noticeExpiry = applicationScope.launch {
-            delay(NOTICE_DURATION_MS)
+            delay(durationMs)
             dismissNotice(notice.id)
         }
     }
@@ -146,5 +176,4 @@ class MaCarMusicApp : Application() {
             getSharedPreferences("settings", MODE_PRIVATE).edit().putString("sort", value.name).apply()
         }
 
-    companion object { const val NOTICE_DURATION_MS = 10_000L }
 }

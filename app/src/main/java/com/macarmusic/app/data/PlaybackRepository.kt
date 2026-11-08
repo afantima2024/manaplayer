@@ -79,7 +79,6 @@ class PlaybackRepository(
         val reconciled = withContext(Dispatchers.Default) { PlaybackEdits.reconcile(snapshot, library.tracks) }
         synchronized(this) {
             if (current === snapshot) save(reconciled)
-            else Log.d(TAG, "A newer playback change superseded saved-queue reconciliation")
         }
     }
 

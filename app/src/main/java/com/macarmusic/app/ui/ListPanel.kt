@@ -16,7 +16,8 @@ import com.google.android.material.color.MaterialColors
 import com.macarmusic.app.R
 import com.macarmusic.app.model.BlockOutline
 
-class ListPanel @JvmOverloads constructor(context: Context, private val compact: Boolean = false) : LinearLayout(context) {
+class ListPanel @JvmOverloads constructor(context: Context, private val compact: Boolean = false,
+    recyclerView: RecyclerView = RecyclerView(context)) : LinearLayout(context) {
     val top = LinearLayout(context).apply { orientation = VERTICAL }
     private val buttons by lazy { BlockButtonStyler(top) }
     val heading = TextView(context).apply {
@@ -24,7 +25,7 @@ class ListPanel @JvmOverloads constructor(context: Context, private val compact:
         setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
         setPadding(dp(16), dp(8), dp(16), dp(8))
     }
-    val list = RecyclerView(context).apply {
+    val list = recyclerView.apply {
         layoutManager = LinearLayoutManager(context)
         clipToPadding = false
         setPadding(0, 0, 0, dp(12))
@@ -65,6 +66,7 @@ class ListPanel @JvmOverloads constructor(context: Context, private val compact:
 
     fun action(label: Int, click: () -> Unit): MaterialButton =
         PlayerTextButton(context, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            setTag(R.id.playerFocusKey, "action:$label")
             setText(label)
             isAllCaps = false
             gravity = Gravity.CENTER
@@ -75,10 +77,15 @@ class ListPanel @JvmOverloads constructor(context: Context, private val compact:
 
     fun configureBlocks(enabled: Boolean, outline: BlockOutline) {
         buttons.apply(enabled, outline)
-        (list.adapter as? MusicRowAdapter)?.configureBlocks(enabled, outline)
-        (list.adapter as? RadioButtonAdapter)?.configureBlocks(enabled, outline)
-        (list.adapter as? ConcatAdapter)?.adapters?.filterIsInstance<RadioButtonAdapter>()
-            ?.forEach { it.configureBlocks(enabled, outline) }
+        fun configure(adapter: RecyclerView.Adapter<*>?) {
+            when (adapter) {
+                is MusicRowAdapter -> adapter.configureBlocks(enabled, outline)
+                is RadioButtonAdapter -> adapter.configureBlocks(enabled, outline)
+                is RadioChannelAdapter -> adapter.configureBlocks(enabled, outline)
+                is ConcatAdapter -> adapter.adapters.forEach(::configure)
+            }
+        }
+        configure(list.adapter)
     }
 
     fun empty(message: CharSequence, visible: Boolean) {

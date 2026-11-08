@@ -5,6 +5,7 @@ import android.graphics.Typeface
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.view.LayoutInflater
+import android.view.KeyEvent
 import android.view.ViewGroup
 import androidx.core.text.bold
 import androidx.core.text.buildSpannedString
@@ -34,7 +35,9 @@ class MusicRowAdapter(
     private val onMore: (MusicRow) -> Unit,
     private val onSelect: ((MusicRow) -> Unit)? = null,
     private val compact: Boolean = false,
-) : ListAdapter<MusicRow, MusicRowAdapter.Holder>(Diff) {
+    private val onNavigate: ((MusicRow, Int) -> Boolean)? = null,
+) : ListAdapter<MusicRow, MusicRowAdapter.Holder>(Diff), PlayerFocusItems {
+    override fun focusKey(position: Int) = "music:${getItem(position).key}"
     private var blocks = false to BlockOutline()
     class Holder(val binding: RowItemBinding) : RecyclerView.ViewHolder(binding.root) {
         val buttons = BlockButtonStyler(binding.root)
@@ -74,6 +77,7 @@ class MusicRowAdapter(
         holder.buttons.apply(blocks.first, blocks.second)
         val row = getItem(position)
         with(holder.binding) {
+            root.setTag(R.id.playerFocusKey, focusKey(position))
             title.text = if (row.inlineSubtitle) buildSpannedString {
                 bold { append(row.title) }
                 if (row.subtitle.isNotEmpty()) {
@@ -86,16 +90,14 @@ class MusicRowAdapter(
             subtitle.text = row.subtitle
             subtitle.isVisible = !row.inlineSubtitle && row.subtitle.isNotEmpty()
             detail.text = row.detail
-            icon.setImageResource(row.icon)
             val textColor = AccentTheme.color(
                 root,
                 if (row.active || row.selected == true) com.google.android.material.R.attr.colorPrimary
                 else com.google.android.material.R.attr.colorOnSurface,
             )
             title.setTextColor(textColor)
-            icon.imageTintList = ColorStateList.valueOf(
-                AccentTheme.color(root, com.google.android.material.R.attr.colorPrimary),
-            )
+            PlayerIcons.image(icon, row.icon, AccentTheme.color(root, com.google.android.material.R.attr.colorPrimary))
+            PlayerIcons.image(more, R.drawable.ic_more)
             more.contentDescription = root.context.getString(R.string.options_for, row.title)
             more.isVisible = row.selected == null
             selection.isVisible = row.selected != null
@@ -105,6 +107,18 @@ class MusicRowAdapter(
             root.isSelected = row.selected == true
             root.setOnClickListener { onClick(row) }
             root.setOnLongClickListener { (onSelect ?: onMore)(row); true }
+            root.setOnKeyListener { _, key, event ->
+                if (event.action != KeyEvent.ACTION_DOWN || !event.hasNoModifiers()) return@setOnKeyListener false
+                when {
+                    key == KeyEvent.KEYCODE_MENU -> {
+                        if (event.repeatCount == 0) onMore(row)
+                        true
+                    }
+                    onNavigate != null && (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT) ->
+                        event.repeatCount > 0 || onNavigate.invoke(row, key)
+                    else -> false
+                }
+            }
             more.setOnClickListener { onMore(row) }
         }
     }

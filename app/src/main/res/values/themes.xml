@@ -9,6 +9,8 @@
     </style>
     <style name="Theme.ManaPlayer.Launch" parent="Theme.ManaPlayer.Launch.Base" />
     <style name="Theme.ManaPlayer" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="buttonGradientStart">@color/icon_original_start</item>
+        <item name="buttonGradientEnd">@color/icon_original_end</item>
         <item name="colorPrimary">@color/primary</item>
         <item name="colorOnPrimary">@color/on_primary</item>
         <item name="colorPrimaryContainer">@color/primary_container</item>

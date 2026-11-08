@@ -3,20 +3,32 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:visibility="gone">
-    <com.google.android.material.materialswitch.MaterialSwitch
-        android:id="@+id/settingsRadio"
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioSubscriptions"
+        style="@style/SettingButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:minHeight="48dp"
-        android:text="@string/radio_enabled"
-        android:textSize="16sp" />
+        android:text="@string/radio_subscriptions" />
     <TextView
+        android:id="@+id/radioSubscriptionsStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:padding="8dp"
-        android:text="@string/radio_enabled_help"
         android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="14sp" />
+        android:textSize="14sp"
+        android:visibility="gone" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioRefreshInterval"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_refresh_interval" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioNavigation"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_navigation" />
     <com.google.android.material.materialswitch.MaterialSwitch
         android:id="@+id/radioOpenPlayer"
         android:layout_width="match_parent"
@@ -24,26 +36,24 @@
         android:minHeight="48dp"
         android:text="@string/radio_open_player"
         android:textSize="16sp" />
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:padding="8dp"
-        android:text="@string/radio_open_player_help"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="14sp" />
     <com.google.android.material.button.MaterialButton
-        android:id="@+id/radioPinColor"
+        android:id="@id/radioReturnMusic"
         style="@style/SettingButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/radio_pin_color" />
-    <TextView
+        android:text="@string/radio_return_music" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioManageGroups"
+        style="@style/SettingButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="8dp"
-        android:text="@string/radio_pin_color_help"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="14sp" />
+        android:text="@string/radio_manage_groups" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioShowGroups"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_groups_show" />
     <com.google.android.material.button.MaterialButton
         android:id="@+id/radioBuffer"
         style="@style/SettingButton"
@@ -56,13 +66,6 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="@string/radio_start_buffer" />
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:padding="8dp"
-        android:text="@string/radio_buffer_help"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="14sp" />
     <com.google.android.material.button.MaterialButton
         android:id="@+id/radioRetries"
         style="@style/SettingButton"
@@ -76,13 +79,25 @@
         android:minHeight="48dp"
         android:text="@string/radio_auto_source"
         android:textSize="16sp" />
-    <TextView
+    <com.google.android.material.materialswitch.MaterialSwitch
+        android:id="@+id/radioShowStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="8dp"
-        android:text="@string/radio_retries_help"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="14sp" />
+        android:minHeight="48dp"
+        android:text="@string/radio_show_status"
+        android:textSize="16sp" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioPinColor"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_pin_color" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioButtonLogo"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_button_logo" />
     <com.google.android.material.materialswitch.MaterialSwitch
         android:id="@+id/radioDownloadLogos"
         android:layout_width="match_parent"
@@ -91,25 +106,39 @@
         android:text="@string/radio_download_logos"
         android:textSize="16sp" />
     <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioDownloadPinnedLogos"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/radio_download_pinned_logos" />
+    <ProgressBar
+        android:id="@+id/radioLogosProgress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+    <TextView
+        android:id="@+id/radioLogosStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:textColor="?attr/colorOnSurface"
+        android:accessibilityLiveRegion="polite"
+        android:textSize="14sp"
+        android:visibility="gone" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/radioCancelLogos"
+        style="@style/SettingButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/cancel"
+        android:visibility="gone" />
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/radioClearCache"
         style="@style/SettingButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="@string/radio_clear_cache" />
-    <com.google.android.material.materialswitch.MaterialSwitch
-        android:id="@+id/radioShowStatus"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:minHeight="48dp"
-        android:text="@string/radio_show_status"
-        android:textSize="16sp" />
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:padding="8dp"
-        android:text="@string/radio_status_help"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="14sp" />
     <com.google.android.material.button.MaterialButton
         android:id="@id/radioImport"
         style="@style/SettingButton"
@@ -122,19 +151,6 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="@string/radio_export" />
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:padding="8dp"
-        android:text="@string/radio_export_help"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="14sp" />
-    <com.google.android.material.button.MaterialButton
-        android:id="@id/radioReset"
-        style="@style/SettingButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="@string/radio_reset" />
     <com.google.android.material.button.MaterialButton
         android:id="@id/radioFormat"
         style="@style/SettingButton"
@@ -142,11 +158,11 @@
         android:layout_height="wrap_content"
         android:text="@string/radio_list_format" />
     <com.google.android.material.button.MaterialButton
-        android:id="@id/radioReturnMusic"
+        android:id="@id/radioReset"
         style="@style/SettingButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/radio_return_music" />
+        android:text="@string/radio_reset" />
     <com.google.android.material.button.MaterialButton
         android:id="@id/radioAbout"
         style="@style/SettingButton"

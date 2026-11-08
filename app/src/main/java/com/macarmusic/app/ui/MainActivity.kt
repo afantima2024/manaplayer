@@ -8,12 +8,15 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.StateListDrawable
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -23,6 +26,7 @@ import android.provider.DocumentsContract
 import android.text.InputFilter
 import android.util.Log
 import android.view.View
+import android.view.KeyEvent
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.LinearLayout
@@ -49,6 +53,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.children
 import androidx.core.view.isVisible
+import androidx.core.view.doOnLayout
 import androidx.core.view.doOnNextLayout
 import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.Lifecycle
@@ -57,6 +62,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.session.SessionCommand
@@ -86,8 +92,6 @@ import com.macarmusic.app.lyrics.CachedLyric
 import com.macarmusic.app.lyrics.LyricTiming
 import com.macarmusic.app.lyrics.LyricChoices
 import com.macarmusic.app.lyrics.LyricDownloadState
-import com.macarmusic.app.lyrics.OnlineLyricsClient
-import com.macarmusic.app.lyrics.LyricSearchRoute
 import com.macarmusic.app.model.AudioFiles
 import com.macarmusic.app.model.BlockOutline
 import com.macarmusic.app.model.BlockStyle
@@ -133,6 +137,9 @@ import com.macarmusic.app.radio.RadioProgram
 import com.macarmusic.app.radio.RadioImportMode
 import androidx.recyclerview.widget.ConcatAdapter
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -155,7 +162,19 @@ import java.io.File
 @androidx.annotation.OptIn(UnstableApi::class)
 class MainActivity : AppCompatActivity() {
     private val model: MusicViewModel by viewModels()
+    private lateinit var contentScope: CoroutineScope
+    private var contentJob: Job? = null
+    private var contentRebindJob: Job? = null
+    private var contentGeneration = 0
+    private var contentConfiguration = Configuration()
+    private val contentCacheResets = mutableListOf<() -> Unit>()
+    private fun <T> contentCache(create: () -> T): kotlin.properties.ReadOnlyProperty<MainActivity, T> {
+        var cached = lazy(create)
+        contentCacheResets += { cached = lazy(create) }
+        return kotlin.properties.ReadOnlyProperty { _, _ -> cached.value }
+    }
     private lateinit var binding: ActivityMainBinding
+    private lateinit var focusMemory: PlayerFocusMemory
     private lateinit var now: ViewNowPlayingBinding
     private lateinit var settings: ViewSettingsBinding
     private lateinit var settingsButtons: BlockButtonStyler
@@ -166,10 +185,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var radioPanel: ListPanel
     private lateinit var radioAdapter: RadioButtonAdapter
     private lateinit var radioChannelAdapter: RadioChannelAdapter
+    private var radioStickyHeader: RadioStickyHeader? = null
+    private var radioGroupsJob: Job? = null
     private var radioQuickGrid: RecyclerView? = null
     private var radioQuickAdapter: RadioButtonAdapter? = null
     private var radioQuickEmpty: TextView? = null
     private var radioImportDialog: PlayerDialog? = null
+    private var radioSubscriptionsDialog: RadioSubscriptionsDialog? = null
     private var shownRadioImport: PreparedRadioImport? = null
     private var radioSourceCommand: ListenableFuture<SessionResult>? = null
     private var restoringMusic = false
@@ -199,7 +221,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audio: AudioManager
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller: MediaController? = null
+    private var modeSwitchCommand: ListenableFuture<SessionResult>? = null
     private val controllerConnected = MutableStateFlow(false)
+    private val radioWarmupReady = MutableStateFlow(false)
     private val progressPolling = MutableStateFlow(false)
     private val volumePolling = MutableStateFlow(false)
     private val radioStatusPolling = MutableStateFlow(false)
@@ -218,7 +242,7 @@ class MainActivity : AppCompatActivity() {
     private var backupDialog: PlayerDialog? = null
     private var shownBackup: PreparedBackup? = null
     private var artworkJob: Job? = null
-    private val slideshow by lazy {
+    private val slideshow by contentCache {
         BackgroundSlideshow(binding.backgroundImage, binding.backgroundIncoming,
             model.app.backgrounds, model::backgroundIndex) { error ->
             model.app.report(getString(R.string.background_failed,
@@ -227,47 +251,66 @@ class MainActivity : AppCompatActivity() {
     }
     private var screenAnimator: Animator? = null
     private var visibleScreen: View? = null
+    private var screenLoadJob: Job? = null
+    private var pendingScreenId: Int? = null
+    private val loadingScreen by contentCache {
+        TextView(this).apply {
+            id = R.id.screenLoading
+            gravity = android.view.Gravity.CENTER
+            textSize = 18f
+            setPadding(dp(20), dp(16), dp(20), dp(16))
+            setTextColor(AccentTheme.color(this, com.google.android.material.R.attr.colorOnSurface))
+            isVisible = false
+            binding.screenContainer.addView(this, FrameLayout.LayoutParams(-1, -1))
+            focusMemory.scope(this, "screen:loading")
+            ViewCompat.setAccessibilityLiveRegion(this, ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE)
+        }
+    }
     private var shownSettingsCategory: SettingsCategory? = null
     private var restoringSettingsScroll = false
-    private var appliedControlBlocks: Pair<Boolean, BlockOutline>? = null
+    private var appliedControlBlocks: Triple<Boolean, BlockOutline, Int?>? = null
     private var appliedNavigationPosition: NavigationPosition? = null
     private var appliedAccent = ThemeAccent.DEFAULT
     private var appliedCustomAccent: Int? = null
+    private var appliedAppearance: Pair<com.macarmusic.app.model.AppLogo, com.macarmusic.app.model.ButtonIconStyle>? = null
     private val compactChrome get() = resources.configuration.screenHeightDp < 480
-    private val controlBlockContainers by lazy {
+    private val controlBlockContainers by contentCache {
         listOf<View>(now.controls.trackInformation, now.controls.spectrum, now.controls.seekBlock,
             now.controls.volumeBlock, binding.miniProgress)
     }
-    private val controlBlockButtons by lazy {
+    private val controlBlockButtons by contentCache {
         listOf(now.controls.shuffle, now.controls.previous, now.controls.rewind, now.controls.play,
             now.controls.forward, now.controls.next, now.controls.repeat, now.controls.volumeMute,
             binding.miniPlay, binding.miniNext, now.cover.lyricVersions, now.cover.nextLyrics, now.cover.lyricsTiming)
     }
-    private val controlBlockOverlays by lazy {
+    private val controlBlockOverlays by contentCache {
         listOfNotNull<View>(now.cover.root, binding.miniPlayer.takeUnless { compactChrome },
-            now.controls.favorite, now.controls.details)
+            now.controls.favorite, now.controls.switchPlaybackMode, now.controls.details)
     }
-    private val originalControlBackgrounds by lazy {
+    private val originalControlBackgrounds by contentCache {
         (controlBlockContainers + controlBlockButtons).associateWith { it.background }
     }
-    private val originalControlPadding by lazy {
+    private val originalControlPadding by contentCache {
         (controlBlockContainers + now.cover.root + listOfNotNull(binding.miniPlayer.takeUnless { compactChrome })).associateWith {
             android.graphics.Rect(it.paddingStart, it.paddingTop, it.paddingEnd, it.paddingBottom)
         }
     }
-    private val originalActionShapes by lazy {
-        listOf(now.controls.favorite, now.controls.details).associateWith { it.shapeAppearanceModel }
+    private val originalActionShapes by contentCache {
+        listOf(now.controls.favorite, now.controls.switchPlaybackMode, now.controls.details).associateWith { it.shapeAppearanceModel }
     }
-    private val originalActionStrokes by lazy {
-        listOf(now.controls.favorite, now.controls.details).associateWith { it.strokeWidth }
+    private val originalActionStrokes by contentCache {
+        listOf(now.controls.favorite, now.controls.switchPlaybackMode, now.controls.details).associateWith { it.strokeWidth }
     }
-    private val favoriteTextSize by lazy { now.controls.favorite.textSize }
-    private val favoriteIconSize by lazy { now.controls.favorite.iconSize }
+    private val originalModeColors by contentCache {
+        now.controls.switchPlaybackMode.let { it.backgroundTintList to it.textColors }
+    }
+    private val favoriteTextSize by contentCache { now.controls.favorite.textSize }
+    private val favoriteIconSize by contentCache { now.controls.favorite.iconSize }
     private var customSystemBars = false
-    private val barElevations by lazy {
+    private val barElevations by contentCache {
         listOf(binding.toolbar, binding.navigation, binding.miniPlayer).associateWith { it.elevation }
     }
-    private val navigationIndicator by lazy { binding.navigation.isItemActiveIndicatorEnabled }
+    private val navigationIndicator by contentCache { binding.navigation.isItemActiveIndicatorEnabled }
     private val lyricsAdapter = LyricsAdapter()
     private lateinit var lyricScrolling: LyricScrollController
     private var renderedLyricTrackId: String? = null
@@ -275,11 +318,11 @@ class MainActivity : AppCompatActivity() {
     private var artworkWarning: String? = null
     private var draggingSeek: SeekBar? = null
     private var draggingTrackId: String? = null
-    private var shownNotice: Notice? = null
     private var playlistTrackRows = emptyList<Track>()
     private var queueTracks = emptyList<Track>()
     private var queueSignature: List<Pair<String, String>> = emptyList()
     private var queueScrollPending = false
+    private var stoppedSinceResume = false
 
     private val pickFolder = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
@@ -333,6 +376,14 @@ class MainActivity : AppCompatActivity() {
             else model.reconnectTrack(id, uri, result.data?.flags ?: 0)
         }
     }
+    private val reselectFolder = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val source = model.consumeFolderRecovery()
+        if (source != null && result.resultCode == Activity.RESULT_OK) {
+            val uri = result.data?.data
+            if (uri == null) model.app.report(getString(R.string.picker_no_document))
+            else model.reselectFolder(source, uri, result.data?.flags ?: 0)
+        }
+    }
 
     private fun handlePickedFile(result: ActivityResult) {
         if (result.resultCode == Activity.RESULT_OK) {
@@ -376,8 +427,41 @@ class MainActivity : AppCompatActivity() {
         appliedAccent = (application as MaCarMusicApp).displaySettings.options.value.themeAccent
         appliedCustomAccent = (application as MaCarMusicApp).displaySettings.options.value.customAccentColor
         AccentTheme.apply(this, appliedAccent)
+        model.startupLaunch.onCreate(
+            normalLaunch = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0 &&
+                !intent.getBooleanExtra(com.macarmusic.app.playback.StartupPlayback.OPEN_PLAYER_ONLY, false) &&
+                intent.action in setOf(null, Intent.ACTION_MAIN, "android.intent.action.MUSIC_PLAYER"),
+            enabled = model.app.displaySettings.options.value.autoPlayOnLaunch,
+        )
+        audio = getSystemService(AudioManager::class.java)
+        volumeControlStream = AudioManager.STREAM_MUSIC
+        onBackPressedDispatcher.addCallback(this) {
+            when {
+                model.selectedScreen.value == R.id.action_settings -> model.closeSettings()
+                model.selectedScreen.value == R.id.nav_library && model.librarySelecting.value -> model.selectLibrary(false)
+                model.selectedScreen.value == R.id.nav_library && model.libraryUp() -> Unit
+                model.selectedScreen.value == R.id.nav_folders && model.browserUp() -> Unit
+                model.selectedScreen.value == R.id.nav_playlists && model.selectedPlaylist.value != null -> model.playlist(null)
+                model.selectedScreen.value != R.id.nav_player -> model.screen(R.id.nav_player)
+                else -> finish()
+            }
+        }
+        bindContent()
+        if (savedInstanceState == null && intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0) {
+            handlePlaybackIntent(intent)
+        }
+    }
+
+    private fun bindContent(builtScreens: Set<Int> = emptySet()) {
+        if (::focusMemory.isInitialized) focusMemory.dispose()
+        contentJob = SupervisorJob(lifecycleScope.coroutineContext[Job])
+        contentScope = CoroutineScope(lifecycleScope.coroutineContext + requireNotNull(contentJob))
+        contentConfiguration = Configuration(resources.configuration)
+        screenLoadJob = null
+        pendingScreenId = null
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        focusMemory = PlayerFocusMemory(binding.root, model.focusPositions)
         configureCompactChrome()
         val display = model.app.displaySettings.options.value
         configureSystemBars(display.customTheme && display.imageVersion > 0)
@@ -387,9 +471,15 @@ class MainActivity : AppCompatActivity() {
             view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, keyboard.bottom))
             WindowInsetsCompat.CONSUMED
         }
-        audio = getSystemService(AudioManager::class.java)
-        volumeControlStream = AudioManager.STREAM_MUSIC
+        ViewCompat.requestApplyInsets(binding.content)
         buildPlayerScreen()
+        focusMemory.scope(now.root, "screen:${R.id.nav_player}")
+        if (R.id.nav_library in builtScreens) buildLibrary()
+        if (R.id.nav_folders in builtScreens) buildFolders()
+        if (R.id.nav_queue in builtScreens) buildQueue()
+        if (R.id.nav_playlists in builtScreens) buildPlaylists()
+        if (R.id.nav_radio in builtScreens) buildRadio()
+        if (R.id.action_settings in builtScreens) buildSettings()
         AccentTheme.tintControls(binding.root)
         configurePlaybackControls()
         binding.toolbar.setOnMenuItemClickListener { item ->
@@ -424,40 +514,98 @@ class MainActivity : AppCompatActivity() {
         applyNavigationVisibility()
         binding.miniInfo.setOnClickListener { model.screen(R.id.nav_player) }
         binding.miniArtwork.setOnClickListener { model.screen(R.id.nav_player) }
-        binding.dismissNotice.setOnClickListener { shownNotice?.let { model.app.dismissNotice(it.id) } }
-        onBackPressedDispatcher.addCallback(this) {
-            when {
-                model.selectedScreen.value == R.id.action_settings -> model.closeSettings()
-                model.selectedScreen.value == R.id.nav_library && model.librarySelecting.value -> model.selectLibrary(false)
-                model.selectedScreen.value == R.id.nav_library && model.libraryUp() -> Unit
-                model.selectedScreen.value == R.id.nav_folders && model.browserUp() -> Unit
-                model.selectedScreen.value == R.id.nav_playlists && model.selectedPlaylist.value != null -> model.playlist(null)
-                model.selectedScreen.value != R.id.nav_player -> model.screen(R.id.nav_player)
-                else -> finish()
-            }
-        }
+        binding.recoveryStatus.bindActions(::retryRecovery, ::reselectRecovery)
         configureNavigation(display.navigationPosition)
         renderBackground(display)
         showScreen(model.selectedScreen.value)
         observeState()
-        if (savedInstanceState == null && intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0) {
-            handlePlaybackIntent(intent)
-        }
-        lifecycleScope.launch {
+        contentScope.launch {
             binding.root.awaitDraw()
             firstFrame.complete(Unit)
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Android 13 can include screen-layout qualifiers in a locale-only change.
+        val handled = ActivityInfo.CONFIG_LOCALE or ActivityInfo.CONFIG_LAYOUT_DIRECTION or ActivityInfo.CONFIG_SCREEN_LAYOUT
+        if (!::binding.isInitialized || contentConfiguration.diff(resources.configuration) and handled == 0) return
+        contentRebindJob?.cancel()
+        contentRebindJob = lifecycleScope.launch {
+            contentGeneration++
+            focusMemory.pause()
+            contentJob?.cancelAndJoin()
+            val builtScreens = buildSet {
+                if (::libraryPanel.isInitialized) add(R.id.nav_library)
+                if (::folderPanel.isInitialized) add(R.id.nav_folders)
+                if (::queuePanel.isInitialized) add(R.id.nav_queue)
+                if (::playlistPanel.isInitialized) add(R.id.nav_playlists)
+                if (::radioPanel.isInitialized) add(R.id.nav_radio)
+                if (::settings.isInitialized) add(R.id.action_settings)
+            }
+            dismissContentDialogs()
+            screenAnimator?.cancel()
+            screenAnimator = null
+            lyricScrolling.stop()
+            now.cover.lyricsList.adapter = null
+            if (::radioPanel.isInitialized) radioPanel.list.adapter = null
+            radioQuickGrid?.adapter = null
+            radioQuickGrid = null
+            radioQuickAdapter = null
+            radioQuickEmpty = null
+            radioStickyHeader = null
+            radioGroupsJob = null
+            val background = binding.backgroundImage.drawable
+            val backgroundVisible = binding.backgroundImage.isVisible
+            val artwork = now.cover.artwork.drawable
+            val miniArtwork = binding.miniArtwork.drawable
+            val navigationArtwork = binding.navigation.artwork.drawable
+            val artworkTint = binding.miniArtwork.imageTintList
+            if (artworkJob?.isCancelled == true) artworkUri = null
+            artworkJob = null
+            visibleScreen = null
+            shownSettingsCategory = null
+            appliedControlBlocks = null
+            appliedNavigationPosition = null
+            appliedAppearance = null
+            renderedLyricTrackId = null
+            draggingSeek = null
+            draggingTrackId = null
+            queueSignature = emptyList()
+            contentCacheResets.forEach { it() }
+            // Replace the localized tree without destroying the window or reconnecting the player.
+            bindContent(builtScreens)
+            binding.backgroundImage.setImageDrawable(background)
+            binding.backgroundImage.isVisible = backgroundVisible
+            now.cover.artwork.setImageDrawable(artwork)
+            binding.miniArtwork.setImageDrawable(miniArtwork)
+            binding.navigation.artwork.setImageDrawable(navigationArtwork)
+            listOf(now.cover.artwork, binding.miniArtwork, binding.navigation.artwork)
+                .forEach { it.imageTintList = artworkTint }
+            model.app.applicationScope.launch(Dispatchers.Main.immediate) { model.app.homeWidgets.refresh() }
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (stoppedSinceResume) {
+            stoppedSinceResume = false
+            model.app.startupPlayback.launch(
+                normalLaunch = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0 &&
+                    !intent.getBooleanExtra(com.macarmusic.app.playback.StartupPlayback.OPEN_PLAYER_ONLY, false) &&
+                    intent.action in setOf(null, Intent.ACTION_MAIN, "android.intent.action.MUSIC_PLAYER"),
+                enabled = model.app.displaySettings.options.value.autoPlayOnLaunch,
+            )
+            if (controller != null && model.app.startupPlayback.pending) radioCommand(RadioCommands.startup)
+        }
         handlePlaybackIntent(intent)
     }
 
     private fun handlePlaybackIntent(incoming: Intent) {
         when (incoming.action) {
             Intent.ACTION_VIEW -> {
+                model.app.startupPlayback.cancel()
                 val uri = incoming.data
                 // A configuration change or a later launch from Recents must not replay this request.
                 setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
@@ -485,16 +633,22 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPostResume() {
         super.onPostResume()
+        stoppedSinceResume = false
         val display = model.app.displaySettings.options.value
         configureSystemBars(display.customTheme && display.imageVersion > 0)
     }
 
     override fun onStop() {
+        if (!isChangingConfigurations) {
+            stoppedSinceResume = true
+            model.app.startupPlayback.cancel()
+        }
         screenAnimator?.cancel()
         visibleScreen?.let(ViewTransitions::reset)
         if (optionalContentStarted) model.app.spectrum.setVisible(this, false)
         now.controls.spectrum.setPlaybackActive(false)
         model.setLyricsActive(false)
+        binding.root.keepScreenOn = false
         if (artworkJob?.isActive == true) {
             artworkJob?.cancel()
             artworkUri = null
@@ -503,29 +657,63 @@ class MainActivity : AppCompatActivity() {
         draggingSeek = null
         draggingTrackId = null
         restoringMusic = false
+        modeSwitchCommand = null
         controller?.removeListener(playerListener)
         controller = null
         controllerConnected.value = false
+        radioWarmupReady.value = false
         controllerFuture?.let(MediaController::releaseFuture)
         controllerFuture = null
         super.onStop()
     }
 
     override fun onDestroy() {
-        lyricVersionsDialog?.dismiss()
-        onlineLyricsDialog?.dismiss()
-        lyricDownloadsDialog?.dismiss()
-        lyricTimingDialog?.dismiss()
-        deviceMusicDialog?.dismiss()
-        deviceMusicDialog = null
-        backupDialog?.dismiss()
-        backupDialog = null
-        radioImportDialog?.dismiss()
-        radioImportDialog = null
+        if (::focusMemory.isInitialized) focusMemory.dispose()
+        dismissContentDialogs()
         artworkJob?.cancel()
         screenAnimator?.cancel()
         if (optionalContentStarted) model.app.spectrum.setVisible(this, false)
         super.onDestroy()
+    }
+
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (::focusMemory.isInitialized) focusMemory.touch(event)
+        return super.dispatchTouchEvent(event)
+    }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (::focusMemory.isInitialized && focusMemory.key(event)) return true
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && ::focusMemory.isInitialized) focusMemory.windowFocused()
+    }
+
+    private fun dismissContentDialogs() {
+        lyricVersionsDialog?.dismiss()
+        lyricVersionsDialog = null
+        onlineLyricsDialog?.dismiss()
+        onlineLyricsDialog = null
+        lyricDownloadsDialog?.dismiss()
+        lyricDownloadsDialog = null
+        lyricTimingDialog?.dismiss()
+        lyricTimingDialog = null
+        timingTrackId = null
+        timingDocument = null
+        deviceMusicDialog?.dismiss()
+        deviceMusicDialog = null
+        renderedDeviceMusic = null
+        backupDialog?.dismiss()
+        backupDialog = null
+        shownBackup = null
+        radioImportDialog?.dismiss()
+        radioImportDialog = null
+        shownRadioImport = null
+        radioSubscriptionsDialog?.dismiss()
+        radioSubscriptionsDialog = null
+        PlayerDialog.dismissOwned(this)
     }
 
     private fun connectController() {
@@ -549,6 +737,7 @@ class MainActivity : AppCompatActivity() {
             try {
                 controller = future.get().also { it.addListener(playerListener) }
                 controllerConnected.value = true
+                if (model.app.startupPlayback.pending) radioCommand(RadioCommands.startup)
                 updatePlayer()
                 updateQueue()
                 consumePlayRequest()
@@ -575,12 +764,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun observeState() {
-        lifecycleScope.launch {
+        val generation = contentGeneration
+        contentScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                firstFrame.await()
+                radioWarmupReady.first { it }
+                model.app.warmRadioCatalog()
+                withContext(Dispatchers.IO) { model.app.radioCatalog.awaitReady() }
+                model.radioQuickPage.collect { renderRadioQuickStations(prepare = true) }
+            }
+        }
+        contentScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                firstFrame.await()
+                model.app.playbackReady.first { it }
+                model.refreshRadioWhileInUse()
+            }
+        }
+        contentScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { model.selectedScreen.collectLatest { screen ->
                     showScreen(screen)
                     if (screen == R.id.nav_library) model.libraryPage.collect { renderLibrary() }
-                    else if (screen == R.id.nav_radio && model.app.radio.options.value.enabled)
+                    else if (screen == R.id.nav_radio && model.app.radio.options.value.showPanel)
                         combine(model.radioPage, model.radioChannels) { _, _ -> Unit }.collect { renderRadio() }
                 } }
                 launch { model.settingsCategory.collect(::showSettingsCategory) }
@@ -596,14 +802,22 @@ class MainActivity : AppCompatActivity() {
                     updateQueue(force = true)
                 } }
                 launch { model.repository.loaded.collect { renderLibrary(); renderFolders(); renderSettings() } }
-                launch { model.browser.collect { renderFolders() } }
-                launch { model.scan.collect { renderFolders(); renderSettings() } }
+                launch { model.browser.collect { renderFolders(); renderRecovery() } }
+                launch { model.scan.collect { renderFolders(); renderSettings(); renderRecovery() } }
+                launch { model.recoveringSource.collect { renderRecovery() } }
                 launch { model.metadataProgress.collect { renderFolders(); renderSettings() } }
                 launch { model.selectedPlaylist.collect { renderPlaylists() } }
                 launch { model.app.notice.collect(::renderNotice) }
+                launch { model.app.playbackProblem.collect { renderRecovery() } }
                 launch { model.playRequest.collect { consumePlayRequest() } }
                 launch { model.app.playbackSettings.options.collect { renderSettings(); updatePlayer() } }
                 launch { model.app.playbackReady.collect { updatePlayer() } }
+                launch { model.app.radioPreparing.collect { renderLyrics(model.lyrics.value); updatePlayer() } }
+                launch {
+                    combine(model.app.displaySettings.options.map { it.keepScreenOn }.distinctUntilChanged(),
+                        model.app.playbackActive) { enabled, active -> enabled && active }
+                        .collect { binding.root.keepScreenOn = it }
+                }
                 launch { model.app.radio.options.collect {
                     applyNavigationVisibility()
                     renderSettings()
@@ -612,17 +826,32 @@ class MainActivity : AppCompatActivity() {
                 } }
                 launch { model.app.radio.savedMusic.collect { updateQueue(force = true) } }
                 launch { model.radioImportBusy.collect { renderRadio(); renderSettings() } }
+                launch { model.subscriptionProgress.collect { renderSettings() } }
+                launch { model.logoProgress.collect { renderSettings() } }
                 launch { model.preparedRadioImport.collect(::renderRadioImport) }
+                launch { model.radioSubscriptionsOpen.collectLatest { open ->
+                    if (!open) {
+                        radioSubscriptionsDialog?.dismiss()
+                        radioSubscriptionsDialog = null
+                    } else {
+                        val dialog = radioSubscriptionsDialog ?: RadioSubscriptionsDialog(this@MainActivity, model) {
+                            if (!isChangingConfigurations && generation == contentGeneration) model.closeRadioSubscriptions()
+                        }.also { radioSubscriptionsDialog = it; it.show() }
+                        combine(model.app.radioCatalog.state, model.subscriptionProgress, model.radioImportBusy,
+                            model.backupBusy) { catalog, progress, editing, backup -> Triple(catalog, progress, editing || backup) }
+                            .collect { (catalog, progress, busy) -> dialog.update(catalog, progress, busy) }
+                    }
+                } }
                 launch {
-                    combine(model.selectedScreen, model.app.radio.options) { screen, options ->
-                        options.enabled && (options.active || screen == R.id.nav_radio)
+                    combine(model.selectedScreen, model.app.radio.options, model.app.radioPreparing) { screen, options, preparing ->
+                        preparing || options.active || options.showPanel && screen == R.id.nav_radio
                     }.distinctUntilChanged().collectLatest { needed ->
                         if (needed) model.app.radioCatalog.state.collect { renderRadio(); updatePlayer() }
                     }
                 }
                 launch {
                     combine(model.selectedScreen, model.app.radio.options) { screen, options ->
-                        options.enabled && (options.active || screen == R.id.nav_radio)
+                        options.active || options.showPanel && screen == R.id.nav_radio
                     }.distinctUntilChanged().collectLatest { visible ->
                         if (visible) model.app.radioLogos.version.collect { version ->
                             if (::radioAdapter.isInitialized) radioAdapter.logosChanged(version)
@@ -632,8 +861,8 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 launch {
-                    combine(model.selectedScreen, model.app.radio.options) { screen, options ->
-                        options.enabled && options.active && screen == R.id.nav_player
+                    combine(model.selectedScreen, model.app.radio.options, model.app.radioPreparing) { screen, options, preparing ->
+                        (preparing || options.active) && screen == R.id.nav_player
                     }.distinctUntilChanged().collectLatest { visible ->
                         if (visible) model.radioQuickPage.collect { renderRadioQuickStations() }
                     }
@@ -643,10 +872,13 @@ class MainActivity : AppCompatActivity() {
                         recreate()
                         return@collect
                     }
+                    val previousPrimaryColor = appliedControlBlocks?.third
                     renderSettings()
+                    renderAppearance(it)
                     configureNavigation(it.navigationPosition)
                     applyNavigationVisibility()
                     renderBackground(it)
+                    if (previousPrimaryColor != appliedControlBlocks?.third) updatePlayer()
                     renderLyrics(model.lyrics.value)
                     model.lyricChoices.value?.let { lyricVersionsDialog?.update(it) }
                     updateProgress()
@@ -666,7 +898,7 @@ class MainActivity : AppCompatActivity() {
                 launch { model.importingBackground.collect { renderSettings() } }
                 launch { model.lyricCacheBusy.collect { renderLyricCache() } }
                 launch { model.deviceMusic.collect(::renderDeviceMusicPicker) }
-                launch { model.backupBusy.collect { renderSettings(); renderFolders(); renderRadio() } }
+                launch { model.backupBusy.collect { renderSettings(); renderFolders(); renderRadio(); renderRecovery() } }
                 launch { model.preparedBackup.collect(::renderBackupPreview) }
                 launch { model.sharedBackup.collect { uri ->
                     if (uri != null) {
@@ -690,8 +922,7 @@ class MainActivity : AppCompatActivity() {
                 launch { model.backupRestored.collect { result ->
                     if (result != null) {
                         model.consumedBackup(result)
-                        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(result.language))
-                        model.app.homeWidgets.refresh()
+                        changeLanguage(result.language)
                         if (result.positionError != null) model.app.report(result.positionError)
                         else model.app.inform(model.app.text(R.string.backup_restored, result.unresolved))
                     }
@@ -734,6 +965,7 @@ class MainActivity : AppCompatActivity() {
                         reportFullyDrawn()
                     }
                     optionalContentStarted = true
+                    if (model.app.startupPlayback.pending) radioCommand(RadioCommands.startup)
                     model.setLyricsActive(true)
                     updatePlayer()
                     showParkedNotice()
@@ -794,6 +1026,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun screenBuilt(id: Int): Boolean = when (id) {
+        R.id.nav_library -> ::libraryPanel.isInitialized
+        R.id.nav_folders -> ::folderPanel.isInitialized
+        R.id.nav_queue -> ::queuePanel.isInitialized
+        R.id.nav_playlists -> ::playlistPanel.isInitialized
+        R.id.nav_radio -> ::radioPanel.isInitialized
+        R.id.action_settings -> ::settings.isInitialized
+        else -> true
+    }
+
+    private fun screenLabel(id: Int): Int = when (id) {
+        R.id.nav_library -> R.string.library
+        R.id.nav_folders -> R.string.folders
+        R.id.nav_queue -> R.string.queue
+        R.id.nav_playlists -> R.string.playlists
+        R.id.nav_radio -> R.string.radio
+        R.id.action_settings -> R.string.settings
+        else -> R.string.app_name
+    }
+
     private fun screenView(id: Int): View {
         val view = when (id) {
             R.id.nav_library -> {
@@ -832,6 +1084,7 @@ class MainActivity : AppCompatActivity() {
             view.setBackgroundColor(Color.TRANSPARENT)
             binding.screenContainer.addView(view)
         }
+        if (view.getTag(R.id.playerFocusScope) == null) focusMemory.scope(view, "screen:$id")
         return view
     }
 
@@ -842,6 +1095,10 @@ class MainActivity : AppCompatActivity() {
             hint = getString(R.string.search_hint)
             boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
             endIconMode = TextInputLayout.END_ICON_CLEAR_TEXT
+            setEndIconDrawable(PlayerIcons.drawable(context, R.drawable.ic_close))
+            setEndIconTintList(null)
+            endIconMinSize = dp(48)
+            setEndIconScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE)
             setPadding(dp(16), 0, dp(16), 0)
         }
         val search = TextInputEditText(searchLayout.context).apply {
@@ -912,12 +1169,24 @@ class MainActivity : AppCompatActivity() {
             onSelect = { row ->
                 if (model.libraryPage.value.showingGroups) model.libraryGroup(row.key) else model.selectTrack(row.key)
             },
+            onNavigate = { row, key ->
+                if (key == KeyEvent.KEYCODE_DPAD_LEFT) model.libraryUp()
+                else if (model.libraryPage.value.showingGroups && !model.librarySelecting.value) {
+                    model.libraryGroup(row.key)
+                    true
+                } else false
+            },
         )
         libraryPanel.list.adapter = libraryAdapter
+        libraryPanel.list.setOnKeyListener { _, key, event ->
+            key == KeyEvent.KEYCODE_DPAD_LEFT && event.action == KeyEvent.ACTION_DOWN && event.hasNoModifiers() &&
+                (event.repeatCount > 0 || model.libraryUp())
+        }
     }
 
     private fun buildFolders() {
         folderPanel = ListPanel(this, compactChrome)
+        folderPanel.list.id = R.id.folderList
         folderUp = folderPanel.action(R.string.up_folder) { model.browserUp() }
         folderPlay = folderPanel.action(R.string.play_folder) {
             if (model.browser.value.path.isEmpty()) model.playSelectedFolders() else playCurrentFolder()
@@ -955,22 +1224,36 @@ class MainActivity : AppCompatActivity() {
         )
         folderAdapter = MusicRowAdapter(
             compact = compactChrome,
-            onClick = { row ->
-                val state = model.browser.value
-                if (state.path.isEmpty()) model.library.value.sources.firstOrNull { it.uri == row.key }?.let {
-                    if (it.needsReconnect) reconnectSourceDialog(it) else model.openSource(it)
-                }
-                else state.entries.firstOrNull { it.uri == row.key }?.let {
-                    if (it.isDirectory) model.openDirectory(it) else model.playBrowserFile(it)
-                }
-            },
+            onClick = ::openBrowserRow,
             onMore = { row ->
                 val state = model.browser.value
                 if (state.path.isEmpty()) model.library.value.sources.firstOrNull { it.uri == row.key }?.let(::sourceMenu)
                 else state.entries.firstOrNull { it.uri == row.key }?.let(::documentMenu)
             },
+            onNavigate = { row, key ->
+                if (key == KeyEvent.KEYCODE_DPAD_LEFT) model.browserUp()
+                else if (model.browser.value.path.isEmpty() ||
+                    model.browser.value.entries.any { it.uri == row.key && it.isDirectory }) {
+                    openBrowserRow(row)
+                    true
+                } else false
+            },
         )
         folderPanel.list.adapter = folderAdapter
+        folderPanel.list.setOnKeyListener { _, key, event ->
+            key == KeyEvent.KEYCODE_DPAD_LEFT && event.action == KeyEvent.ACTION_DOWN && event.hasNoModifiers() &&
+                (event.repeatCount > 0 || model.browserUp())
+        }
+    }
+
+    private fun openBrowserRow(row: MusicRow) {
+        val state = model.browser.value
+        if (state.path.isEmpty()) model.library.value.sources.firstOrNull { it.uri == row.key }?.let {
+            if (it.needsReconnect) reconnectSourceDialog(it) else model.openSource(it)
+        }
+        else state.entries.firstOrNull { it.uri == row.key }?.let {
+            if (it.isDirectory) model.openDirectory(it) else model.playBrowserFile(it)
+        }
     }
 
     private fun buildQueue() {
@@ -1013,30 +1296,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildRadio() {
-        radioPanel = ListPanel(this, compactChrome)
+        radioPanel = ListPanel(this, compactChrome, RadioPinList(this))
         radioPanel.list.id = R.id.radioList
-        radioAdapter = RadioButtonAdapter(lifecycleScope, ::playRadio, ::radioOptions)
-        radioChannelAdapter = RadioChannelAdapter(::playRadio, ::radioOptions, model::toggleRadioGroup)
+        radioAdapter = RadioButtonAdapter(contentScope, ::playRadio, ::radioOptions, model::reorderRadioPins)
+        radioChannelAdapter = RadioChannelAdapter(::playRadio, { radioOptions(it)?.show() },
+            model::toggleRadioGroup, { manageRadioGroups(it) })
         RadioButtonAdapter.configureGrid(radioPanel.list, { radioAdapter.itemCount }) {
             radioChannelAdapter.currentList.getOrNull(it)?.station != null
         }
         val searchLayout = TextInputLayout(this).apply {
-            hint = getString(R.string.radio_search)
+            isHintEnabled = false
             boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
             endIconMode = TextInputLayout.END_ICON_CLEAR_TEXT
         }
         searchLayout.addView(TextInputEditText(searchLayout.context).apply {
             id = R.id.radioSearch
+            hint = getString(R.string.radio_search)
             setSingleLine()
             setText(model.radioQuery.value)
-            minHeight = dp(48)
+            minHeight = dp(56)
             doAfterTextChanged { model.radioQuery(it?.toString().orEmpty()) }
         })
+        searchLayout.findViewById<android.widget.ImageButton>(com.google.android.material.R.id.text_input_end_icon).apply {
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            minimumWidth = dp(48)
+            minimumHeight = dp(48)
+        }
         val configure = radioPanel.action(R.string.radio_settings) {
             model.settingsCategory(SettingsCategory.RADIO)
             model.openSettings()
         }.apply { id = R.id.radioSettings }
         if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            configure.insetTop = 0
+            configure.insetBottom = 0
             radioPanel.top.addView(HorizontalScrollView(this).apply {
                 id = R.id.radioControls
                 isFillViewport = true
@@ -1047,8 +1339,14 @@ class MainActivity : AppCompatActivity() {
                     setPadding(dp(8), 0, dp(8), 0)
                     addView(searchLayout, LinearLayout.LayoutParams(dp(200), LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                         marginEnd = dp(8)
+                        topMargin = dp(4)
+                        bottomMargin = dp(4)
                     })
-                    addView(configure, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(56)))
+                    addView(configure, LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply {
+                        topMargin = dp(4)
+                        bottomMargin = dp(4)
+                    })
                 })
             })
         } else {
@@ -1057,17 +1355,61 @@ class MainActivity : AppCompatActivity() {
             radioPanel.actionRow(configure)
         }
         radioPanel.list.adapter = ConcatAdapter(radioAdapter, radioChannelAdapter)
+        radioStickyHeader = RadioStickyHeader(radioPanel.list, radioChannelAdapter, { radioAdapter.itemCount },
+            model::toggleRadioGroup, { manageRadioGroups(it) }).also {
+            val display = model.app.displaySettings.options.value
+            it.configureBlocks(display.controlBlocks, display.blockOutline)
+        }
+    }
+
+    private fun manageRadioGroups(initial: com.macarmusic.app.radio.RadioGroup? = null, hiddenOnly: Boolean = false) {
+        if (radioGroupsJob?.isActive == true) return
+        radioGroupsJob = RadioGroupsDialog.show(this, contentScope, model, initial, hiddenOnly)
     }
 
     private fun configureRadioSettings() {
         val panel = settings.settingsRadioPanel
-        panel.settingsRadio.setOnCheckedChangeListener { button, checked ->
-            model.setRadioEnabled(checked)
-            button.isChecked = model.app.radio.options.value.enabled
+        settings.settingsRadio.setOnCheckedChangeListener { button, checked ->
+            model.setRadioPanelVisible(checked)
+            button.isChecked = model.app.radio.options.value.showPanel
         }
         panel.radioOpenPlayer.setOnCheckedChangeListener { _, checked ->
             model.app.radio.setOpenPlayerOnSelection(checked)
         }
+        panel.radioNavigation.setOnClickListener {
+            val modes = com.macarmusic.app.radio.RadioNavigationMode.entries
+            AccentTheme.dialog(this).setTitle(R.string.radio_navigation).setSingleChoiceItems(
+                modes.map { getString(radioNavigationLabel(it)) }.toTypedArray(),
+                modes.indexOf(model.app.radio.options.value.navigationMode),
+            ) { dialog, index ->
+                model.app.radio.setNavigationMode(modes[index])
+                dialog.dismiss()
+            }.setNegativeButton(R.string.cancel, null).show()
+        }
+        panel.radioButtonLogo.setOnClickListener {
+            AppearanceChoices.show(this, R.string.radio_button_logo, listOf(
+                AppearanceChoices.Choice(R.id.radioLogoBranded, R.string.radio_logo_branded, R.drawable.ic_launcher_radio),
+                AppearanceChoices.Choice(R.id.radioLogoClassic, R.string.radio_logo_classic, R.drawable.ic_radio,
+                    com.macarmusic.app.model.ButtonIconStyle.MONOCHROME),
+            ), model.app.radio.options.value.buttonLogo.ordinal) {
+                model.app.radio.setButtonLogo(com.macarmusic.app.radio.RadioButtonLogo.entries[it])
+            }
+        }
+        panel.radioDownloadPinnedLogos.setOnClickListener { model.downloadPinnedRadioLogos() }
+        panel.radioCancelLogos.setOnClickListener { model.cancelRadioLogos() }
+        panel.radioSubscriptions.setOnClickListener { model.openRadioSubscriptions() }
+        panel.radioRefreshInterval.setOnClickListener {
+            val intervals = com.macarmusic.app.radio.RadioRefreshInterval.entries
+            AccentTheme.dialog(this).setTitle(R.string.radio_refresh_interval).setSingleChoiceItems(
+                intervals.map { getString(it.label) }.toTypedArray(),
+                intervals.indexOf(model.app.radio.options.value.refreshInterval),
+            ) { dialog, index ->
+                model.app.radio.setRefreshInterval(intervals[index])
+                dialog.dismiss()
+            }.setNegativeButton(R.string.cancel, null).show()
+        }
+        panel.radioManageGroups.setOnClickListener { manageRadioGroups() }
+        panel.radioShowGroups.setOnClickListener { manageRadioGroups(hiddenOnly = true) }
         panel.radioPinColor.setOnClickListener {
             ColorSwatchDialog.show(this, getString(R.string.radio_pin_color), radioPinColor() and 0xffffff,
                 reset = { model.app.radio.setPinColor(null) }, save = model.app.radio::setPinColor)
@@ -1126,7 +1468,7 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton(R.string.close, null).show()
         }
         panel.radioAbout.setOnClickListener {
-            AccentTheme.dialog(this).setTitle(R.string.radio_help_title).setMessage(R.string.radio_help)
+            AccentTheme.dialog(this).setTitle(R.string.radio_help_title).setMessage(AboutContent.radioHelp(this))
                 .setPositiveButton(R.string.close, null).show()
         }
         panel.radioReturnMusic.setOnClickListener {
@@ -1142,8 +1484,44 @@ class MainActivity : AppCompatActivity() {
         val preferences = model.app.radio.options.value
         val tuning = preferences.tuning
         val editable = !model.radioImportBusy.value && !model.backupBusy.value
-        panel.settingsRadio.isChecked = preferences.enabled
-        panel.settingsRadio.isEnabled = editable
+        val progress = model.subscriptionProgress.value
+        val logos = model.logoProgress.value
+        panel.radioDownloadPinnedLogos.isEnabled = editable && logos == null && preferences.pins.isNotEmpty()
+        panel.radioCancelLogos.isVisible = logos != null
+        panel.radioCancelLogos.isEnabled = logos?.cancelling == false
+        panel.radioLogosProgress.isVisible = logos != null
+        panel.radioLogosProgress.isIndeterminate = logos?.total == 0
+        panel.radioLogosProgress.max = logos?.total ?: 1
+        panel.radioLogosProgress.progress = logos?.completed ?: 0
+        panel.radioLogosStatus.isVisible = logos != null
+        panel.radioLogosStatus.text = when {
+            logos?.cancelling == true -> getString(R.string.radio_subscription_cancelling)
+            logos != null && logos.total > 0 -> getString(R.string.radio_logos_progress, logos.completed + 1, logos.total, logos.name)
+            else -> getString(R.string.loading)
+        }
+        panel.radioNavigation.isEnabled = editable
+        panel.radioNavigation.text = getString(R.string.setting_value, getString(R.string.radio_navigation),
+            getString(radioNavigationLabel(preferences.navigationMode)))
+        panel.radioButtonLogo.isEnabled = editable
+        panel.radioButtonLogo.text = getString(R.string.setting_value, getString(R.string.radio_button_logo),
+            getString(if (preferences.buttonLogo == com.macarmusic.app.radio.RadioButtonLogo.BRANDED_RADIO)
+                R.string.radio_logo_branded else R.string.radio_logo_classic))
+        panel.radioSubscriptions.isEnabled = editable
+        panel.radioRefreshInterval.isEnabled = editable
+        panel.radioRefreshInterval.text = getString(R.string.setting_value, getString(R.string.radio_refresh_interval),
+            getString(preferences.refreshInterval.label))
+        panel.radioManageGroups.isEnabled = editable
+        panel.radioShowGroups.isEnabled = editable && preferences.hiddenGroups.isNotEmpty()
+        panel.radioShowGroups.text = getString(R.string.radio_groups_restore, preferences.hiddenGroups.size)
+        panel.radioSubscriptionsStatus.isVisible = progress != null
+        panel.radioSubscriptionsStatus.text = when {
+            progress?.cancelling == true -> getString(R.string.radio_subscription_cancelling)
+            progress != null && progress.total > 0 -> getString(R.string.radio_subscription_progress,
+                progress.name, progress.completed + 1, progress.total)
+            else -> getString(R.string.loading)
+        }
+        settings.settingsRadio.isChecked = preferences.showPanel
+        settings.settingsRadio.isEnabled = !model.backupBusy.value
         panel.radioOpenPlayer.isChecked = preferences.openPlayerOnSelection
         panel.radioOpenPlayer.isEnabled = editable
         colorButton(panel.radioPinColor, R.string.radio_pin_color, radioPinColor())
@@ -1157,15 +1535,21 @@ class MainActivity : AppCompatActivity() {
         panel.radioAutoSource.isChecked = tuning.autoSource
         panel.radioDownloadLogos.isChecked = tuning.downloadLogos
         panel.radioShowStatus.isChecked = tuning.showStatus
-        panel.radioImport.isEnabled = editable && preferences.enabled
+        panel.radioImport.isEnabled = editable && progress == null
         panel.radioExport.isEnabled = panel.radioImport.isEnabled
         panel.radioReset.isEnabled = panel.radioImport.isEnabled
         panel.radioReturnMusic.isEnabled = preferences.active && model.app.playbackReady.value
     }
 
-    private fun radioOptions(station: RadioProgram) {
-        val current = model.app.radioCatalog.find(station.id) ?: return
-        choiceDialog(current.title(this), listOf(
+    private fun radioNavigationLabel(mode: com.macarmusic.app.radio.RadioNavigationMode) =
+        if (mode == com.macarmusic.app.radio.RadioNavigationMode.GLOBAL) R.string.radio_navigation_global else R.string.radio_navigation_pinned
+
+    private fun radioOptions(station: RadioProgram): PlayerDialog? {
+        val current = model.app.radioCatalog.find(station.id) ?: run {
+            model.app.inform(getString(R.string.radio_subscription_retired_station))
+            return null
+        }
+        val actions = mutableListOf(
             getString(R.string.play) to { playRadio(current) },
             getString(if (current.id in model.app.radio.options.value.pins) R.string.radio_unpin else R.string.radio_pin)
                 to { model.pinRadio(current) },
@@ -1173,16 +1557,51 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.radio_edit) to {
                 RadioStationEditor.show(this, current) { model.editRadio(current, it) }
             },
+            getString(R.string.radio_station_logo) to {
+                val logos = com.macarmusic.app.radio.RadioStationLogo.entries
+                AppearanceChoices.show(this, R.string.radio_station_logo, logos.map {
+                    AppearanceChoices.Choice(View.generateViewId(), it.title, it.image)
+                }, logos.indexOf(model.app.radio.options.value.stationLogos[current.id]),
+                    reset = { model.setRadioStationLogo(current, null) }) { index ->
+                    model.setRadioStationLogo(current, logos[index])
+                }
+            },
             getString(R.string.details) to { radioDetails(current) },
-        ))
+        )
+        if (current.id in model.app.radio.options.value.pins) {
+            actions += getString(R.string.radio_move_pin) to { moveRadioPin(current) }
+        }
+        return choiceDialog(current.title(this), actions, show = false)
+    }
+
+    private fun moveRadioPin(station: RadioProgram) {
+        val catalog = model.app.radioCatalog.state.value
+        val pins = model.app.radio.options.value.pins.mapNotNull(catalog::find)
+        val original = pins.map { it.id }
+        val from = original.indexOf(station.id)
+        if (from < 0) {
+            model.app.inform(getString(R.string.radio_pin_order_changed))
+            return
+        }
+        AccentTheme.dialog(this).setTitle(R.string.radio_move_pin)
+            .setSingleChoiceItems(pins.mapIndexed { index, pin ->
+                getString(R.string.radio_move_pin_position, index + 1, pin.title(this))
+            }.toTypedArray(), from) { dialog, target ->
+                model.reorderRadioPins(original, original.toMutableList().apply { add(target, removeAt(from)) })
+                dialog.dismiss()
+            }.setNegativeButton(R.string.cancel, null).show()
     }
 
     private fun radioSources(station: RadioProgram) {
-        val current = model.app.radioCatalog.find(station.id) ?: return
+        val current = model.app.radioCatalog.find(station.id) ?: run {
+            model.app.inform(getString(R.string.radio_subscription_retired_station))
+            return
+        }
+        val active = currentRadio()?.takeIf { it.id == current.id }
         AccentTheme.dialog(this).setTitle(getString(R.string.radio_sources, current.sources.size))
             .setSingleChoiceItems(current.sources.mapIndexed { index, uri ->
                 getString(R.string.radio_source_item, index + 1, uri)
-            }.toTypedArray(), current.sourceIndex) { dialog, index ->
+            }.toTypedArray(), active?.let { current.sources.indexOf(it.streamUri) } ?: current.sourceIndex) { dialog, index ->
                 dialog.dismiss()
                 playRadio(current, index)
             }.setNegativeButton(R.string.cancel, null).show()
@@ -1190,8 +1609,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun switchRadioSource(offset: Int) {
         if (radioSourceCommand != null) return
-        val station = currentRadio() ?: return
-        val index = station.sourceIndex + offset
+        val playing = currentRadio() ?: return
+        val station = model.app.radioCatalog.find(playing.id) ?: return
+        val index = station.sources.indexOf(playing.streamUri).takeIf { it >= 0 }?.plus(offset) ?: return
         if (index !in station.sources.indices) return
         val future = radioCommand(RadioCommands.play, Bundle().apply {
             putString(RadioCommands.STATION, station.id)
@@ -1209,39 +1629,64 @@ class MainActivity : AppCompatActivity() {
     private fun renderRadio() {
         if (!::radioPanel.isInitialized || visibleScreen !== radioPanel) return
         val preferences = model.app.radio.options.value
-        if (!preferences.enabled) return
+        if (!preferences.showPanel) return
         val catalog = model.app.radioCatalog.state.value
         val stations = model.radioPage.value
         val pins = preferences.pins.toSet()
         val pinColor = radioPinColor()
-        radioAdapter.selection(currentRadio()?.id, pins, pinColor)
+        val highlight = primaryControlHighlight()
+        radioAdapter.configureLogo(preferences.buttonLogo, preferences.stationLogos)
+        radioAdapter.selection(currentRadio()?.id, preferences.pins, pinColor, highlight)
         val byId = stations.associateBy { it.id }
-        radioAdapter.submitList(preferences.pins.mapNotNull(byId::get))
-        radioChannelAdapter.selection(currentRadio()?.id, pins, pinColor)
-        radioChannelAdapter.submitList(model.radioChannels.value)
+        val pinned = preferences.pins.mapNotNull(byId::get)
+        radioAdapter.submitList(pinned)
+        radioChannelAdapter.selection(currentRadio()?.id, pins, pinColor, highlight)
+        radioChannelAdapter.submitList(model.radioChannels.value) {
+            radioStickyHeader?.rowsChanged()
+            val reveal = model.radioRevealId
+            if (reveal != null && visibleScreen === radioPanel) {
+                val position = radioChannelAdapter.currentList.indexOfFirst { it.station?.id == reveal }
+                if (position >= 0) {
+                    model.radioRevealed(reveal)
+                    radioPanel.list.post {
+                        if (visibleScreen === radioPanel && currentRadio()?.id == reveal) {
+                            val headerHeight = binding.root.findViewById<View>(R.id.radioStickyGroup)?.height ?: dp(56)
+                            (radioPanel.list.layoutManager as androidx.recyclerview.widget.GridLayoutManager)
+                                .scrollToPositionWithOffset(radioAdapter.itemCount + position, headerHeight + dp(8))
+                        }
+                    }
+                }
+            }
+        }
         radioPanel.heading.text = if (model.radioImportBusy.value || !catalog.ready) getString(R.string.loading)
             else getString(R.string.radio_catalog_hint, catalog.programs.size)
-        radioPanel.empty(getString(R.string.radio_empty), stations.isEmpty())
+        val hidden = stations.isNotEmpty() && preferences.hiddenGroups.isNotEmpty() &&
+            model.radioChannels.value.isEmpty() && pinned.isEmpty()
+        radioPanel.empty(getString(if (hidden) R.string.radio_groups_all_hidden else R.string.radio_empty),
+            stations.isEmpty() || hidden)
         updateCompactHeading(radioPanel)
     }
 
-    private fun renderRadioQuickStations() {
-        val visible = model.app.radio.options.value.enabled && currentRadio() != null && visibleScreen === now.root
-        if (!visible) {
-            radioQuickGrid?.isVisible = false
+    private fun renderRadioQuickStations(prepare: Boolean = false) {
+        val visible = radioPanelRequested() && visibleScreen === now.root
+        if (!visible && !prepare) {
+            radioQuickGrid?.visibility = View.INVISIBLE
             radioQuickEmpty?.isVisible = false
             if (currentRadio() == null) now.cover.artwork.isVisible = !now.cover.lyricsList.isVisible
             return
         }
         if (radioQuickGrid == null) {
-            radioQuickAdapter = RadioButtonAdapter(lifecycleScope, ::playRadio, ::radioOptions)
-            radioQuickGrid = RecyclerView(this).apply {
+            radioQuickAdapter = RadioButtonAdapter(contentScope, ::playRadio, ::radioOptions, model::reorderRadioPins,
+                compact = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT)
+            radioQuickGrid = RadioPinList(this).apply {
                 id = R.id.radioQuickStations
                 contentDescription = getString(R.string.radio_quick_stations)
                 RadioButtonAdapter.configureGrid(this)
                 adapter = radioQuickAdapter
+                visibility = View.INVISIBLE
                 now.cover.mediaArea.addView(this, FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+                focusMemory.watch(this)
             }
             radioQuickEmpty = TextView(this).apply {
                 setText(R.string.radio_pins_empty)
@@ -1252,13 +1697,17 @@ class MainActivity : AppCompatActivity() {
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
             }
         }
-        radioQuickGrid?.isVisible = true
-        radioQuickEmpty?.isVisible = model.radioQuickPage.value.isEmpty()
-        now.cover.artwork.isVisible = false
+        radioQuickGrid?.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+        radioQuickAdapter?.configureLogo(model.app.radio.options.value.buttonLogo, model.app.radio.options.value.stationLogos)
+        radioQuickEmpty?.apply {
+            setText(if (model.app.radioCatalog.state.value.ready) R.string.radio_pins_empty else R.string.loading)
+            isVisible = visible && model.radioQuickPage.value.isEmpty()
+        }
+        if (visible) now.cover.artwork.isVisible = false
         val display = model.app.displaySettings.options.value
         radioQuickAdapter?.apply {
             configureBlocks(display.controlBlocks, display.blockOutline)
-            selection(currentRadio()?.id, model.app.radio.options.value.pins.toSet(), radioPinColor())
+            selection(currentRadio()?.id, model.app.radio.options.value.pins, radioPinColor(), primaryControlHighlight())
             submitList(model.radioQuickPage.value)
         }
     }
@@ -1266,9 +1715,16 @@ class MainActivity : AppCompatActivity() {
     private fun radioPinColor(): Int = model.app.radio.options.value.pinColor?.or(Color.BLACK)
         ?: ContextCompat.getColor(this, R.color.radio_pinned)
 
-    private fun currentRadio(): RadioProgram? = controller?.currentMediaItem?.mediaId
-        ?.takeIf { model.app.radio.options.value.enabled && RadioProgram.isRadio(it) }
-        ?.let { model.app.radioCatalog.find(it) }
+    private fun radioPanelRequested(): Boolean =
+        RadioPresentation.radioControls(model.app.radio.options.value.active, model.app.radioPreparing.value,
+            RadioProgram.isRadio(controller?.currentMediaItem?.mediaId))
+
+    private fun currentRadio(): RadioProgram? {
+        val radio = model.app.radio.options.value
+        val id = RadioPresentation.stationId(controller?.currentMediaItem?.mediaId, radio.stationId,
+            radio.active, controller != null, model.app.playbackReady.value) ?: return null
+        return model.app.radio.currentStation?.takeIf { it.id == id } ?: model.app.radioCatalog.find(id)
+    }
 
     private fun playRadio(station: RadioProgram) = playRadio(station, null)
 
@@ -1317,7 +1773,9 @@ class MainActivity : AppCompatActivity() {
                 if (preview.parsed.entries.isNotEmpty())
                     setPositiveButton(R.string.radio_import_apply) { _, _ ->
                         radioImportDialog = AccentTheme.dialog(this@MainActivity).setTitle(R.string.radio_import_addresses)
-                            .setMessage(R.string.radio_import_modes_help)
+                            .setMessage(getString(R.string.radio_import_modes_help) +
+                                if (model.app.radioCatalog.state.value.subscriptions.isEmpty()) ""
+                                else "\n\n" + getString(R.string.radio_subscription_import_replace))
                             .setNegativeButton(R.string.cancel) { _, _ -> model.dismissRadioImport() }
                             .setOnCancelListener { model.dismissRadioImport() }
                             .setNeutralButton(R.string.radio_import_append) { _, _ -> model.importRadioList(RadioImportMode.APPEND) }
@@ -1372,9 +1830,8 @@ class MainActivity : AppCompatActivity() {
                 } catch (error: ExecutionException) {
                     restoringMusic = false
                     model.app.report(getString(R.string.radio_command_failed, error.cause?.localizedMessage.orEmpty()))
-                } catch (error: CancellationException) {
+                } catch (_: CancellationException) {
                     restoringMusic = false
-                    Log.d("MainActivity", "Radio controller request cancelled", error)
                 } catch (error: InterruptedException) {
                     restoringMusic = false
                     Thread.currentThread().interrupt()
@@ -1457,6 +1914,26 @@ class MainActivity : AppCompatActivity() {
         }
         showSettingsCategory(model.settingsCategory.value)
         settings.settingsLanguage.setOnClickListener { languageDialog() }
+        settings.settingsAutoPlay.setOnCheckedChangeListener { _, checked ->
+            model.app.displaySettings.update { it.copy(autoPlayOnLaunch = checked) }
+        }
+        settings.settingsKeepScreenOn.setOnCheckedChangeListener { _, checked ->
+            model.app.displaySettings.update { it.copy(keepScreenOn = checked) }
+        }
+        settings.settingsAppLogo.setOnClickListener {
+            AppearanceChoices.show(this, R.string.appearance_logo, listOf(
+                AppearanceChoices.Choice(R.id.appearanceMusic, R.string.appearance_logo_music, R.drawable.ic_launcher),
+                AppearanceChoices.Choice(R.id.appearanceRadio, R.string.appearance_logo_radio, R.drawable.ic_launcher_radio),
+            ), model.app.displaySettings.options.value.appLogo.ordinal) { index ->
+                model.setAppLogo(com.macarmusic.app.model.AppLogo.entries[index])
+            }
+        }
+        settings.settingsButtonIcons.setOnClickListener {
+            AppearanceChoices.show(this, R.string.appearance_icons, AppearanceChoices.buttonThemes,
+                model.app.displaySettings.options.value.buttonIcons.ordinal) { index ->
+                model.app.displaySettings.update { it.copy(buttonIcons = com.macarmusic.app.model.ButtonIconStyle.entries[index]) }
+            }
+        }
         settings.settingsSystemInfo.setOnClickListener { systemInformationDialog() }
         configureRadioSettings()
         settings.settingsBackup.setOnClickListener { launchBackupExport() }
@@ -1467,8 +1944,21 @@ class MainActivity : AppCompatActivity() {
             label = { settings.widgetTransparencyValue.text = getString(R.string.widget_transparency_value, it) },
             save = { value -> model.app.displaySettings.update { it.copy(widgetTransparency = value) } },
         ))
+        settings.miniPlayerTransparency.setOnSeekBarChangeListener(backgroundSlider(
+            label = { settings.miniPlayerTransparencyValue.text = getString(R.string.mini_player_transparency_value, it) },
+            save = { value -> model.app.displaySettings.update { it.copy(miniPlayerTransparency = value) } },
+        ))
         settings.settingsTheme.setOnClickListener { themeDialog() }
         settings.settingsAccent.setOnClickListener { accentDialog() }
+        settings.settingsPrimaryControlColor.setOnClickListener {
+            fun save(color: Int?) = model.app.displaySettings.update {
+                it.copy(primaryControlColor = color, primaryControlHighlightEnabled = true)
+            }
+            ColorSwatchDialog.show(this, getString(R.string.primary_control_color),
+                primaryControlColor() and 0xffffff, reset = { save(null) },
+                none = { model.app.displaySettings.update { it.copy(primaryControlHighlightEnabled = false) } },
+                initiallyNone = !model.app.displaySettings.options.value.primaryControlHighlightEnabled) { save(it) }
+        }
         settings.settingsControlBlocks.setOnCheckedChangeListener { _, checked ->
             model.app.displaySettings.update { it.copy(controlBlocks = checked) }
         }
@@ -1553,7 +2043,7 @@ class MainActivity : AppCompatActivity() {
                 if (!model.app.lyrics.cache.info.value.internal) model.inspectLyricCache()
             }
         }
-        lifecycleScope.launch {
+        contentScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 model.app.lyrics.cache.info.collect { renderLyricCache() }
             }
@@ -1574,6 +2064,10 @@ class MainActivity : AppCompatActivity() {
             },
         ))
         val display = model.app.displaySettings.options.value
+        choices(settings.settingsNoticeDuration, DisplayOptions.NOTICE_DURATIONS, display.noticeDurationSeconds,
+            { getString(R.string.notice_duration_seconds, it) }) { value ->
+            model.app.displaySettings.update { it.copy(noticeDurationSeconds = value) }
+        }
         choices(settings.lyricsLandscapePosition, LyricSide.entries, display.landscapeLyrics,
             { getString(if (it == LyricSide.START) R.string.position_left else R.string.position_right) }) { side ->
             model.app.displaySettings.update { it.copy(landscapeLyrics = side) }
@@ -1823,17 +2317,38 @@ class MainActivity : AppCompatActivity() {
         }
         settings.settingsLanguage.text = getString(R.string.setting_value, getString(R.string.language), getString(language))
         renderRadioSettings()
-        settings.settingsBackup.isEnabled = !model.backupBusy.value && model.scan.value == null && !model.importingBackground.value
+        settings.settingsBackup.isEnabled = !model.backupBusy.value && model.scan.value == null && !model.importingBackground.value &&
+            !model.radioImportBusy.value && model.subscriptionProgress.value == null && model.logoProgress.value == null
         settings.settingsRestore.isEnabled = settings.settingsBackup.isEnabled
         settings.settingsBackupStatus.isVisible = model.backupBusy.value
         settings.settingsTheme.text = getString(R.string.setting_value, getString(R.string.theme), getString(theme))
         val display = model.app.displaySettings.options.value
+        settings.settingsAppLogo.isEnabled = !model.backupBusy.value
+        settings.settingsButtonIcons.isEnabled = !model.backupBusy.value
+        settings.settingsAppLogo.text = getString(R.string.setting_value, getString(R.string.appearance_logo),
+            getString(if (display.appLogo == com.macarmusic.app.model.AppLogo.MUSIC)
+                R.string.appearance_logo_music else R.string.appearance_logo_radio))
+        settings.settingsButtonIcons.text = getString(R.string.setting_value, getString(R.string.appearance_icons),
+            getString(AppearanceChoices.buttonThemes[display.buttonIcons.ordinal].label))
         if (!settings.widgetTransparency.isPressed) {
             settings.widgetTransparency.progress = display.widgetTransparency
             settings.widgetTransparencyValue.text = getString(R.string.widget_transparency_value, display.widgetTransparency)
         }
+        if (!settings.miniPlayerTransparency.isPressed) {
+            settings.miniPlayerTransparency.progress = display.effectiveMiniPlayerTransparency
+            settings.miniPlayerTransparencyValue.text = getString(
+                R.string.mini_player_transparency_value, display.effectiveMiniPlayerTransparency)
+        }
+        settings.settingsKeepScreenOn.isChecked = display.keepScreenOn
+        settings.settingsNoticeDuration.setSelection(
+            DisplayOptions.NOTICE_DURATIONS.indexOf(display.noticeDurationSeconds), false)
         colorButton(settings.settingsAccent, R.string.theme_accent,
             AccentTheme.color(binding.root, com.google.android.material.R.attr.colorPrimary))
+        colorButton(settings.settingsPrimaryControlColor, R.string.primary_control_color, primaryControlColor())
+        if (!display.primaryControlHighlightEnabled) {
+            settings.settingsPrimaryControlColor.text = getString(R.string.primary_control_color_none)
+            settings.settingsPrimaryControlColor.icon = null
+        }
         settings.settingsControlBlocks.isChecked = display.controlBlocks
         settings.blockStyleControls.isVisible = display.controlBlocks
         settings.settingsBlockStyle.setSelection(BlockStyle.selectable.indexOf(display.blockOutline.style), false)
@@ -1877,19 +2392,6 @@ class MainActivity : AppCompatActivity() {
             AccentTheme.color(binding.root, com.google.android.material.R.attr.colorPrimary))
         colorButton(settings.lyricOtherColor, R.string.lyric_other_color, display.lyricAppearance.otherColor ?:
             MaterialColors.getColor(binding.root, com.google.android.material.R.attr.colorOnSurface))
-        val providers = OnlineLyricsClient.ROUTES.mapIndexed { index, provider ->
-            getString(R.string.lyrics_provider_step, index + 1, getString(
-                when (provider) {
-                    LyricSearchRoute.KUGOU_DIRECT -> R.string.provider_kugou_direct
-                    LyricSearchRoute.KUGOU_MOBILE -> R.string.provider_kugou_mobile
-                    LyricSearchRoute.NETEASE -> R.string.provider_netease
-                    LyricSearchRoute.QQ -> R.string.provider_qq
-                    LyricSearchRoute.KUWO -> R.string.provider_kuwo
-                },
-            ))
-        }.joinToString("\n")
-        settings.lyricsProviderOrder.text = getString(R.string.lyrics_provider_order, providers,
-            getString(if (display.lyricsEnabled && display.onlineLyrics) R.string.lyrics_online_enabled else R.string.lyrics_online_disabled))
         settings.settingsBackgroundPanel.isVisible = display.customTheme
         settings.settingsBackgroundImage.isEnabled = !model.importingBackground.value && !model.backupBusy.value
         settings.settingsBackgroundImage.setText(
@@ -1918,6 +2420,8 @@ class MainActivity : AppCompatActivity() {
         settings.settingsTimeMode.setSelection(display.timeMode.ordinal, false)
         settings.settingsMainTimeMode.setSelection(display.mainTimeMode.ordinal, false)
         settings.settingsNavigationPosition.setSelection(display.navigationPosition.ordinal, false)
+        settings.settingsAutoPlay.isChecked = display.autoPlayOnLaunch
+        settings.settingsAutoPlay.isEnabled = !model.backupBusy.value
         settings.settingsShowLibrary.isChecked = display.showLibrary
         settings.settingsShowQueue.isChecked = display.showQueue
         settings.settingsShowPlaylists.isChecked = display.showPlaylists
@@ -2009,10 +2513,13 @@ class MainActivity : AppCompatActivity() {
     private fun showSettingsCategory(category: SettingsCategory) {
         if (!::settings.isInitialized) return
         if (shownSettingsCategory == category) return
+        focusMemory.pause()
         shownSettingsCategory?.let {
             if (!restoringSettingsScroll) model.settingsScroll(it, settings.settingsScroll.scrollY)
         }
         shownSettingsCategory = category
+        val categoryPanel = settings.root.findViewById<View>(category.panelId)
+        focusMemory.scope(categoryPanel, "settings:${category.name}")
         restoringSettingsScroll = true
         SettingsCategory.pages.forEach {
             settings.root.findViewById<View>(it.panelId).isVisible = it == category
@@ -2041,6 +2548,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         settings.settingsScroll.requestLayout()
+        if (visibleScreen === settings.root) focusMemory.activate(categoryPanel)
     }
 
     private fun showScreen(id: Int) {
@@ -2048,9 +2556,32 @@ class MainActivity : AppCompatActivity() {
             model.screen(R.id.nav_player)
             return
         }
-        val target = screenView(id)
+        if (!screenBuilt(id)) {
+            if (pendingScreenId == id) return
+            screenLoadJob?.cancel()
+            pendingScreenId = id
+            loadingScreen.text = getString(R.string.screen_loading, getString(screenLabel(id)))
+            displayScreen(id, loadingScreen, loading = true)
+            screenLoadJob = contentScope.launch {
+                loadingScreen.awaitDraw()
+                if (model.selectedScreen.value == id) {
+                    val target = screenView(id)
+                    pendingScreenId = null
+                    displayScreen(id, target)
+                }
+            }
+            return
+        }
+        screenLoadJob?.cancel()
+        screenLoadJob = null
+        pendingScreenId = null
+        displayScreen(id, screenView(id))
+    }
+
+    private fun displayScreen(id: Int, target: View, loading: Boolean = false) {
         val changed = visibleScreen !== target
         if (changed) {
+            focusMemory.pause()
             val previous = visibleScreen
             screenAnimator?.cancel()
             for (index in 0 until binding.screenContainer.childCount) {
@@ -2061,18 +2592,24 @@ class MainActivity : AppCompatActivity() {
             visibleScreen = target
             if (target !== now.root) lyricScrolling.stop()
             val transition = model.app.displaySettings.options.value.settingsTransition
-            if (previous != null && ::settings.isInitialized &&
+            if (!loading && previous != null && previous.id != R.id.screenLoading && ::settings.isInitialized &&
                 (target === settings.root || previous === settings.root) &&
                 transition != TransitionStyle.NONE && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
             ) {
                 screenAnimator = ViewTransitions.entrance(target, transition, 300).also { it.start() }
             }
-            when (id) {
+            when (id.takeUnless { loading }) {
                 R.id.nav_library -> renderLibrary()
                 R.id.nav_folders -> renderFolders()
-                R.id.nav_queue -> { queueScrollPending = true; updateQueue(force = true) }
+                R.id.nav_queue -> { queueScrollPending = !focusMemory.hasPosition(queuePanel); updateQueue(force = true) }
                 R.id.nav_playlists -> renderPlaylists()
-                R.id.nav_radio -> renderRadio()
+                R.id.nav_radio -> {
+                    if (!focusMemory.hasPosition(radioPanel)) currentRadio()?.let(model::revealPlayingRadio)
+                    radioPanel.findViewById<TextInputEditText>(R.id.radioSearch)?.let {
+                        if (it.text?.toString() != model.radioQuery.value) it.setText(model.radioQuery.value)
+                    }
+                    renderRadio()
+                }
                 R.id.action_settings -> {
                     renderSettings()
                     showSettingsCategory(model.settingsCategory.value)
@@ -2089,17 +2626,22 @@ class MainActivity : AppCompatActivity() {
         binding.navigation.isVisible = true
         if (!inSettings && binding.navigation.selectedItemId != id) binding.navigation.selectedItemId = id
         binding.toolbar.setTitle(if (inSettings) R.string.settings else R.string.app_name)
+        if (loading) binding.toolbar.setTitle(screenLabel(id))
         if (target is ListPanel) updateCompactHeading(target)
         binding.toolbar.menu.findItem(R.id.action_settings).isVisible = !inSettings
         if (inSettings) {
-            binding.toolbar.setNavigationIcon(R.drawable.ic_back)
-            binding.toolbar.setNavigationIconTint(MaterialColors.getColor(binding.root, com.google.android.material.R.attr.colorOnSurface))
+            binding.toolbar.navigationIcon = PlayerIcons.drawable(this, R.drawable.ic_back)
+            binding.toolbar.clearNavigationIconTint()
             binding.toolbar.setNavigationContentDescription(R.string.back)
         } else binding.toolbar.navigationIcon = null
         binding.miniPlayer.isVisible = target !== now.root
         updatePlayer()
         if (changed && target === now.root) {
             now.cover.lyricsList.post { updateLyricProgress(force = true) }
+        }
+        if (changed) {
+            binding.toolbar.doOnLayout { it.installPlayerInputFocus() }
+            focusMemory.activate(target)
         }
     }
 
@@ -2125,6 +2667,7 @@ class MainActivity : AppCompatActivity() {
                 NavigationPosition.RIGHT -> RelativeLayout.ALIGN_PARENT_RIGHT
             })
         }
+
         binding.playerBody.layoutParams = RelativeLayout.LayoutParams(
             RelativeLayout.LayoutParams.MATCH_PARENT, RelativeLayout.LayoutParams.MATCH_PARENT,
         ).apply {
@@ -2144,12 +2687,29 @@ class MainActivity : AppCompatActivity() {
         binding.navigation.isVisible = true
     }
 
+    private fun renderAppearance(display: com.macarmusic.app.data.DisplayOptions) {
+        val appearance = display.appLogo to display.buttonIcons
+        if (appliedAppearance == appearance) return
+        appliedAppearance = appearance
+        binding.toolbar.logo = androidx.appcompat.content.res.AppCompatResources.getDrawable(this, Branding.icon(display.appLogo))
+        if (::settings.isInitialized) settings.root.findViewById<android.widget.ImageView>(R.id.aboutLogo)
+            ?.setImageResource(Branding.icon(display.appLogo))
+        now.controls.spectrum.setLogo(display.appLogo)
+        binding.navigation.refreshIcons()
+        PlayerIcons.refresh(binding.root)
+        binding.toolbar.menu.findItem(R.id.action_settings)?.icon = PlayerIcons.drawable(this, R.drawable.ic_settings)
+        if (binding.toolbar.navigationIcon != null) {
+            binding.toolbar.navigationIcon = PlayerIcons.drawable(this, R.drawable.ic_back)
+            binding.toolbar.clearNavigationIconTint()
+        }
+        artworkUri = null
+        updateArtwork(currentTrack()?.uri)
+        updatePlayer()
+    }
+
     private fun configureCompactChrome() {
         if (!compactChrome) return
-        binding.noticeBar.minimumHeight = dp(48)
-        binding.dismissNotice.layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
-        binding.noticeText.maxLines = 1
-        binding.noticeText.ellipsize = android.text.TextUtils.TruncateAt.END
+        binding.noticeHost.text.maxLines = 1
         binding.miniPlayer.singleRow = true
     }
 
@@ -2205,6 +2765,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderLibrary() {
         if (!::libraryPanel.isInitialized || visibleScreen !== libraryPanel) return
+        val location = model.libraryPage.value.location
+        val changedLocation = focusMemory.changeScope(libraryPanel, "library:${location.mode}:${location.group.orEmpty()}")
         favoriteFilter.setText(if (model.favoritesOnly.value) R.string.all_tracks else R.string.favorites_only)
         val page = model.libraryPage.value
         val tracks = page.tracks
@@ -2244,11 +2806,15 @@ class MainActivity : AppCompatActivity() {
         }
         libraryPanel.empty(getString(message), rows.isEmpty())
         updateCompactHeading(libraryPanel)
+        if (changedLocation) focusMemory.activate(libraryPanel)
     }
 
     private fun renderFolders() {
         if (!::folderPanel.isInitialized || visibleScreen !== folderPanel) return
         val state = model.browser.value
+        val location = state.path.lastOrNull()
+        val changedLocation = focusMemory.changeScope(folderPanel,
+            "folders:${location?.let { "${it.sourceUri.length}:${it.sourceUri}${it.key.second}" }.orEmpty()}")
         val scan = model.scan.value
         val metadata = model.metadataProgress.value
         folderUp.isVisible = state.path.isNotEmpty()
@@ -2305,11 +2871,13 @@ class MainActivity : AppCompatActivity() {
         }
         folderPanel.empty(text, rows.isEmpty())
         updateCompactHeading(folderPanel)
+        if (changedLocation) focusMemory.activate(folderPanel)
     }
 
     private fun renderPlaylists() {
         if (!::playlistPanel.isInitialized || visibleScreen !== playlistPanel) return
         val id = model.selectedPlaylist.value
+        val changedLocation = focusMemory.changeScope(playlistPanel, "playlists:${id.orEmpty()}")
         val library = model.library.value
         val playlist = library.playlists.firstOrNull { it.id == id }
         playlistBack.isVisible = id != null
@@ -2326,6 +2894,7 @@ class MainActivity : AppCompatActivity() {
         playlistPanel.heading.text = playlist?.name ?: getString(R.string.playlists)
         playlistPanel.empty(getString(if (id == null) R.string.playlists_empty else R.string.playlist_empty), rows.isEmpty())
         updateCompactHeading(playlistPanel)
+        if (changedLocation) focusMemory.activate(playlistPanel)
     }
 
     private fun updateQueue(force: Boolean = false) {
@@ -2390,6 +2959,7 @@ class MainActivity : AppCompatActivity() {
             val station = currentRadio()
             if (station != null) model.pinRadio(station) else currentTrack()?.let(model::favorite)
         }
+        now.controls.switchPlaybackMode.setOnClickListener { switchPlaybackMode() }
         now.controls.details.setOnClickListener {
             val station = currentRadio()
             if (station != null) radioSources(station) else currentTrack()?.let(::detailsDialog)
@@ -2417,6 +2987,12 @@ class MainActivity : AppCompatActivity() {
         }
         now.controls.seek.setOnSeekBarChangeListener(seekListener)
         binding.miniSeek.setOnSeekBarChangeListener(seekListener)
+        listOf(now.controls.seek, binding.miniSeek, now.controls.volume).forEach {
+            it.thumbTintList = tint(true)
+            it.progressTintList = tint(true)
+            it.progressBackgroundTintList = tint(false)
+        }
+        now.controls.position.setTextColor(tint(false))
         now.controls.volume.max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         now.controls.volume.isEnabled = !audio.isVolumeFixed
         now.controls.volumeMute.setOnClickListener {
@@ -2440,12 +3016,42 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun togglePlay() = withController { player ->
-        if (player.playWhenReady) player.pause()
+        if (model.app.radioPreparing.value && currentRadio() == null) return@withController
+        // Keep Pause during focus interruptions, but offer Play for idle/ended queues.
+        if (!Util.shouldShowPlayButton(player, false)) player.pause()
         else if (player.mediaItemCount > 0) {
             if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition()
             if (player.playbackState == Player.STATE_IDLE || player.playerError != null) player.prepare()
             player.play()
         } else model.screen(R.id.nav_folders)
+    }
+
+    private fun switchPlaybackMode() {
+        if (modeSwitchCommand != null || model.app.radioPreparing.value) return
+        val radio = model.app.radio.options.value
+        val future = if (radio.active || currentRadio() != null) {
+            if (model.app.radio.savedMusic.value?.queue?.isEmpty() == true) {
+                model.app.inform(getString(R.string.no_tracks_to_play))
+                model.screen(R.id.nav_folders)
+                return
+            }
+            radioCommand(RadioCommands.music, Bundle().apply { putBoolean(RadioCommands.RESUME, true) })
+        } else {
+            val station = radio.stationId
+            if (station == null) {
+                if (radio.showPanel) controller?.pause()
+                model.app.inform(getString(if (radio.showPanel) R.string.resume_radio_choose else R.string.resume_radio_choose_hidden))
+                model.screen(R.id.nav_radio)
+                return
+            }
+            radioCommand(RadioCommands.play, Bundle().apply { putString(RadioCommands.STATION, station) })
+        } ?: return
+        modeSwitchCommand = future
+        updatePlayer()
+        future.addListener({
+            if (modeSwitchCommand === future) modeSwitchCommand = null
+            updatePlayer()
+        }, ContextCompat.getMainExecutor(this))
     }
 
     private fun consumePlayRequest() {
@@ -2490,83 +3096,114 @@ class MainActivity : AppCompatActivity() {
         val player = controller
         val ready = player != null && model.app.playbackReady.value
         backupDialog?.getButton(DialogInterface.BUTTON_POSITIVE)?.isEnabled = ready && !model.backupBusy.value
-        val track = currentTrack()
+        val radioControls = radioPanelRequested()
+        val track = if (radioControls) null else currentTrack()
         val station = currentRadio()
-        val title = station?.title(this) ?: track?.title?.ifBlank { track.fileName } ?: getString(R.string.no_track)
-        val artist = if (station != null) station.publisher(this)
+        val pendingRadio = radioControls && station == null
+        val title = if (pendingRadio) getString(if (model.app.radioPreparing.value) R.string.radio_switching else R.string.radio)
+            else station?.title(this) ?: track?.title?.ifBlank { track.fileName } ?: getString(R.string.no_track)
+        val artist = if (pendingRadio) getString(R.string.loading) else if (station != null) station.publisher(this)
             else track?.artist?.ifBlank { getString(R.string.unknown_artist) } ?: getString(R.string.no_track_hint)
-        now.controls.title.text = title
-        now.controls.artist.text = artist
-        now.controls.album.text = if (station != null) getString(R.string.radio_source_position,
+        updateWindowTitle(title.takeIf { model.app.radioPreparing.value || station != null || track != null })
+        now.controls.title.setTextIfChanged(title)
+        now.controls.artist.setTextIfChanged(artist)
+        now.controls.album.setTextIfChanged(if (pendingRadio) getString(R.string.radio_live) else if (station != null) getString(R.string.radio_source_position,
             station.sourceIndex + 1, station.sources.size, java.net.URI(station.streamUri).host)
-            else track?.album?.ifBlank { getString(R.string.unknown_album) }.orEmpty()
-        binding.miniTitle.text = if (binding.miniPlayer.singleRow && track != null)
+            else track?.album?.ifBlank { getString(R.string.unknown_album) }.orEmpty())
+        val mode = getString(if (radioControls) R.string.radio else R.string.music_mode)
+        val miniTitle = if (!pendingRadio && binding.miniPlayer.singleRow && track != null)
             getString(R.string.mini_track_summary, title, artist) else title
-        binding.miniArtist.text = artist
+        binding.miniTitle.setTextIfChanged(if (station != null || track != null)
+            getString(R.string.playback_mode_status, mode, miniTitle) else miniTitle)
+        binding.miniArtist.setTextIfChanged(artist)
         val wantsPlay = player?.playWhenReady == true
-        val icon = if (wantsPlay && station != null) R.drawable.ic_stop else if (wantsPlay) R.drawable.ic_pause else R.drawable.ic_play
-        val description = getString(if (wantsPlay && station != null) R.string.radio_stop else if (wantsPlay) R.string.pause else R.string.play)
+        radioWarmupReady.value = ready && !radioControls && !model.app.startupPlayback.pending &&
+            model.playRequest.value == null && player?.isPlaying == true
+        val showPause = !Util.shouldShowPlayButton(player, false)
+        val icon = if (showPause && radioControls) R.drawable.ic_stop else if (showPause) R.drawable.ic_pause else R.drawable.ic_play
+        val description = getString(if (showPause && radioControls) R.string.radio_stop else if (showPause) R.string.pause else R.string.play)
+        val primaryInk = primaryControlHighlight()?.let(::primaryControlInk)
+            ?: AccentTheme.color(binding.root, com.google.android.material.R.attr.colorOnSurface)
         listOf(now.controls.play, binding.miniPlay).forEach {
-            it.setImageResource(icon)
+            PlayerIcons.image(it, icon, primaryInk)
             it.contentDescription = description
-            it.isEnabled = ready
+            it.isEnabled = ready && !pendingRadio
         }
-        now.controls.previous.isEnabled = if (station != null) player?.hasPreviousMediaItem() == true else player != null && track != null
-        val canNext = player?.hasNextMediaItem() == true
+        now.controls.previous.isEnabled = !pendingRadio && if (station != null)
+            player?.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM) == true else player != null && track != null
+        val canNext = !pendingRadio && if (station != null) player?.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM) == true
+            else player?.hasNextMediaItem() == true
         now.controls.next.isEnabled = canNext
         binding.miniNext.isEnabled = canNext
-        now.controls.rewind.contentDescription = getString(if (station != null) R.string.radio_source_previous else R.string.rewind)
-        now.controls.forward.contentDescription = getString(if (station != null) R.string.radio_source_next else R.string.forward)
+        now.controls.rewind.contentDescription = getString(if (radioControls) R.string.radio_source_previous else R.string.rewind)
+        now.controls.forward.contentDescription = getString(if (radioControls) R.string.radio_source_next else R.string.forward)
         val options = model.app.playbackSettings.options.value
-        now.controls.shuffle.isEnabled = station == null
-        now.controls.repeat.isEnabled = station == null
-        now.controls.position.isEnabled = station == null
+        now.controls.shuffle.isEnabled = !radioControls
+        now.controls.repeat.isEnabled = !radioControls
+        now.controls.position.isEnabled = !radioControls
         val shuffled = options.order == PlayOrder.RANDOM
         now.controls.shuffle.contentDescription = getString(orderLabel(options.order))
-        now.controls.shuffle.imageTintList = tint(shuffled)
-        now.controls.shuffle.isSelected = shuffled
-        now.controls.repeat.setImageResource(when (options.loop) {
+        now.controls.shuffle.isSelected = shuffled && !radioControls
+        PlayerIcons.image(now.controls.shuffle, R.drawable.ic_shuffle, tint(shuffled).defaultColor)
+        PlayerIcons.image(now.controls.repeat, when (options.loop) {
             LoopMode.SINGLE_FILE -> R.drawable.ic_repeat_one
             LoopMode.FOLDER -> R.drawable.ic_folder
             else -> R.drawable.ic_repeat
-        })
-        now.controls.repeat.imageTintList = tint(options.loop != LoopMode.OFF)
-        now.controls.repeat.isSelected = options.loop != LoopMode.OFF
+        }, tint(options.loop != LoopMode.OFF).defaultColor)
+        now.controls.repeat.isSelected = options.loop != LoopMode.OFF && !radioControls
         now.controls.repeat.contentDescription = getString(R.string.loop_mode_description, getString(loopLabel(options.loop)))
-        now.controls.playbackOptions.text = if (station != null) getString(R.string.radio_music_saved) else getString(R.string.playback_options_summary,
-            getString(R.string.loop_mode_description, getString(loopLabel(options.loop))), getString(orderLabel(options.order)))
+        now.controls.playbackOptions.setTextIfChanged(if (radioControls) getString(R.string.radio_music_saved)
+            else getString(R.string.playback_options_summary,
+                getString(R.string.loop_mode_description, getString(loopLabel(options.loop))), getString(orderLabel(options.order))))
+        now.controls.playbackOptions.isVisible = !radioControls
         val favored = if (station != null) station.id in model.app.radio.options.value.pins else track?.id in model.library.value.favorites
-        val favoriteLabel = getString(if (station != null) {
+        val favoriteLabel = getString(if (radioControls) {
             if (favored) R.string.radio_unpin else R.string.radio_pin
         } else if (favored) R.string.unfavorite else R.string.favorite)
         now.controls.favorite.contentDescription = favoriteLabel
-        now.controls.favorite.text = if (now.root.compactControls) "" else favoriteLabel
-        now.controls.favorite.setIconResource(if (station != null) R.drawable.ic_pin
+        now.controls.favorite.setTextIfChanged(if (now.root.compactControls) "" else favoriteLabel)
+        PlayerIcons.button(now.controls.favorite, if (radioControls) R.drawable.ic_pin
             else if (favored) R.drawable.ic_favorite else R.drawable.ic_favorite_border)
         val favoriteScale = if (favored) SELECTED_CONTROL_SCALE else 1f
         now.controls.favorite.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, favoriteTextSize * favoriteScale)
         now.controls.favorite.iconSize = (favoriteIconSize * favoriteScale).roundToInt()
         now.controls.favorite.isSelected = favored
-        now.controls.favorite.isEnabled = station != null || (track != null && findTrack(track.id) != null)
-        now.controls.details.isEnabled = station != null || track != null
+        now.controls.favorite.isEnabled = !pendingRadio && (station != null || (track != null && findTrack(track.id) != null))
+        val returnToMusic = radioControls
+        val modeLabel = getString(if (returnToMusic) R.string.resume_music else R.string.resume_radio)
+        now.controls.switchPlaybackMode.apply {
+            contentDescription = modeLabel
+            ViewCompat.setStateDescription(this, mode)
+            setTextIfChanged(if (now.root.compactControls) "" else getString(if (returnToMusic) R.string.music_mode else R.string.radio))
+            TooltipCompat.setTooltipText(this, getString(R.string.playback_mode_switch_description, mode, modeLabel))
+            isEnabled = ready && modeSwitchCommand == null && !model.app.radioPreparing.value && !model.backupBusy.value
+            PlayerIcons.button(this, if (returnToMusic) R.drawable.ic_note else R.drawable.ic_radio, primaryInk)
+        }
+        now.controls.details.isEnabled = !pendingRadio && (station != null || track != null)
         val detailsLabel = if (station != null) getString(R.string.radio_sources, station.sources.size) else getString(R.string.details)
-        now.controls.details.text = if (now.root.compactControls) "" else detailsLabel
+        now.controls.details.setTextIfChanged(if (now.root.compactControls) "" else detailsLabel)
         now.controls.details.contentDescription = detailsLabel
+        PlayerIcons.refresh(now.controls.root)
+        PlayerIcons.refresh(binding.miniPlayer)
         val status = when {
             !ready -> getString(R.string.connecting)
+            pendingRadio -> getString(R.string.loading)
             player.playbackState == Player.STATE_BUFFERING -> getString(
-                if (station != null) R.string.radio_connecting else R.string.buffering)
+                if (radioControls) R.string.radio_connecting else R.string.buffering)
             player.playbackState == Player.STATE_ENDED -> getString(R.string.ended)
             player.isPlaying -> getString(R.string.playing)
             player.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE -> getString(R.string.interrupted_audio)
-            else -> getString(if (station != null) R.string.radio_stopped else R.string.paused)
+            else -> getString(if (radioControls) R.string.radio_stopped else R.string.paused)
         }
-        now.controls.status.text = if (player != null && player.mediaItemCount > 0) {
-            "$status  ·  ${getString(R.string.queue_position, player.currentMediaItemIndex + 1, player.mediaItemCount)}"
-        } else status
+        val modeStatus = if (model.app.radioPreparing.value) getString(R.string.radio_switching)
+            else getString(R.string.playback_mode_status, mode, status)
+        now.controls.status.setTextIfChanged(if (player != null && player.mediaItemCount > 0) {
+            "$modeStatus  ·  ${getString(R.string.queue_position, player.currentMediaItemIndex + 1, player.mediaItemCount)}"
+        } else modeStatus)
+        renderRecovery()
         updateProgress()
         updateVolume()
-        progressPolling.value = station == null && player?.isPlaying == true && (visibleScreen === now.root || binding.miniPlayer.isVisible)
+        progressPolling.value = !radioControls && player?.isPlaying == true && (visibleScreen === now.root || binding.miniPlayer.isVisible)
         volumePolling.value = visibleScreen === now.root
         radioStatusPolling.value = station != null && wantsPlay && visibleScreen === now.root &&
             model.app.radio.options.value.tuning.showStatus
@@ -2579,29 +3216,136 @@ class MainActivity : AppCompatActivity() {
         renderRadioQuickStations()
     }
 
+    private fun updateWindowTitle(nowPlaying: String?) {
+        val name = getString(R.string.app_name)
+        val windowTitle = nowPlaying?.takeIf { it.isNotBlank() }
+            ?.let { getString(R.string.now_playing_window_title, name, it) } ?: name
+        if (this.title != windowTitle) this.title = windowTitle
+        if (pendingScreenId == null && model.selectedScreen.value != R.id.action_settings &&
+            !(compactChrome && visibleScreen is ListPanel) && binding.toolbar.title != windowTitle) {
+            binding.toolbar.title = windowTitle
+        }
+    }
+
+    private fun recoveryTrack(): Track? {
+        val problem = model.app.playbackProblem.value?.takeUnless { it.radio } ?: return null
+        return model.library.value.tracks.firstOrNull { it.id == problem.mediaId || problem.mediaId in it.restoredIds }
+            ?: currentTrack()
+    }
+
+    private fun recoverySource(): FolderSource? {
+        val problem = model.app.playbackProblem.value
+        if (problem != null) {
+            if (problem.radio) return null
+            val track = recoveryTrack() ?: return null
+            return model.library.value.sources.firstOrNull { track.sourceUris[it.uri] == problem.uri }
+                ?: model.library.value.sources.firstOrNull { it.uri in track.sourceUris }
+        }
+        val browser = model.browser.value
+        if (browser.error != null) {
+            model.library.value.sources.firstOrNull { it.uri == browser.path.lastOrNull()?.sourceUri }?.let { return it }
+        }
+        return model.library.value.sources.firstOrNull { it.unavailable || it.needsReconnect }
+    }
+
+    private fun renderRecovery() {
+        val problem = model.app.playbackProblem.value
+        val source = recoverySource()
+        val browser = model.browser.value
+        val message = when {
+            problem != null -> getString(if (problem.radio) R.string.radio_failed else R.string.playback_failed,
+                problem.title.ifBlank { getString(R.string.unnamed_file) }, problem.errorCodeName)
+            source != null -> getString(R.string.source_failed, sourceName(source),
+                browser.error?.takeIf { browser.path.lastOrNull()?.sourceUri == source.uri }
+                    ?: source.lastIssue ?: getString(if (source.needsReconnect)
+                        R.string.reconnect_folder_first else R.string.source_unavailable))
+            else -> null
+        }
+        val busy = model.backupBusy.value || model.recoveringSource.value != null ||
+            if (problem != null) controller == null || !model.app.playbackReady.value ||
+                controller?.playbackState == Player.STATE_BUFFERING || modeSwitchCommand != null || model.app.radioPreparing.value
+            else model.scan.value != null || browser.loading
+        binding.recoveryStatus.render(message, busy, when {
+            source != null -> R.string.recovery_reselect_folder
+            problem != null && !problem.radio && recoveryTrack() != null -> R.string.recovery_reselect_file
+            else -> null
+        })
+        if (source?.needsReconnect == true && problem == null) binding.recoveryStatus.retry.isEnabled = false
+    }
+
+    private fun retryRecovery() {
+        val problem = model.app.playbackProblem.value
+        if (problem == null) {
+            val source = recoverySource() ?: return
+            if (!source.unavailable && model.browser.value.error != null && model.browser.value.path.lastOrNull()?.sourceUri == source.uri)
+                model.refreshBrowser()
+            else model.scanFolders(listOf(source))
+            return
+        }
+        if (problem.radio) {
+            val future = radioCommand(RadioCommands.play, Bundle().apply { putString(RadioCommands.STATION, problem.mediaId) }) ?: return
+            modeSwitchCommand = future
+            renderRecovery()
+            future.addListener({
+                if (modeSwitchCommand === future) modeSwitchCommand = null
+                updatePlayer()
+            }, ContextCompat.getMainExecutor(this))
+        } else withController { player ->
+            val item = player.currentMediaItem ?: return@withController
+            if (!problem.matches(item.mediaId, item.localConfiguration?.uri?.toString())) return@withController
+            val track = recoveryTrack()
+            if (track != null && track.uri != problem.uri && !BackupEdits.unavailable(track.uri)) {
+                val index = player.currentMediaItemIndex
+                val position = player.currentPosition
+                player.replaceMediaItem(index, item.buildUpon().setMediaId(track.id).setUri(track.uri)
+                    .setMediaMetadata(track.toMediaItem().mediaMetadata).build())
+                player.seekTo(index, position)
+            }
+            player.prepare()
+            player.play()
+        }
+    }
+
+    private fun reselectRecovery() {
+        val source = recoverySource()
+        if (source == null) {
+            recoveryTrack()?.let(::launchReconnectTrack)
+            return
+        }
+        if (source.needsReconnect) {
+            reconnectSourceDialog(source)
+            return
+        }
+        model.prepareFolderRecovery(source.uri)
+        if (!launchExplorer(reselectFolder, ExplorerMode.MUSIC_FOLDER)) model.prepareFolderRecovery(null)
+    }
+
     private fun updateProgress() {
         val mainVisible = visibleScreen === now.root
         val miniVisible = binding.miniPlayer.isVisible
         if (!mainVisible && !miniVisible) return
         val player = controller
         val station = currentRadio()
-        if (station != null) {
+        if (radioPanelRequested()) {
             now.controls.seek.isEnabled = false
             binding.miniSeek.isEnabled = false
             now.controls.seek.progress = 0
             binding.miniSeek.progress = 0
-            val canSwitch = player != null && model.app.playbackReady.value && radioSourceCommand == null
-            now.controls.rewind.isEnabled = canSwitch && station.sourceIndex > 0
-            now.controls.forward.isEnabled = canSwitch && station.sourceIndex < station.sources.lastIndex
-            now.controls.position.setTextIfChanged(getString(R.string.radio_live))
+            val canSwitch = station != null && player != null && model.app.playbackReady.value && radioSourceCommand == null
+            val sources = station?.let { model.app.radioCatalog.find(it.id)?.sources }.orEmpty()
+            val sourceIndex = station?.let { sources.indexOf(it.streamUri) } ?: -1
+            now.controls.rewind.isEnabled = canSwitch && sourceIndex > 0
+            now.controls.forward.isEnabled = canSwitch && sourceIndex >= 0 && sourceIndex < sources.lastIndex
+            val position = getString(if (station == null) R.string.loading else R.string.radio_live)
+            now.controls.position.setTextIfChanged(position)
             now.controls.duration.setTextIfChanged("")
-            binding.miniTime.setTextIfChanged(getString(R.string.radio_live))
+            binding.miniTime.setTextIfChanged(position)
             return
         }
 
         val duration = player?.duration?.takeIf { it > 0 && it != C.TIME_UNSET }
         val total = duration ?: currentTrack()?.durationMs?.takeIf { it > 0 }
-        val seekable = duration != null && player?.isCurrentMediaItemSeekable == true &&
+        val seekable = !model.app.radioPreparing.value && duration != null && player?.isCurrentMediaItemSeekable == true &&
             player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
         // Retain an invalidated drag until release so later move events cannot seek the next track.
         val preview = draggingSeek?.takeIf { seekable && draggingTrackId == player?.currentMediaItem?.mediaId }
@@ -2633,14 +3377,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateRadioStatus() {
-        val station = currentRadio()
         val tuning = model.app.radio.options.value.tuning
-        val show = station != null && tuning.showStatus
+        val show = radioPanelRequested() && tuning.showStatus
         now.controls.radioStreamStatus.isVisible = show
-        if (!show || station == null) return
-        val player = controller ?: return
-        val speed = if (player.playWhenReady) model.app.radioTraffic.bytesPerSecond(station.id) / 1024.0 else 0.0
-        val buffered = player.totalBufferedDuration.coerceAtLeast(0) / 1000.0
+        if (!show) return
+        val station = currentRadio()
+        val player = controller
+        val speed = if (station != null && player?.playWhenReady == true)
+            model.app.radioTraffic.bytesPerSecond(station.id) / 1024.0 else 0.0
+        val buffered = if (station != null) (player?.totalBufferedDuration ?: 0).coerceAtLeast(0) / 1000.0 else 0.0
         now.controls.radioStreamStatus.setTextIfChanged(getString(R.string.radio_stream_status,
             speed, buffered, tuning.bufferSeconds))
     }
@@ -2661,9 +3406,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateVolume() {
         val muted = model.app.playbackSettings.muted.value
-        now.controls.volumeMute.setImageResource(if (muted) R.drawable.ic_volume_off else R.drawable.ic_volume_on)
+        PlayerIcons.image(now.controls.volumeMute, if (muted) R.drawable.ic_volume_off else R.drawable.ic_volume_on, tint(muted).defaultColor)
         now.controls.volumeMute.contentDescription = getString(if (muted) R.string.unmute_player else R.string.mute_player)
-        now.controls.volumeMute.imageTintList = tint(muted)
         now.controls.volumeMute.isSelected = muted
         now.controls.volume.progress = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
         now.controls.volumeValue.setTextIfChanged(getString(R.string.volume_level, now.controls.volume.progress))
@@ -2676,19 +3420,27 @@ class MainActivity : AppCompatActivity() {
     private fun updateArtwork(uri: String?) {
         if (!optionalContentStarted) return
         val station = currentRadio()
-        val key = station?.id ?: uri
+        val radio = radioPanelRequested()
+        val logo = model.app.displaySettings.options.value.appLogo
+        val fallback = model.app.radio.options.value.buttonLogo
+        val key = station?.let { "${model.app.radioLogos.identity(it)}:$fallback" }
+            ?: if (radio) "radio:$fallback" else uri ?: "brand:$logo"
         if (artworkUri == key) return
         artworkUri = key
         artworkWarning = null
         artworkJob?.cancel()
-        now.cover.artwork.setImageResource(if (station != null) R.drawable.ic_radio else R.drawable.player_logo)
-        binding.miniArtwork.setImageResource(if (station != null) R.drawable.ic_radio else R.drawable.ic_launcher)
-        binding.navigation.artwork.setImageResource(if (station != null) R.drawable.ic_radio else R.drawable.ic_launcher)
+        now.cover.artwork.setImageResource(if (radio) Branding.radio(fallback) else Branding.artwork(logo))
+        binding.miniArtwork.setImageResource(if (radio) Branding.radio(fallback) else Branding.icon(logo))
+        binding.navigation.artwork.setImageResource(if (radio) Branding.radio(fallback) else Branding.icon(logo))
+        val fallbackTint = if (radio && fallback == com.macarmusic.app.radio.RadioButtonLogo.CLASSIC_RADIO) tint(true) else null
+        listOf(now.cover.artwork, binding.miniArtwork, binding.navigation.artwork).forEach { it.imageTintList = fallbackTint }
         if (station != null) {
-            artworkJob = lifecycleScope.launch {
+            artworkJob = contentScope.launch {
                 try {
                     model.app.radioLogos.cached(station)?.let {
-                        if (artworkUri == station.id) {
+                        if (artworkUri == key) {
+                            binding.miniArtwork.imageTintList = null
+                            binding.navigation.artwork.imageTintList = null
                             binding.miniArtwork.setImageBitmap(it)
                             binding.navigation.artwork.setImageBitmap(it)
                         }
@@ -2700,10 +3452,10 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        if (uri.isNullOrBlank()) return
-        artworkJob = lifecycleScope.launch {
+        if (radio || uri.isNullOrBlank()) return
+        artworkJob = contentScope.launch {
             val cover = model.app.artwork.load(uri)
-            if (artworkUri == uri) {
+            if (artworkUri == key) {
                 artworkWarning = cover.warning
                 cover.bitmap?.let {
                     now.cover.artwork.setImageBitmap(it)
@@ -2715,7 +3467,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderLyrics(state: LyricState) {
-        val enabled = currentRadio() == null && model.app.displaySettings.options.value.lyricsEnabled &&
+        val enabled = !radioPanelRequested() && model.app.displaySettings.options.value.lyricsEnabled &&
             state.trackId != null && state.trackId == currentTrack()?.id
         val result = state.result
         val lyrics = result?.lyrics.takeIf { enabled }
@@ -2726,7 +3478,7 @@ class MainActivity : AppCompatActivity() {
         now.root.configureLyrics(display.landscapeLyrics, display.portraitLyrics)
         lyricScrolling.configure(display.lyricsDragSeek, display.lyricsSmoothScroll)
         lyricScrolling.submit(lyrics, state.trackId)
-        now.cover.artwork.isVisible = lyrics == null && currentRadio() == null
+        now.cover.artwork.isVisible = lyrics == null && !radioPanelRequested()
         now.cover.lyricsList.isVisible = lyrics != null
         now.cover.lyricsStatus.isVisible = enabled
         now.cover.lyricsFooter.isVisible = enabled
@@ -2787,13 +3539,16 @@ class MainActivity : AppCompatActivity() {
             lyricVersionsDialog?.dismiss()
             return
         }
+        val generation = contentGeneration
         val dialog = lyricVersionsDialog ?: LyricVersionsDialog(this,
             { model.app.displaySettings.options.value },
             { model.chooseLyricVersion(it) },
             { model.chooseLyricVersion(it, best = true) },
             { model.removeLyricVersion(it) }) {
-                lyricVersionsDialog = null
-                if (!isChangingConfigurations) model.closeLyricVersions()
+                if (generation == contentGeneration) {
+                    lyricVersionsDialog = null
+                    if (!isChangingConfigurations) model.closeLyricVersions()
+                }
             }.also {
                 lyricVersionsDialog = it
                 it.show()
@@ -2806,10 +3561,13 @@ class MainActivity : AppCompatActivity() {
             onlineLyricsDialog?.dismiss()
             return
         }
+        val generation = contentGeneration
         val dialog = onlineLyricsDialog ?: OnlineLyricsDialog(this,
             { model.app.displaySettings.options.value }, model::chooseOnlineLyric) {
-                onlineLyricsDialog = null
-                if (!isChangingConfigurations) model.closeOnlineLyrics()
+                if (generation == contentGeneration) {
+                    onlineLyricsDialog = null
+                    if (!isChangingConfigurations) model.closeOnlineLyrics()
+                }
             }.also {
                 onlineLyricsDialog = it
                 it.show()
@@ -2822,6 +3580,7 @@ class MainActivity : AppCompatActivity() {
             lyricDownloadsDialog?.dismiss()
             return
         }
+        val generation = contentGeneration
         val dialog = lyricDownloadsDialog ?: LyricDownloadsDialog(this,
             { model.app.displaySettings.options.value },
             {
@@ -2830,8 +3589,10 @@ class MainActivity : AppCompatActivity() {
                 else cache.folder?.name ?: getString(R.string.lyrics_download_internal)
             },
             model::cancelLyricDownloads) {
-                lyricDownloadsDialog = null
-                if (!isChangingConfigurations) model.closeLyricDownloads()
+                if (generation == contentGeneration) {
+                    lyricDownloadsDialog = null
+                    if (!isChangingConfigurations) model.closeLyricDownloads()
+                }
             }.also {
                 lyricDownloadsDialog = it
                 it.show()
@@ -2923,9 +3684,11 @@ class MainActivity : AppCompatActivity() {
             }
             .create().also { dialog ->
                 dialog.setOnDismissListener {
-                    lyricTimingDialog = null
-                    timingTrackId = null
-                    timingDocument = null
+                    if (lyricTimingDialog === dialog) {
+                        lyricTimingDialog = null
+                        timingTrackId = null
+                        timingDocument = null
+                    }
                     if (!saveRequested) model.cancelLyricTiming(trackId, result)
                 }
                 dialog.show()
@@ -2965,8 +3728,9 @@ class MainActivity : AppCompatActivity() {
         binding.backgroundTint.setBackgroundColor(BackgroundEffects.tintColor(options.tint, options.tintStrength))
         binding.toolbar.setBackgroundColor(Color.TRANSPARENT)
         binding.navigation.setBackgroundColor(if (custom) Color.TRANSPARENT else surface)
-        binding.miniPlayer.setBackgroundColor(if (custom) Color.TRANSPARENT
-            else MaterialColors.getColor(binding.root, com.google.android.material.R.attr.colorSurfaceVariant))
+        binding.miniPlayer.setBackgroundColor(androidx.core.graphics.ColorUtils.setAlphaComponent(
+            MaterialColors.getColor(binding.root, com.google.android.material.R.attr.colorSurfaceVariant),
+            ((100 - options.effectiveMiniPlayerTransparency) * 255 / 100)))
         for (view in binding.screenContainer.children) {
             view.setBackgroundColor(Color.TRANSPARENT)
         }
@@ -2976,17 +3740,19 @@ class MainActivity : AppCompatActivity() {
         barElevations.forEach { (view, elevation) -> view.elevation = if (custom) 0f else elevation }
         val indicator = navigationIndicator
         binding.navigation.isItemActiveIndicatorEnabled = !custom && indicator
-        binding.noticeBar.setBackgroundColor(Color.TRANSPARENT)
-        renderNotice(shownNotice)
+        renderNotice(model.app.notice.value)
     }
 
     private fun renderControlBlocks(enabled: Boolean, outline: BlockOutline) {
-        if (appliedControlBlocks == (enabled to outline)) return
+        val primaryColor = primaryControlHighlight()
+        val appearance = Triple(enabled, outline, primaryColor)
+        if (appliedControlBlocks == appearance) return
         val framed = enabled && outline.hasBorder
         val backgrounds = originalControlBackgrounds
         val padding = originalControlPadding
         val shapes = originalActionShapes
         val strokes = originalActionStrokes
+        val modeColors = originalModeColors
         val color = MaterialColors.getColor(binding.root, com.google.android.material.R.attr.colorOutline)
         val ripple = ColorStateList.valueOf(MaterialColors.getColor(binding.root, com.google.android.material.R.attr.colorControlHighlight))
         fun border() = PlayerBlockDrawable(outline, color, resources.displayMetrics.density)
@@ -3003,7 +3769,19 @@ class MainActivity : AppCompatActivity() {
                 maxOf(original.right, inset), maxOf(original.bottom, vertical))
         }
         controlBlockButtons.forEach {
-            it.background = if (framed) RippleDrawable(ripple, border(), ColorDrawable(Color.WHITE)) else backgrounds[it]
+            if (primaryColor != null && (it === now.controls.play || it === binding.miniPlay)) {
+                fun fill(color: Int) = GradientDrawable().apply {
+                    setColor(color)
+                    cornerRadius = dp(if (framed && outline.hasArc) outline.arcDp else 6).toFloat()
+                }
+                val fill = StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_enabled), fill(primaryColor))
+                    addState(intArrayOf(), fill(androidx.core.graphics.ColorUtils.setAlphaComponent(primaryColor, 96)))
+                }
+                val content = if (framed) LayerDrawable(arrayOf(fill, border())) else fill
+                if (Build.VERSION.SDK_INT == 23) it.background?.jumpToCurrentState()
+                it.background = RippleDrawable(ripple, content, ColorDrawable(Color.WHITE))
+            } else it.background = if (framed) RippleDrawable(ripple, border(), ColorDrawable(Color.WHITE)) else backgrounds[it]
             it.foreground = it.playerFocusForeground()
         }
         controlBlockOverlays.forEach {
@@ -3018,6 +3796,8 @@ class MainActivity : AppCompatActivity() {
             if (::queuePanel.isInitialized) queuePanel else null,
             if (::playlistPanel.isInitialized) playlistPanel else null,
         ).forEach { it.configureBlocks(enabled, outline) }
+        radioStickyHeader?.configureBlocks(enabled, outline)
+        radioSubscriptionsDialog?.configureBlocks(enabled, outline)
         radioQuickAdapter?.configureBlocks(enabled, outline)
         if (::settingsButtons.isInitialized) settingsButtons.apply(enabled, outline)
         if (::settings.isInitialized) AboutContent.configureBorder(settings.settingsAboutPanel, enabled, outline)
@@ -3026,8 +3806,21 @@ class MainActivity : AppCompatActivity() {
             button.shapeAppearanceModel = if (framed) shape.toBuilder().setAllCornerSizes(dp(6).toFloat()).build() else shape
             button.strokeWidth = if (enabled || !outline.hasBorder) 0 else requireNotNull(strokes[button])
         }
-        appliedControlBlocks = enabled to outline
+        now.controls.switchPlaybackMode.apply {
+            backgroundTintList = if (primaryColor == null) modeColors.first else
+                ColorStateList(arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()),
+                    intArrayOf(primaryColor, androidx.core.graphics.ColorUtils.setAlphaComponent(primaryColor, 96)))
+            setTextColor(if (primaryColor == null) modeColors.second else PlayerIcons.tint(context, primaryControlInk(primaryColor)))
+        }
+        appliedControlBlocks = appearance
     }
+
+    private fun primaryControlColor(): Int = AccentTheme.primaryControlColor(binding.root)
+
+    private fun primaryControlHighlight(): Int? = primaryControlColor()
+        .takeIf { model.app.displaySettings.options.value.primaryControlHighlightEnabled }
+
+    private fun primaryControlInk(background: Int): Int = AccentTheme.primaryControlInk(binding.root, background)
 
     private fun renderCategoryDividers(enabled: Boolean, outline: BlockOutline) {
         if (!::settings.isInitialized) return
@@ -3109,8 +3902,7 @@ class MainActivity : AppCompatActivity() {
             reported(Build.MANUFACTURER), reported(Build.MODEL), reported(Build.DISPLAY),
             reported(System.getProperty("os.version")))
         AccentTheme.dialog(this).setTitle(R.string.system_info).setMessage(details)
-            .setPositiveButton(R.string.understood, null).show()
-            .findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
+            .setPositiveButton(R.string.close, null).show().makeMessageSelectable()
     }
 
     private fun defaultPlayerDialog() {
@@ -3366,7 +4158,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             val source = currentSource() ?: return
             val parent = model.browser.value.path.lastOrNull()?.documentId ?: return
-            lifecycleScope.launch {
+            contentScope.launch {
                 model.guard {
                     val path = model.browser.value.path.lastOrNull()?.relativePath.orEmpty()
                     val track = model.repository.browserTrack(entry.uri, source.uri, parent,
@@ -3581,7 +4373,7 @@ class MainActivity : AppCompatActivity() {
         val dialog = AccentTheme.dialog(this).setTitle(R.string.details)
             .setMessage(details(getString(R.string.loading)))
             .setPositiveButton(R.string.close, null).show()
-        val job = lifecycleScope.launch {
+        val job = contentScope.launch {
             try {
                 val result = model.repository.metadataForDetails(track)
                 displayed = result.track
@@ -3625,7 +4417,7 @@ class MainActivity : AppCompatActivity() {
             if (dialog.isShowing) {
                 val body = details(location)
                 dialog.setMessage(if (warning == null) body else "$body\n\n${getString(R.string.artwork_issue, warning)}")
-                dialog.findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
+                dialog.makeMessageSelectable()
             }
         }
         dialog.setOnDismissListener { job.cancel() }
@@ -3688,9 +4480,12 @@ class MainActivity : AppCompatActivity() {
         AccentTheme.dialog(this).setTitle(R.string.language)
             .setSingleChoiceItems(labels.map(::getString).toTypedArray(), selected) { dialog, index ->
                 dialog.dismiss()
-                AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tags[index]))
-                model.app.applicationScope.launch(Dispatchers.Main.immediate) { model.app.homeWidgets.refresh() }
+                changeLanguage(tags[index])
             }.setNegativeButton(R.string.cancel, null).show()
+    }
+
+    private fun changeLanguage(tags: String) {
+        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tags))
     }
 
     private fun loopDialog() {
@@ -3764,33 +4559,16 @@ class MainActivity : AppCompatActivity() {
     private fun orderLabel(order: PlayOrder): Int =
         if (order == PlayOrder.RANDOM) R.string.order_random else R.string.order_sequential
 
-    private fun choiceDialog(title: String, actions: List<Pair<String, () -> Unit>>) {
+    private fun choiceDialog(title: String, actions: List<Pair<String, () -> Unit>>, show: Boolean = true): PlayerDialog =
         AccentTheme.dialog(this).setTitle(title)
             .setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second() }
-            .setNegativeButton(R.string.cancel, null).show()
-    }
+            .setNegativeButton(R.string.cancel, null).create().also { if (show) it.show() }
 
     private fun renderNotice(notice: Notice?) {
-        shownNotice = notice
-        binding.noticeBar.isVisible = notice != null
-        binding.noticeText.text = notice?.text
-        if (compactChrome) TooltipCompat.setTooltipText(binding.noticeText, notice?.text)
-        if (notice != null) {
-            val custom = model.app.displaySettings.options.value.let { it.customTheme && it.imageVersion > 0 }
-            val background = if (custom) Color.TRANSPARENT else MaterialColors.getColor(binding.root,
-                if (notice.isError) com.google.android.material.R.attr.colorErrorContainer
-                else com.google.android.material.R.attr.colorPrimaryContainer)
-            val foreground = MaterialColors.getColor(binding.root,
-                if (custom) com.google.android.material.R.attr.colorOnSurface
-                else if (notice.isError) com.google.android.material.R.attr.colorOnErrorContainer
-                else com.google.android.material.R.attr.colorOnPrimaryContainer)
-            binding.noticeBar.setBackgroundColor(background)
-            binding.noticeText.setTextColor(foreground)
-            binding.dismissNotice.imageTintList = ColorStateList.valueOf(foreground)
-        }
+        binding.noticeHost.render(notice)
     }
 
-    private fun tint(active: Boolean): ColorStateList = ColorStateList.valueOf(
+    private fun tint(active: Boolean): ColorStateList = PlayerIcons.tint(this,
         AccentTheme.color(binding.root, if (active) com.google.android.material.R.attr.colorPrimary
         else com.google.android.material.R.attr.colorOnSurfaceVariant),
     )

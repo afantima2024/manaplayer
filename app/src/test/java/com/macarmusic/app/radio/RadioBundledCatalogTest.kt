@@ -21,7 +21,7 @@ class RadioBundledCatalogTest {
         val imported = RadioList.merge(emptyList(), parsed.entries, emptyMap()).programs
         assertTrue(bundled.map { it.id }.containsAll(imported.map { it.id }))
         assertEquals(bundled.size, bundled.distinctBy { it.id }.size)
-        assertEquals(417, bundled.size)
+        assertEquals(418, bundled.size)
         assertTrue(bundled.filter { it.builtin != null }.all { it.name.isEmpty() })
         RadioList.validate(bundled)
         println("Bundled stations=${bundled.size}, addresses=${addresses.size}, groups=" +

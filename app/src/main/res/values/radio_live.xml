@@ -4,6 +4,14 @@
     <item type="id" name="radioEditGroup" />
     <item type="id" name="radioEditSources" />
     <item type="id" name="radioEditLogo" />
+    <item type="id" name="radioStickyGroup" />
+    <string name="radio_move_pin">Move pinned station</string>
+    <string name="radio_move_pin_position">%1$d. %2$s</string>
+    <string name="radio_pin_order_changed">The pinned list changed. Try moving the station again.</string>
+    <string name="radio_section_china">Chinese stations</string>
+    <string name="radio_section_international">International stations</string>
+    <string name="radio_section_other">Unclassified groups</string>
+    <string name="radio_region_china">China</string>
     <string name="radio_settings">Radio settings</string>
     <string name="radio_settings_invalid">Saved radio settings are invalid. Safe defaults are being used; review Radio settings.</string>
     <string name="radio_cri">China Radio International</string>
@@ -16,8 +24,6 @@
     <string name="radio_pin_limit">The %1$d shortcut slots are full. Unpin a station before pinning another.</string>
     <string name="radio_pins_empty">No pinned stations. Open Radio, hold a channel and choose Pin.</string>
     <string name="radio_sources">Sources (%1$d)</string>
-    <string name="radio_source_count">%1$d sources</string>
-    <string name="radio_list_station">%1$s · %2$d sources</string>
     <string name="radio_source_item">Source %1$d\n%2$s</string>
     <string name="radio_source_position">Source %1$d/%2$d · %3$s</string>
     <string name="radio_source_previous">Previous playing source</string>
@@ -29,11 +35,11 @@
     <string name="radio_edit_group">Group (blank = identify region)</string>
     <string name="radio_edit_sources">Audio URLs, one per line (HTTP is unencrypted)</string>
     <string name="radio_edit_logo">Logo URL (optional; blank = built-in default)</string>
-    <string name="radio_station_saved">Station saved. Press Play to use the updated addresses.</string>
+    <string name="radio_station_saved">Station saved. An unchanged playing source continues without reconnecting.</string>
     <string name="radio_import_addresses">Remove all current stations before importing?</string>
     <string name="radio_import_append">Keep and merge</string>
     <string name="radio_import_replace">Replace all stations</string>
-    <string name="radio_import_modes_help">Keep and merge: keep all current stations and addresses. Match by station name or a known ID; skip the same source URL and add a different URL as another playing source. New names become new stations.\n\nReplace all stations: remove the current list and keep ONLY valid station/source entries from the file, including when built-ins are missing. Old addresses not in the file are removed. This choice survives restarts and backups; Reset built-ins can restore the bundled stations. Pins remain only for retained station IDs.\n\nThe original file, local music, music playlists and downloaded logo files are not deleted. Radio stops only if its catalog changes. Cancel leaves everything unchanged.</string>
+    <string name="radio_import_modes_help">Keep and merge: keep all current stations and addresses. Match by station name or a known ID; skip the same source URL and add a different URL as another playing source. New names become new stations.\n\nReplace all stations: remove the current list and keep ONLY valid station/source entries from the file, including when built-ins are missing. Old addresses not in the file are removed. This choice survives restarts and backups; Reset built-ins can restore the bundled stations. Pins remain only for retained station IDs.\n\nThe original file, local music, music playlists and downloaded logo files are not deleted. An unchanged playing source continues; replacing or removing that source pauses radio. Cancel leaves everything unchanged.</string>
     <string name="radio_buffer">Target audio buffer</string>
     <string name="radio_start_buffer">Buffer before starting / resuming</string>
     <string name="radio_seconds">%1$d seconds</string>
@@ -41,7 +47,7 @@
     <string name="radio_retries">Network request retries</string>
     <string name="radio_retry_count">%1$d retries</string>
     <string name="radio_auto_source">Try another source after failure</string>
-    <string name="radio_retries_help">Retries are bounded per failed request; unavailable or forbidden URLs are not repeatedly retried. Automatic source switching is off by default. When on, each address of the same station is tried at most once per Play attempt, then playback stops. It never skips to another station. Stop, Radio-off or returning to music cancels recovery.</string>
+    <string name="radio_retries_help">Retries are bounded per failed request; unavailable or forbidden URLs are not repeatedly retried. Automatic source switching is off by default. When on, each address of the same station is tried at most once per Play attempt, then playback stops. It never skips to another station. Stop or returning to music cancels recovery; hiding the Radio panel does not.</string>
     <string name="radio_download_logos">Download logos while listening</string>
     <string name="radio_clear_cache">Clear all cached radio logos</string>
     <string name="radio_clear_cache_confirm">Remove all downloaded radio logos? Stations, addresses, pins, music and lyrics will not be changed. Logos download again on a later playback when enabled. Audio has no persistent disk cache.</string>
@@ -50,7 +56,7 @@
     <string name="radio_logo_cache_failed">A cached radio logo could not be read. Clear radio logos in Radio settings to download it again.</string>
     <string name="radio_show_status">Show receive speed and audio buffer</string>
     <string name="radio_stream_status">Receiving %1$.1f KB/s · Buffered %2$.1f / %3$d s</string>
-    <string name="radio_status_help">Playing shows the source number and host, recent received bytes per second, and seconds of playable audio ahead. This is measured stream traffic, not a network speed test or a guarantee against interruptions. HLS downloads arrive in bursts, so 0 KB/s while buffered audio plays is normal. Status refreshes once per second only while Playing is visible. Logos are downloaded only for the station being played, kept on disk until cleared, and decoded with a small memory cache. No logos are bundled or fetched just by browsing.</string>
+    <string name="radio_status_help">Playing shows the source number and host, recent received bytes per second, and seconds of playable audio ahead. This is measured stream traffic, not a network speed test or a guarantee against interruptions. HLS downloads arrive in bursts, so 0 KB/s while buffered audio plays is normal. Status refreshes once per second only while Playing is visible. Remote logos are downloaded while listening or through Download all pinned station logos, kept on disk until cleared, and decoded with a small memory cache. Bundled marks need no download. Browsing never fetches logos.</string>
     <string name="radio_group_national">National stations</string>
     <string name="radio_group_other">Others</string>
     <string name="radio_group_expanded">Expanded</string>

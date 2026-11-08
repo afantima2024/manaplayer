@@ -14,6 +14,8 @@ import com.macarmusic.app.radio.RadioFavorites
 import com.macarmusic.app.radio.RadioProgram
 import com.macarmusic.app.radio.RadioList
 import com.macarmusic.app.radio.RadioDefaults
+import com.macarmusic.app.radio.RadioSubscription
+import com.macarmusic.app.radio.RadioSubscriptions
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -43,6 +45,9 @@ data class BackupSettings(
     val radio: RadioFavorites? = null,
     val radioPrograms: List<RadioProgram>? = null,
     val radioIncludeDefaults: Boolean = true,
+    val radioSubscriptions: List<RadioSubscription> = emptyList(),
+    val radioSourceSelections: Map<String, String> = emptyMap(),
+    val radioRemovedDefaults: Set<String> = emptySet(),
 )
 
 @Serializable
@@ -71,11 +76,21 @@ object BackupArchive {
         require(backup.settings.radioIncludeDefaults || backup.settings.radioPrograms != null) {
             "A replacement radio catalog requires a station list"
         }
-        backup.settings.radioPrograms?.let { RadioList.encode(it, backup.settings.radioIncludeDefaults) }
+        RadioSubscriptions.validate(backup.settings.radioSubscriptions, backup.settings.radioSourceSelections)
+        require(backup.settings.radioPrograms != null ||
+            backup.settings.radioSubscriptions.isEmpty() && backup.settings.radioSourceSelections.isEmpty() &&
+                backup.settings.radioRemovedDefaults.isEmpty()) {
+            "Radio subscriptions and deletions require a catalog snapshot"
+        }
+        backup.settings.radioPrograms?.let { RadioList.encode(it, backup.settings.radioIncludeDefaults,
+            backup.settings.radioSubscriptions, backup.settings.radioSourceSelections, backup.settings.radioRemovedDefaults) }
         backup.settings.radio?.let { radio ->
-            val ids = RadioList.catalog(backup.settings.radioPrograms.orEmpty(),
-                if (backup.settings.radioIncludeDefaults) RadioDefaults.bundled else emptyList())
-                .mapTo(hashSetOf()) { it.id }
+            val base = RadioList.catalog(backup.settings.radioPrograms.orEmpty(),
+                if (backup.settings.radioIncludeDefaults) RadioDefaults.bundled else emptyList(), backup.settings.radioRemovedDefaults)
+            val ids = RadioSubscriptions.catalog(base, backup.settings.radioSubscriptions, backup.settings.radioSourceSelections)
+                .mapTo(hashSetOf()) { it.id }.apply {
+                    backup.settings.radioSubscriptions.forEach { subscription -> subscription.programs.forEach { add(it.id) } }
+                }
             require(radio.stations.size <= ids.size && radio.stations.all { it in ids }) {
                 "Backup contains an unknown radio station"
             }

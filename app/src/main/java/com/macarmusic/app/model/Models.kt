@@ -137,3 +137,13 @@ data class ScanResult(
 data class LibraryScan(val sourceUri: String, val tracks: List<Track>, val fullSource: Boolean = true)
 
 data class Notice(val id: Long, val text: String, val isError: Boolean = true)
+
+data class PlaybackProblem(
+    val mediaId: String,
+    val uri: String,
+    val title: String,
+    val errorCodeName: String,
+    val radio: Boolean,
+) {
+    fun matches(id: String?, source: String?): Boolean = mediaId == id && uri == source
+}

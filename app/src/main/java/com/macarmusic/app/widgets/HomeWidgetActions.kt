@@ -3,6 +3,7 @@ package com.macarmusic.app.widgets
 import android.os.Bundle
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
@@ -20,17 +21,16 @@ enum class HomeWidgetAction {
     fun execute(app: MaCarMusicApp, player: Player): SessionResult {
         val error = when {
             this == MUTE -> null
-            RadioProgram.isRadio(player.currentMediaItem?.mediaId) && !app.radio.options.value.enabled -> R.string.radio_disabled
             player.mediaItemCount == 0 -> R.string.no_tracks_to_play
             this == NEXT && !player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM) -> R.string.widget_no_next
-            this == PREVIOUS && (!player.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS) ||
-                (RadioProgram.isRadio(player.currentMediaItem?.mediaId) && !player.hasPreviousMediaItem())) -> R.string.seek_unavailable
+            this == PREVIOUS && !player.isCommandAvailable(if (RadioProgram.isRadio(player.currentMediaItem?.mediaId))
+                Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM else Player.COMMAND_SEEK_TO_PREVIOUS) -> R.string.seek_unavailable
             else -> null
         }
         if (error != null) return SessionResult(SessionError.ERROR_INVALID_STATE,
             Bundle().apply { putString(ERROR_MESSAGE, app.text(error)) })
         when (this) {
-            TOGGLE -> if (player.playWhenReady && player.playbackState != Player.STATE_ENDED) player.pause() else {
+            TOGGLE -> if (!Util.shouldShowPlayButton(player, false)) player.pause() else {
                 if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition()
                 if (player.playbackState == Player.STATE_IDLE || player.playerError != null) player.prepare()
                 player.play()

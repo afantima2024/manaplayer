@@ -1,0 +1,28 @@
+<resources>
+    <string name="radio_cctv_13">CCTV-13 新闻</string>
+    <string name="radio_cctv">中央电视台</string>
+    <string name="radio_bundled_defaults_failed">未能应用内置电台默认配置。已保留原列表；请检查可用存储与订阅数量限制，然后重新启动应用。</string>
+    <string name="appearance_icons_ocean">海洋蓝</string>
+    <string name="appearance_icons_aurora">极光绿</string>
+    <string name="appearance_icons_sunset">落日珊瑚</string>
+    <string name="appearance_icons_orchid">兰花紫</string>
+    <string name="appearance_icons_logo">标志渐变</string>
+    <string name="appearance_icons_copilot_aurora">Copilot 极光</string>
+    <string name="appearance_icons_copilot_sunrise">Copilot 晨光</string>
+    <string name="radio_station_logo">选择电台台标</string>
+    <string name="radio_station_logo_auto">自动</string>
+    <string name="radio_mark_news">新闻电台</string>
+    <string name="radio_mark_talk">谈话电台</string>
+    <string name="radio_mark_pop">流行电台</string>
+    <string name="radio_mark_classic">金曲电台</string>
+    <string name="radio_mark_piano">钢琴电台</string>
+    <string name="radio_mark_acoustic">原声电台</string>
+    <string name="radio_mark_jazz">爵士电台</string>
+    <string name="radio_mark_world">环球广播</string>
+    <string name="radio_mark_ambient">夜间电台</string>
+    <string name="radio_mark_folk">民谣电台</string>
+    <string name="radio_mark_dance">舞曲电台</string>
+    <string name="radio_mark_cctv">CCTV-13</string>
+    <string name="radio_station_logos_help"><b><big>内置电台台标</big></b>\n长按电台并选择“选择电台台标”，可选 12 个内置标志：11 个原创广播节目图案与 CCTV-13。原创图案采用清晰的 FM 收音机、天线和调谐旋钮，配合新闻、谈话或音乐节目标识。不支持自定义图片。“自动”恢复下载的台标或所选默认标志。订阅刷新及 ZIP 备份会保留选择，更换台标不打断播放。内置台标无需下载，清除台标缓存也不会删除。\n\n<b><big>按钮配色</big></b>\n通用设置提供九种按钮配色。保留单色、彩色、海洋蓝、极光绿、落日珊瑚和兰花紫；“标志渐变”依照应用标志从金色、青绿、蓝色过渡至紫色和粉色，仍为默认主题。“Copilot 极光”使用反向渐变：左上方为粉色和紫色，经蓝色过渡至右下方的青绿色。“Copilot 晨光”保留暖色渐变。这两种配色参考 Copilot 渐变风格进行原创设计，并非官方图案。已保存的主题选择不会被替换。九个预览块随窗口空间自动调整，空间足够时显示三列；窄窗口或大字体时减少列数并允许滚动。全部导航、播放及桌面小组件图标统一使用所选配色。不可用按钮仍为灰色；选中状态与遥控器焦点另有标示。\n\n<b><big>CCTV-13 台标署名</big></b>\nCCTV-13 标志：中央电视台，经 Wikimedia Commons（File:CCTV-13_Logo.svg）提供，CC BY 4.0：https://creativecommons.org/licenses/by/4.0/ 。已转换为安卓矢量图并置于浅色底块，不代表广播机构认可本应用。来源：https://commons.wikimedia.org/wiki/File:CCTV-13_Logo.svg 。</string>
+    <string name="radio_bundled_defaults_help"><b><big>首次电台配置</big></b>\nAPK 包含全球热门 500 台、美国、台湾及 CCTV 电视伴音订阅快照。全新安装时启用这四项，并将 CCTV-13 固定在首位。默认只显示美国、英国、新加坡、全国、CCTV 电视、中国、北京、四川、台湾、香港、澳门和广东，其他国家／地区隐藏。从 1.50 之前的版本升级时仅添加 CCTV 订阅，并一次性显示“全国电台”，保留其他隐藏地区、固定顺序、台标和原有订阅。CCTV 列表包含 20 个音频频道：CCTV-1–17、CCTV-5+ 以及 CCTV-4 欧洲／美洲频道。这些是电视伴音，并非独立的 FM 广播频率。它们在“全国电台”之后的独立“CCTV 电视”分类中显示，已有缓存无需刷新也会正确归类。此分类可独立折叠或隐藏，明确指定的自定义分组仍会保留。频道、分组和订阅列表按钮统一使用通用设置中的方块边框样式，遥控器焦点另有标示。此后修改的隐藏状态及订阅会保留。音乐就绪后，在后台预加载内置及已保存的电台列表，为后续切换准备；不会因此连接直播、下载台标或刷新订阅。\n\n<b><big>订阅发布者与许可</big></b>\n全球、美国和台湾快照来自 AlonDrilich / 72FM，使用公有领域的 Radio Browser 目录：https://github.com/AlonDrilich/radio-playlists 。发布仓库采用 MIT 许可，声明已随快照附带。CCTV 专用快照记录 Kimentanm / aptv 社区维护列表中的频道名称和音频 CDN 链接：https://raw.githubusercontent.com/Kimentanm/aptv/master/m3u/radio.m3u 。不导入其中的其他电台、应用指令或网络台标。本应用并非央视官方应用，也不因此获得转播节目的授权。节目单只包含链接，不包含录音；地区访问限制及广播可用性可能变化。</string>
+</resources>

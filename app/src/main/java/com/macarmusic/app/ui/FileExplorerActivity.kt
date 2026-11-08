@@ -17,10 +17,12 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.text.format.Formatter
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.HorizontalScrollView
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.Space
@@ -55,11 +57,17 @@ import com.macarmusic.app.data.MediaStoreAccess
 import com.macarmusic.app.model.BackgroundImages
 import com.macarmusic.app.model.ExplorerMode
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 class FileExplorerActivity : AppCompatActivity() {
     private val model: FileExplorerViewModel by viewModels()
     private val app get() = application as MaCarMusicApp
     private lateinit var root: LinearLayout
+    private lateinit var notice: PlayerNoticeView
+    private lateinit var recovery: PlayerRecoveryView
+    private lateinit var focusMemory: PlayerFocusMemory
     private lateinit var path: AppCompatTextView
     private lateinit var status: AppCompatTextView
     private lateinit var progress: ProgressBar
@@ -71,8 +79,9 @@ class FileExplorerActivity : AppCompatActivity() {
     private lateinit var cancel: MaterialButton
     private lateinit var filename: AppCompatEditText
     private lateinit var list: RecyclerView
-    private val rows = ExplorerRows(::open, ::removeLocation)
+    private val rows = ExplorerRows(::open, ::removeLocation) { model.up() }
     private var shownItems: List<ExplorerItem>? = null
+    private var focusLocationPending = false
 
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         permissionResult()
@@ -111,8 +120,21 @@ class FileExplorerActivity : AppCompatActivity() {
         buildUi()
         onBackPressedDispatcher.addCallback(this) { if (!model.up()) finish() }
         lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) { model.state.collect(::render) }
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { model.state.collect(::render) }
+                launch { app.notice.collect(notice::render) }
+                launch {
+                    combine(app.displaySettings.options.map { it.keepScreenOn }.distinctUntilChanged(),
+                        app.playbackActive) { enabled, active -> enabled && active }
+                        .collect { root.keepScreenOn = it }
+                }
+            }
         }
+    }
+
+    override fun onStop() {
+        root.keepScreenOn = false
+        super.onStop()
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
@@ -148,13 +170,19 @@ class FileExplorerActivity : AppCompatActivity() {
             isFocusableInTouchMode = true
             setBackgroundColor(AccentTheme.color(this, com.google.android.material.R.attr.colorSurface))
         }
-        setContentView(root)
+        notice = PlayerNoticeView(this)
+        setContentView(FrameLayout(this).apply {
+            addView(root, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(notice, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
+        })
         WindowCompat.setDecorFitsSystemWindows(window, false)
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
             view.setPadding(dp(12) + bars.left, dp(8) + bars.top, dp(12) + bars.right,
                 dp(8) + maxOf(bars.bottom, keyboard.bottom))
+            notice.setPadding(dp(12) + bars.left, dp(8) + bars.top, dp(12) + bars.right, 0)
             WindowInsetsCompat.CONSUMED
         }
         @Suppress("DEPRECATION")
@@ -177,12 +205,21 @@ class FileExplorerActivity : AppCompatActivity() {
             ExplorerMode.RADIO_EXPORT -> R.string.radio_export
             ExplorerMode.LYRIC_CACHE -> R.string.explorer_lyric_folder
         }
-        root.addView(text(22f).apply {
-            id = R.id.explorerTitle
-            setText(title)
-            setTypeface(typeface, Typeface.BOLD)
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
+        root.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(AppCompatImageView(context).apply {
+                id = R.id.playerDialogLogo
+                setImageResource(Branding.icon(context))
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(12) })
+            addView(text(22f).apply {
+                id = R.id.explorerTitle
+                setText(title)
+                setTypeface(typeface, Typeface.BOLD)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         })
         path = text(16f).apply {
             id = R.id.explorerPath
@@ -191,6 +228,11 @@ class FileExplorerActivity : AppCompatActivity() {
             setPadding(0, dp(8), 0, dp(4))
         }
         root.addView(path)
+        recovery = PlayerRecoveryView(this).apply {
+            id = R.id.recoveryStatus
+            bindActions({ model.refresh() }, { systemPicker(grant = true) })
+        }
+        root.addView(recovery, LinearLayout.LayoutParams(-1, -2))
         filename = AppCompatEditText(this).apply {
             id = R.id.explorerFilename
             setHint(R.string.explorer_filename)
@@ -234,6 +276,10 @@ class FileExplorerActivity : AppCompatActivity() {
             adapter = rows
             itemAnimator = null
             clipToPadding = false
+            setOnKeyListener { _, key, event ->
+                key == KeyEvent.KEYCODE_DPAD_LEFT && event.action == KeyEvent.ACTION_DOWN && event.hasNoModifiers() &&
+                    (event.repeatCount > 0 || model.up())
+            }
         }
         root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
         val actions = LinearLayout(this).apply {
@@ -276,7 +322,28 @@ class FileExplorerActivity : AppCompatActivity() {
         BlockButtonStyler(root, preserveMargins = true).apply(display.controlBlocks, display.blockOutline)
         AccentTheme.tintControls(root)
         root.requestFocus()
+        focusMemory = PlayerFocusMemory(root, model.focusPositions)
         ViewCompat.requestApplyInsets(root)
+    }
+
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (::focusMemory.isInitialized) focusMemory.touch(event)
+        return super.dispatchTouchEvent(event)
+    }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (::focusMemory.isInitialized && focusMemory.key(event)) return true
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && ::focusMemory.isInitialized) focusMemory.windowFocused()
+    }
+
+    override fun onDestroy() {
+        if (::focusMemory.isInitialized) focusMemory.dispose()
+        super.onDestroy()
     }
 
     private fun render(state: ExplorerState) {
@@ -292,8 +359,18 @@ class FileExplorerActivity : AppCompatActivity() {
             }
             return
         }
+        val location = state.path.lastOrNull()
+        val changedLocation = focusMemory.changeScope(root, "explorer:${location?.place}:${location?.uri.orEmpty()}")
+        if (changedLocation) focusLocationPending = true
+        if (changedLocation && list.hasFocus() && !list.isInTouchMode) {
+            // A fast load can replace the folder before its intermediate loading state is rendered.
+            list.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            list.requestFocus()
+        }
         path.text = state.path.joinToString(" / ") { it.name }.ifEmpty { getString(R.string.explorer_locations) }
         progress.isVisible = state.loading || state.saving
+        recovery.render(state.error, state.loading || state.saving,
+            R.string.recovery_reselect_folder.takeIf { location?.place == ExplorerPlace.FOLDER })
         status.text = state.error ?: when {
             state.loading || state.saving -> getString(R.string.loading)
             model.mode.writable && state.path.lastOrNull()?.place == ExplorerPlace.FOLDER && !state.canSelectFolder ->
@@ -301,7 +378,7 @@ class FileExplorerActivity : AppCompatActivity() {
             state.items.isEmpty() -> getString(R.string.explorer_empty)
             else -> ""
         }
-        status.isVisible = status.text.isNotEmpty()
+        status.isVisible = state.error == null && status.text.isNotEmpty()
         status.isClickable = state.error != null
         status.setTextColor(AccentTheme.color(status, if (state.error == null)
             com.google.android.material.R.attr.colorOnSurface else com.google.android.material.R.attr.colorError))
@@ -320,20 +397,29 @@ class FileExplorerActivity : AppCompatActivity() {
                 list.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
                 list.requestFocus()
             }
-            val restoreFocus = !state.loading && list.isFocused && !list.isInTouchMode
-            if (!state.loading) list.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
             shownItems = state.items
             rows.submitList(state.items) {
-                if (restoreFocus && state.items.isNotEmpty()) {
-                    list.doOnNextLayout {
-                        if (shownItems === state.items && list.isFocused && !list.isInTouchMode)
-                            list.getChildAt(0)?.requestFocus()
-                    }
-                    list.requestLayout()
-                }
+                if (!state.loading) restoreListFocus(state.items)
             }
+        } else if (!state.loading && focusLocationPending && rows.currentList == state.items) {
+            restoreListFocus(state.items)
         }
         rows.selection(state.selected, model.mode == ExplorerMode.IMAGES, state.loading || state.saving)
+    }
+
+    private fun restoreListFocus(items: List<ExplorerItem>) {
+        // Android 6 can refocus an old row if descendants are enabled before the diff is laid out.
+        list.doOnNextLayout {
+            if (shownItems !== items || model.state.value.loading) return@doOnNextLayout
+            val firstRow = list.isFocused && !list.isInTouchMode && !focusMemory.hasItemPosition(root)
+            if (focusLocationPending) {
+                focusLocationPending = false
+                focusMemory.activate(root)
+            }
+            list.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+            if (firstRow && list.hasFocus() && !list.isInTouchMode) list.getChildAt(0)?.requestFocus()
+        }
+        list.requestLayout()
     }
 
     private fun open(item: ExplorerItem) {
@@ -454,11 +540,13 @@ class FileExplorerActivity : AppCompatActivity() {
     }
 }
 
-private class ExplorerRows(private val click: (ExplorerItem) -> Unit, private val remove: (ExplorerItem) -> Unit) :
+private class ExplorerRows(private val click: (ExplorerItem) -> Unit, private val remove: (ExplorerItem) -> Unit,
+    private val up: () -> Boolean) :
     ListAdapter<ExplorerItem, ExplorerRows.Holder>(object : DiffUtil.ItemCallback<ExplorerItem>() {
         override fun areItemsTheSame(old: ExplorerItem, new: ExplorerItem) = old.key == new.key
         override fun areContentsTheSame(old: ExplorerItem, new: ExplorerItem) = old == new
-    }) {
+    }), PlayerFocusItems {
+    override fun focusKey(position: Int) = "explorer:${getItem(position).key}"
     private var selected = emptySet<String>()
     private var multiple = false
     private var busy = false
@@ -546,6 +634,23 @@ private class ExplorerRows(private val click: (ExplorerItem) -> Unit, private va
                 val position = bindingAdapterPosition
                 if (position != RecyclerView.NO_POSITION) click(getItem(position))
             }
+            row.setOnKeyListener { _, key, event ->
+                if (event.action != KeyEvent.ACTION_DOWN || !event.hasNoModifiers()) return@setOnKeyListener false
+                val item = bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::getItem)
+                    ?: return@setOnKeyListener false
+                when (key) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> event.repeatCount > 0 || up()
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (item.location != null || item.document?.isDirectory == true) {
+                        if (event.repeatCount == 0) click(item)
+                        true
+                    } else false
+                    KeyEvent.KEYCODE_MENU -> if (item.removable) {
+                        if (event.repeatCount == 0) remove(item)
+                        true
+                    } else false
+                    else -> false
+                }
+            }
             ViewCompat.setAccessibilityDelegate(row, object : androidx.core.view.AccessibilityDelegateCompat() {
                 override fun onInitializeAccessibilityNodeInfo(host: View,
                     info: androidx.core.view.accessibility.AccessibilityNodeInfoCompat,
@@ -558,6 +663,7 @@ private class ExplorerRows(private val click: (ExplorerItem) -> Unit, private va
         }
 
         fun bind(item: ExplorerItem) {
+            itemView.setTag(R.id.playerFocusKey, "explorer:${item.key}")
             name.text = item.name
             detail.text = item.detail.ifEmpty {
                 item.document?.let { document ->
@@ -566,7 +672,7 @@ private class ExplorerRows(private val click: (ExplorerItem) -> Unit, private va
                 }.orEmpty()
             }
             detail.isVisible = detail.text.isNotEmpty()
-            icon.setImageResource(if (item.location != null || item.grant) R.drawable.ic_folder
+            PlayerIcons.image(icon, if (item.location != null || item.grant) R.drawable.ic_folder
                 else if (item.document?.mimeType?.startsWith("audio/") == true) R.drawable.ic_note else R.drawable.ic_library)
             checked.isVisible = multiple && item.document?.isDirectory == false
             checked.isChecked = item.document?.uri in selected

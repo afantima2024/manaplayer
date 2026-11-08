@@ -34,6 +34,7 @@
         android:layout_height="48dp"
         android:paddingStart="16dp"
         android:paddingEnd="0dp"
+        android:touchscreenBlocksFocus="false"
         app:contentInsetStart="0dp"
         app:contentInsetStartWithNavigation="0dp"
         app:logo="@drawable/ic_brand_logo"
@@ -41,42 +42,18 @@
         app:title="@string/app_name"
         app:titleMarginStart="8dp"
         app:menu="@menu/toolbar" />
-    <LinearLayout
-        android:id="@+id/noticeBar"
+    <com.macarmusic.app.ui.PlayerRecoveryView
+        android:id="@+id/recoveryStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_below="@id/toolbar"
-        android:gravity="center_vertical"
-        android:minHeight="64dp"
-        android:background="?attr/colorErrorContainer"
-        android:paddingStart="16dp"
-        android:paddingEnd="4dp"
-        android:visibility="gone">
-        <TextView
-            android:id="@+id/noticeText"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:paddingTop="8dp"
-            android:paddingBottom="8dp"
-            android:textColor="?attr/colorOnErrorContainer"
-            android:textSize="14sp"
-            android:accessibilityLiveRegion="polite" />
-        <androidx.appcompat.widget.AppCompatImageButton
-            android:id="@+id/dismissNotice"
-            style="@style/PlayerIconButton"
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:contentDescription="@string/dismiss"
-            app:srcCompat="@drawable/ic_close"
-            app:tint="?attr/colorOnErrorContainer" />
-    </LinearLayout>
+        android:visibility="gone" />
     <RelativeLayout
         android:id="@+id/playerWorkspace"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:padding="@dimen/player_gap"
-        android:layout_below="@id/noticeBar">
+        android:layout_below="@id/recoveryStatus">
     <LinearLayout
         android:id="@+id/playerBody"
         android:layout_width="match_parent"
@@ -84,10 +61,20 @@
         android:layout_above="@id/navigation"
         android:orientation="vertical">
     <FrameLayout
-        android:id="@+id/screenContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1">
+        <FrameLayout
+            android:id="@+id/screenContainer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+        <com.macarmusic.app.ui.PlayerNoticeView
+            android:id="@+id/noticeHost"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top"
+            android:layout_margin="4dp" />
+    </FrameLayout>
     <com.macarmusic.app.ui.MiniPlayerLayout
         android:id="@+id/miniPlayer"
         android:layout_width="match_parent"

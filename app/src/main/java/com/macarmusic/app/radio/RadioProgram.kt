@@ -8,6 +8,8 @@ import com.macarmusic.app.R
 import kotlinx.serialization.Serializable
 import java.net.URI
 import java.net.URISyntaxException
+import java.net.URL
+import java.net.MalformedURLException
 import java.util.Locale
 
 @Serializable
@@ -26,6 +28,7 @@ data class RadioProgram(
     fun publisher(context: Context): String = group.ifEmpty {
         context.getString(when {
             id == RadioDefaults.CRI_ID -> R.string.radio_cri
+            id == RadioDefaults.CCTV_ID -> R.string.radio_cctv
             builtin != null -> R.string.radio_cnr
             else -> R.string.radio_internet
         })
@@ -50,11 +53,23 @@ data class RadioProgram(
 }
 
 object RadioAddress {
+    private val registryHost = Regex("[a-zA-Z0-9_-]+(?:\\.[a-zA-Z0-9_-]+)*\\.?")
+
+    private fun registryAddress(uri: URI): URL? {
+        if (uri.scheme?.lowercase(Locale.ROOT) !in setOf("http", "https")) return null
+        return try {
+            uri.toURL().takeIf { '_' in it.host && registryHost.matches(it.host) && it.userInfo == null &&
+                (it.port == -1 || it.port in 1..65535) && (it.port != -1 || ':' !in uri.rawAuthority) }
+        } catch (_: MalformedURLException) { null }
+    }
+
     fun parse(value: String): URI? = try {
         URI(value).takeIf {
+            // URI.host is null for underscore hostnames that Android's HTTP stack can play.
+            val registry = if (it.host == null) registryAddress(it) else null
             value.length <= 8192 && value.none(Char::isISOControl) &&
                 it.scheme?.lowercase(Locale.ROOT) in setOf("http", "https") &&
-                !it.host.isNullOrBlank() && it.rawUserInfo == null && it.rawFragment == null &&
+                (!it.host.isNullOrBlank() || registry != null) && it.rawUserInfo == null && it.rawFragment == null &&
                 (it.port == -1 || it.port in 1..65535)
         }
     } catch (_: URISyntaxException) { null }
@@ -67,10 +82,12 @@ object RadioAddress {
         CnrRadio.manifestStation(https)?.let { return it.uri }
         val ascii = URI(uri.toASCIIString())
         val scheme = ascii.scheme.lowercase(Locale.ROOT)
+        val registry = if (ascii.host == null) checkNotNull(registryAddress(ascii)) else null
+        val port = registry?.port ?: ascii.port
         return buildString {
-            append(scheme).append("://").append(ascii.host.lowercase(Locale.ROOT))
-            if (ascii.port != -1 && !(scheme == "http" && ascii.port == 80 || scheme == "https" && ascii.port == 443))
-                append(':').append(ascii.port)
+            append(scheme).append("://").append((registry?.host ?: ascii.host).lowercase(Locale.ROOT))
+            if (port != -1 && !(scheme == "http" && port == 80 || scheme == "https" && port == 443))
+                append(':').append(port)
             append(ascii.rawPath.ifEmpty { "/" })
             ascii.rawQuery?.let { append('?').append(it) }
         }

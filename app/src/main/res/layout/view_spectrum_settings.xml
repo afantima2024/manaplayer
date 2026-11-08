@@ -18,17 +18,6 @@
         style="@style/SettingLabel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/spectrum_origin"
-        android:labelFor="@id/spectrumOrigin" />
-    <com.macarmusic.app.ui.PlayerSpinner
-        android:id="@+id/spectrumOrigin"
-        style="@style/SettingChoice"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content" />
-    <TextView
-        style="@style/SettingLabel"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
         android:text="@string/spectrum_style"
         android:labelFor="@id/spectrumStyle" />
     <com.macarmusic.app.ui.PlayerSpinner
@@ -44,6 +33,34 @@
         android:labelFor="@id/spectrumBands" />
     <com.macarmusic.app.ui.PlayerSpinner
         android:id="@+id/spectrumBands"
+        style="@style/SettingChoice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+    <LinearLayout
+        android:id="@+id/fireStyleControls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+        <TextView
+            style="@style/SettingLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/spectrum_fire_style"
+            android:labelFor="@id/spectrumFireStyle" />
+        <com.macarmusic.app.ui.PlayerSpinner
+            android:id="@+id/spectrumFireStyle"
+            style="@style/SettingChoice"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+    <TextView
+        style="@style/SettingLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/spectrum_origin"
+        android:labelFor="@id/spectrumOrigin" />
+    <com.macarmusic.app.ui.PlayerSpinner
+        android:id="@+id/spectrumOrigin"
         style="@style/SettingChoice"
         android:layout_width="match_parent"
         android:layout_height="wrap_content" />
@@ -88,23 +105,6 @@
             android:layout_height="wrap_content"
             android:text="@string/spectrum_reset_colors" />
     </LinearLayout>
-    <LinearLayout
-        android:id="@+id/fireStyleControls"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical">
-        <TextView
-            style="@style/SettingLabel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/spectrum_fire_style"
-            android:labelFor="@id/spectrumFireStyle" />
-        <com.macarmusic.app.ui.PlayerSpinner
-            android:id="@+id/spectrumFireStyle"
-            style="@style/SettingChoice"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content" />
-    </LinearLayout>
     <com.google.android.material.materialswitch.MaterialSwitch
         android:id="@+id/spectrumPeaks"
         android:layout_width="match_parent"
@@ -146,11 +146,4 @@
         style="@style/SettingChoice"
         android:layout_width="match_parent"
         android:layout_height="wrap_content" />
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:padding="8dp"
-        android:text="@string/spectrum_help"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:textSize="16sp" />
 </LinearLayout>

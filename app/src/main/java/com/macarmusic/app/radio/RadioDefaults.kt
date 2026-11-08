@@ -5,12 +5,14 @@ import java.io.IOException
 
 object RadioDefaults {
     const val CRI_ID = "radio:cri:905"
-    const val MAX_PINS = 10
-    val stations = CnrRadio.stations + RadioStation(
+    const val CCTV_ID = "radio:cctv:13"
+    const val MAX_PINS = 12
+    val stations = CnrRadio.stations + listOf(RadioStation(
         905, "905", R.string.radio_cri_news,
         "https://p1crires.cri.cn/photoAlbum/cri/templet/common/DEPA1629939674468309/hqzx_logo.png",
         network = "cri", address = "https://sk.cri.cn/905.m3u8",
-    )
+    ), RadioStation(13, "13", R.string.radio_cctv_13, "", network = "cctv",
+        address = "https://piccpndks.v.kcdnvip.com/audio/cctv13_2.m3u8"))
     val corePrograms = stations.map { it.program }
     val bundled: List<RadioProgram> by lazy {
         var saved = emptyList<RadioProgram>()
@@ -25,6 +27,7 @@ object RadioDefaults {
     }
     private val byId = stations.associateBy { it.id }
     val pins = listOf(
+        CCTV_ID,
         "radio:cnr:zgzs", "radio:cnr:jjzs", "radio:cnr:yyzs", "radio:cnr:gsgljtgb",
         CRI_ID, "radio:cnr:xczs", "radio:cnr:wyzs", "radio:cnr:dszs",
     )
@@ -33,4 +36,8 @@ object RadioDefaults {
         ?: RadioAddress.parse(uri)?.takeIf {
             it.host.equals("sk.cri.cn", true) && it.path == "/905.m3u8"
         }?.let { CRI_ID }
+        ?: RadioAddress.parse(uri)?.takeIf {
+            it.host?.lowercase(java.util.Locale.ROOT) in setOf("piccpndks.v.kcdnvip.com", "piccpndali.v.myalicdn.com") &&
+                it.path == "/audio/cctv13_2.m3u8"
+        }?.let { CCTV_ID }
 }

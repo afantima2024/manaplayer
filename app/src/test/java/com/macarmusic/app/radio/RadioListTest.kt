@@ -53,7 +53,7 @@ class RadioListTest {
         assertEquals(1, renamed.updated)
         assertEquals(id, renamed.programs.first().id)
         assertEquals("Renamed", renamed.programs.first().name)
-        assertEquals(19, RadioList.catalog(renamed.programs).size)
+        assertEquals(RadioDefaults.corePrograms.size + 2, RadioList.catalog(renamed.programs).size)
     }
 
     @Test fun externalM3uIdsRemainStableWhenNamesChange() {
@@ -135,7 +135,7 @@ class RadioListTest {
         assertEquals(RadioCatalogSnapshot(programs), RadioList.decode(text))
         assertTrue(programs.first().hls)
         assertFalse(programs.last().hls)
-        for (invalid in listOf(text.replace("\"version\":3", "\"version\":4"),
+        for (invalid in listOf(text.replace("\"version\":6", "\"version\":999"),
             text.replace("https://example.com/a.m3u8", "file:///private"),
             text.replace(programs[1].id, programs[0].id))) {
             try { RadioList.decode(invalid); fail("Invalid stored list accepted") }
@@ -225,7 +225,7 @@ class RadioListTest {
         assertEquals(listOf("https://example.com/new"), result.programs.single().sources)
         assertEquals("", result.programs.single().group)
         assertEquals("", result.programs.single().logoUri)
-        assertEquals(18, result.removed)
+        assertEquals(RadioDefaults.corePrograms.size + 1, result.removed)
         assertEquals(RadioCatalogSnapshot(result.programs, false), RadioList.decode(RadioList.encode(result.programs, false)))
         rejects(R.string.radio_import_no_stations) {
             RadioList.merge(original, emptyList(), emptyMap(), RadioImportMode.REPLACE_ALL)

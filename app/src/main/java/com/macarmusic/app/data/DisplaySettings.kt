@@ -5,6 +5,8 @@ import android.content.SharedPreferences
 import android.util.Log
 import com.macarmusic.app.R
 import com.macarmusic.app.model.BackgroundImages
+import com.macarmusic.app.model.AppLogo
+import com.macarmusic.app.model.ButtonIconStyle
 import com.macarmusic.app.model.BlockOutline
 import com.macarmusic.app.model.BlockStyle
 import com.macarmusic.app.model.LyricAppearance
@@ -13,15 +15,9 @@ import com.macarmusic.app.model.LyricSide
 import com.macarmusic.app.model.ThemeAccent
 import com.macarmusic.app.model.PlaybackTimeMode
 import com.macarmusic.app.model.NavigationPosition
-import com.macarmusic.app.model.FireStyle
 import com.macarmusic.app.model.SpectrumColors
 import com.macarmusic.app.model.SlideshowOptions
-import com.macarmusic.app.model.SpectrumDecay
 import com.macarmusic.app.model.SpectrumOptions
-import com.macarmusic.app.model.SpectrumPalette
-import com.macarmusic.app.model.SpectrumPosition
-import com.macarmusic.app.model.SpectrumOrigin
-import com.macarmusic.app.model.SpectrumStyle
 import com.macarmusic.app.model.TransitionStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,17 +56,31 @@ data class DisplayOptions(
     val portraitLyrics: LyricSide = LyricSide.START,
     val themeAccent: ThemeAccent = ThemeAccent.DEFAULT,
     val customAccentColor: Int? = null,
+    val primaryControlColor: Int? = null,
+    val primaryControlHighlightEnabled: Boolean = true,
     val widgetTransparency: Int = 50,
     val internalLyricExpiry: LyricCacheExpiry = LyricCacheExpiry.THIRTY_DAYS,
     val portableLyricExpiry: LyricCacheExpiry = LyricCacheExpiry.NEVER,
     val showLibrary: Boolean = true,
     val showQueue: Boolean = true,
     val showPlaylists: Boolean = true,
+    val appLogo: AppLogo = AppLogo.MUSIC,
+    val buttonIcons: ButtonIconStyle = ButtonIconStyle.LOGO,
+    val autoPlayOnLaunch: Boolean = false,
+    val keepScreenOn: Boolean = false,
+    val noticeDurationSeconds: Int = 5,
+    val miniPlayerTransparency: Int? = null,
 ) {
     init {
         require(customAccentColor == null || customAccentColor in 0..0xffffff)
+        require(primaryControlColor == null || primaryControlColor in 0..0xffffff)
         require(widgetTransparency in 0..100)
+        require(noticeDurationSeconds in NOTICE_DURATIONS)
+        require(miniPlayerTransparency == null || miniPlayerTransparency in 0..100)
     }
+
+    val effectiveMiniPlayerTransparency: Int
+        get() = miniPlayerTransparency ?: if (customTheme && imageVersion > 0) 100 else 0
 
     val backgroundImages: List<String> get() = if (imageVersion == 0L) emptyList()
         else imageIds.ifEmpty { listOf(BackgroundImages.LEGACY) }
@@ -78,11 +88,15 @@ data class DisplayOptions(
     fun normalized(): DisplayOptions = if (blockOutline.style == BlockStyle.NONE)
         copy(controlBlocks = false, blockOutline = blockOutline.copy(style = BlockStyle.SOLID)) else this
 
+    companion object {
+        val NOTICE_DURATIONS = listOf(3, 5, 10, 15, 30)
+    }
 }
 
 class DisplaySettings(private val context: Context, private val themeChanged: () -> Unit) {
     private val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val interval = preferences.getInt("backgroundIntervalSeconds", 5).coerceIn(1, 120)
+    private val spectrumDefaults = SpectrumOptions()
     private val mutableOptions = MutableStateFlow(DisplayOptions(
         lyricsEnabled = preferences.getBoolean("lyricsEnabled", true),
         onlineLyrics = preferences.getBoolean("onlineLyrics", true),
@@ -107,6 +121,13 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
         showLibrary = preferences.getBoolean("showLibrary", true),
         showQueue = preferences.getBoolean("showQueue", true),
         showPlaylists = preferences.getBoolean("showPlaylists", true),
+        appLogo = choice("appLogo", AppLogo.MUSIC),
+        buttonIcons = choice("buttonIcons", ButtonIconStyle.LOGO),
+        autoPlayOnLaunch = preferences.getBoolean("autoPlayOnLaunch", false),
+        keepScreenOn = preferences.getBoolean("keepScreenOn", false),
+        noticeDurationSeconds = preferences.getInt("noticeDurationSeconds", 5)
+            .takeIf { it in DisplayOptions.NOTICE_DURATIONS } ?: 5,
+        miniPlayerTransparency = preferences.getInt("miniPlayerTransparency", -1).takeIf { it in 0..100 },
         mainTimeMode = choice("mainTimeMode", PlaybackTimeMode.REMAINING),
         widgetTransparency = preferences.getInt("widgetTransparency", 50).coerceIn(0, 100),
         internalLyricExpiry = choice("internalLyricExpiry", LyricCacheExpiry.THIRTY_DAYS),
@@ -126,21 +147,24 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
         portraitLyrics = choice("portraitLyrics", LyricSide.START),
         themeAccent = choice("themeAccent", ThemeAccent.DEFAULT),
         customAccentColor = optionalColor("customAccentColor"),
+        primaryControlColor = optionalColor("primaryControlColor"),
+        primaryControlHighlightEnabled = preferences.getBoolean("primaryControlHighlightEnabled", true),
         spectrum = SpectrumOptions(
-            enabled = preferences.getBoolean("spectrumEnabled", false),
-            position = choice("spectrumPosition", SpectrumPosition.RIGHT),
-            origin = choice("spectrumOrigin", SpectrumOrigin.BOTTOM),
-            style = choice("spectrumStyle", SpectrumStyle.BARS),
-            palette = choice("spectrumPalette", SpectrumPalette.CLASSIC),
-            bands = preferences.getInt("spectrumBands", 32).takeIf { it in SpectrumOptions.BAND_COUNTS } ?: 32,
-            peaks = preferences.getBoolean("spectrumPeaks", true),
-            falloff = choice("spectrumFalloff", SpectrumDecay.MEDIUM),
-            peakFalloff = choice("spectrumPeakFalloff", SpectrumDecay.SLOW),
+            enabled = preferences.getBoolean("spectrumEnabled", spectrumDefaults.enabled),
+            position = choice("spectrumPosition", spectrumDefaults.position),
+            origin = choice("spectrumOrigin", spectrumDefaults.origin),
+            style = choice("spectrumStyle", spectrumDefaults.style),
+            palette = choice("spectrumPalette", spectrumDefaults.palette),
+            bands = preferences.getInt("spectrumBands", spectrumDefaults.bands)
+                .takeIf { it in SpectrumOptions.BAND_COUNTS } ?: spectrumDefaults.bands,
+            peaks = preferences.getBoolean("spectrumPeaks", spectrumDefaults.peaks),
+            falloff = choice("spectrumFalloff", spectrumDefaults.falloff),
+            peakFalloff = choice("spectrumPeakFalloff", spectrumDefaults.peakFalloff),
             refreshRate = preferences.getInt("spectrumRefreshRate", SpectrumOptions.DEFAULT_REFRESH_RATE)
                 .takeIf { it in setOf(15, 30, 60) } ?: SpectrumOptions.DEFAULT_REFRESH_RATE,
-            fireStyle = choice("spectrumFireStyle", FireStyle.LED),
-            barStyle = choice("spectrumBarStyle", FireStyle.SMOOTH),
-            colors = colors("fire", SpectrumColors.FIRE),
+            fireStyle = choice("spectrumFireStyle", spectrumDefaults.fireStyle),
+            barStyle = choice("spectrumBarStyle", spectrumDefaults.barStyle),
+            colors = colors("fire", spectrumDefaults.colors),
         ),
     ).normalized())
     val options = mutableOptions.asStateFlow()
@@ -156,6 +180,7 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
         require(next.imageIds.size <= BackgroundImages.MAX_COUNT &&
             next.imageIds.distinct() == next.imageIds && next.imageIds.all(BackgroundImages::isImportedName))
         if (next == old) return
+        if (next.appLogo != old.appLogo) LauncherIcons.select(context, next.appLogo)
         write(next).apply()
         mutableOptions.value = next
         if (old.customTheme != next.customTheme || old.tint != next.tint) themeChanged()
@@ -180,6 +205,7 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
     }
 
     internal fun publishRestored(next: DisplayOptions) {
+        if (mutableOptions.value.appLogo != next.appLogo) LauncherIcons.select(context, next.appLogo)
         mutableOptions.value = next.normalized()
         themeChanged()
     }
@@ -213,6 +239,12 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
             .putBoolean("showLibrary", next.showLibrary)
             .putBoolean("showQueue", next.showQueue)
             .putBoolean("showPlaylists", next.showPlaylists)
+            .putString("appLogo", next.appLogo.name)
+            .putString("buttonIcons", next.buttonIcons.name)
+            .putBoolean("autoPlayOnLaunch", next.autoPlayOnLaunch)
+            .putBoolean("keepScreenOn", next.keepScreenOn)
+            .putInt("noticeDurationSeconds", next.noticeDurationSeconds)
+            .putInt("miniPlayerTransparency", next.miniPlayerTransparency ?: -1)
             .putString("mainTimeMode", next.mainTimeMode.name)
             .putBoolean("lyricsDragSeek", next.lyricsDragSeek)
             .putBoolean("lyricsSmoothScroll", next.lyricsSmoothScroll)
@@ -226,6 +258,8 @@ class DisplaySettings(private val context: Context, private val themeChanged: ()
             .putString("portraitLyrics", next.portraitLyrics.name)
             .putString("themeAccent", next.themeAccent.name)
             .putInt("customAccentColor", next.customAccentColor ?: -1)
+            .putInt("primaryControlColor", next.primaryControlColor ?: -1)
+            .putBoolean("primaryControlHighlightEnabled", next.primaryControlHighlightEnabled)
             .putBoolean("spectrumEnabled", next.spectrum.enabled)
             .putString("spectrumPosition", next.spectrum.position.name)
             .putString("spectrumOrigin", next.spectrum.origin.name)

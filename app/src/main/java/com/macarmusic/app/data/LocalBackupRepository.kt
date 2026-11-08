@@ -37,9 +37,9 @@ class LocalBackupRepository(private val app: MaCarMusicApp) {
     }
 
     private suspend fun settings(language: String): BackupSettings {
-        val catalog = app.radioCatalog.snapshot()
-        val ids = com.macarmusic.app.radio.RadioList.catalog(catalog.programs,
-            if (catalog.includeDefaults) app.radioCatalog.state.value.defaults else emptyList()).mapTo(hashSetOf()) { it.id }
+        val state = app.radioCatalog.readyState()
+        val catalog = state.snapshot
+        val ids = state.knownIds
         val radio = app.radio.backup().let {
             it.copy(stations = it.stations.intersect(ids), pins = it.pins?.filter(ids::contains))
         }
@@ -47,6 +47,7 @@ class LocalBackupRepository(private val app: MaCarMusicApp) {
             app.displaySettings.options.value, app.playbackSettings.options.value, app.sortOrder,
             preferences.getInt("theme", androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES),
             language, ColorSlotStore(context).read(), radio, catalog.programs, catalog.includeDefaults,
+            catalog.subscriptions, catalog.sourceSelections, catalog.removedDefaults,
         )
     }
 
@@ -133,7 +134,8 @@ class LocalBackupRepository(private val app: MaCarMusicApp) {
                 var preferencesChanged = false
                 try {
                     val currentOrigin = origin()
-                    app.radioCatalog.withReplacement(replacement.radioPrograms, replacement.radioIncludeDefaults) {
+                    app.radioCatalog.withReplacement(replacement.radioPrograms, replacement.radioIncludeDefaults,
+                        replacement.radioSubscriptions, replacement.radioSourceSelections, replacement.radioRemovedDefaults) {
                         app.repository.update { current ->
                             val result = BackupEdits.merge(current, backup.manifest, currentOrigin)
                             preferencesChanged = true

@@ -39,28 +39,37 @@ class BlockButtonStyler(root: View, private val preserveMargins: Boolean = false
 
     private val controls = buildList {
         fun collect(view: View) {
-            if ((view is Button && view !is CompoundButton) || view is Spinner || view is ImageButton) add(Original(view))
+            if (view is Button || view is Spinner || view is ImageButton) add(Original(view))
             else if (view is ViewGroup) view.children.forEach(::collect)
         }
         collect(root)
     }
-    private var applied: Pair<Boolean, BlockOutline>? = null
+    private var applied: Triple<Boolean, BlockOutline, Int?>? = null
     private val density = root.resources.displayMetrics.density
     private val color = MaterialColors.getColor(root, com.google.android.material.R.attr.colorOutline)
     private val ripple = ColorStateList.valueOf(
         MaterialColors.getColor(root, com.google.android.material.R.attr.colorControlHighlight))
 
-    fun apply(enabled: Boolean, outline: BlockOutline) {
-        if (applied == (enabled to outline)) return
+    fun apply(enabled: Boolean, outline: BlockOutline, highlight: Int? = null) {
+        val appearance = Triple(enabled, outline, highlight)
+        if (applied == appearance) return
         val framed = enabled && outline.hasBorder
         val inset = ((if (outline.style == BlockStyle.CHARACTERS) 12 else 8) * density).toInt()
         for (original in controls) {
             val view = original.view
+            if (view is CompoundButton) {
+                view.showPlayerInputFocus(original.foreground)
+                continue
+            }
             val border = if (framed) PlayerBlockDrawable(outline, color, density) else null
             val button = original.button
             if (button != null) {
                 button.strokeWidth = if (framed) 0 else requireNotNull(original.stroke)
-                button.backgroundTintList = if (framed) ColorStateList.valueOf(Color.TRANSPARENT) else original.tint
+                button.backgroundTintList = when {
+                    highlight != null -> ColorStateList.valueOf(highlight)
+                    framed -> ColorStateList.valueOf(Color.TRANSPARENT)
+                    else -> original.tint
+                }
                 button.shapeAppearanceModel = if (framed) requireNotNull(original.shape).toBuilder()
                     .setAllCornerSizes((if (outline.hasArc) outline.arcDp else 6) * density).build()
                     else requireNotNull(original.shape)
@@ -93,7 +102,7 @@ class BlockButtonStyler(root: View, private val preserveMargins: Boolean = false
             original.margins.bottomMargin = if (framed && !preserveMargins) maxOf(original.bottomMargin, spacing) else original.bottomMargin
             view.layoutParams = original.margins
         }
-        applied = enabled to outline
+        applied = appearance
     }
 
     companion object {

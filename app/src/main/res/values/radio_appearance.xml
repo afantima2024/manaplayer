@@ -1,0 +1,28 @@
+<resources>
+    <string name="radio_cctv_13">CCTV-13 News</string>
+    <string name="radio_cctv">China Central Television</string>
+    <string name="radio_bundled_defaults_failed">The bundled radio defaults could not be applied. Your saved lists were kept; check available storage and subscription limits, then restart the app.</string>
+    <string name="appearance_icons_ocean">Ocean blue</string>
+    <string name="appearance_icons_aurora">Aurora green</string>
+    <string name="appearance_icons_sunset">Sunset coral</string>
+    <string name="appearance_icons_orchid">Orchid violet</string>
+    <string name="appearance_icons_logo">Logo gradient</string>
+    <string name="appearance_icons_copilot_aurora">Copilot aurora</string>
+    <string name="appearance_icons_copilot_sunrise">Copilot sunrise</string>
+    <string name="radio_station_logo">Choose station logo</string>
+    <string name="radio_station_logo_auto">Automatic</string>
+    <string name="radio_mark_news">News radio</string>
+    <string name="radio_mark_talk">Talk radio</string>
+    <string name="radio_mark_pop">Pop radio</string>
+    <string name="radio_mark_classic">Golden hits</string>
+    <string name="radio_mark_piano">Piano radio</string>
+    <string name="radio_mark_acoustic">Acoustic radio</string>
+    <string name="radio_mark_jazz">Jazz radio</string>
+    <string name="radio_mark_world">World radio</string>
+    <string name="radio_mark_ambient">Night radio</string>
+    <string name="radio_mark_folk">Folk radio</string>
+    <string name="radio_mark_dance">Dance radio</string>
+    <string name="radio_mark_cctv">CCTV-13</string>
+    <string name="radio_station_logos_help"><b><big>Bundled station logos</big></b>\nLong-press a station and choose Station logo for 12 bundled choices: 11 original radio-program emblems and CCTV-13. The original marks combine a recognizable FM receiver, antenna, tuning dial and a news, talk or music-program symbol. No custom image files are accepted. Automatic restores the downloaded station logo or the selected default. Your logo choice survives subscription refreshes and ZIP backups; changing it does not reconnect audio. Bundled logos need no download and are not removed by Clear logo cache.\n\n<b><big>Button themes</big></b>\nGeneral offers nine button themes. Monochrome, Colorful, Ocean blue, Aurora green, Sunset coral and Orchid violet remain available. Logo gradient follows the app logo through gold, turquoise, blue, violet and pink and remains the default. Copilot aurora runs in the opposite direction: pink and purple at the top-left, transitioning through blue to teal at the bottom-right. Copilot sunrise keeps its warm gradient. These two Copilot-inspired palettes are original designs, not official Copilot artwork. Saved theme choices are retained. The nine tiles resize with the available window space, using a three-column grid when it fits and fewer columns with scrolling for narrow windows or large text. Every navigation, transport and widget glyph uses the same selected palette. Disabled controls stay grey; selection and remote-focus outlines remain separate.\n\n<b><big>CCTV-13 logo attribution</big></b>\nCCTV-13 logo: Chinese Central Television, via Wikimedia Commons (File:CCTV-13_Logo.svg), CC BY 4.0: https://creativecommons.org/licenses/by/4.0/ . Converted to an Android vector and placed on a light tile; no endorsement is implied. Source: https://commons.wikimedia.org/wiki/File:CCTV-13_Logo.svg .</string>
+    <string name="radio_bundled_defaults_help"><b><big>Initial station lists</big></b>\nThe APK includes Worldwide Top 500, United States, Taiwan and CCTV television-audio subscription snapshots. Fresh installations enable all four, with CCTV-13 pinned first. Other countries/areas start hidden except United States, United Kingdom, Singapore, National, CCTV Television, China, Beijing, Sichuan, Taiwan, Hong Kong, Macao and Guangdong. Upgrades from before 1.50 add only the CCTV subscription and reveal National stations once, keeping your other hidden groups, pin order, logos and older subscriptions unchanged. The CCTV list includes 20 audio channels: CCTV-1–17, CCTV-5+ and CCTV-4 Europe/Americas. These are television soundtracks, not separate FM stations. They appear in the separate CCTV Television category after National stations, including older cached entries without a refresh. This category can be collapsed or hidden independently; explicit custom groups are retained. Channel, group and subscription-list buttons follow the existing General block-outline settings, with separate remote focus. Later visibility and subscription changes are kept. After Music is ready, bundled and saved lists warm in the background for a later Radio switch. This never opens streams or downloads logos or subscriptions.\n\n<b><big>Subscription publishers and licenses</big></b>\nThe worldwide, United States and Taiwan snapshots come from AlonDrilich / 72FM and the public-domain Radio Browser directory: https://github.com/AlonDrilich/radio-playlists . The publishing repository uses the MIT license; its notice is included. The CCTV-only snapshot records channel names and audio CDN links from the community-maintained Kimentanm / aptv list: https://raw.githubusercontent.com/Kimentanm/aptv/master/m3u/radio.m3u . Its other stations, app directives and remote logos are not imported. No official CCTV affiliation or license to redistribute broadcasts is implied. Lists contain links, not recordings; regional access and broadcast availability may change.</string>
+</resources>

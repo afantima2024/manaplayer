@@ -41,14 +41,14 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
         id = R.id.navigationArtwork
         scaleType = ImageView.ScaleType.FIT_CENTER
         setPadding(dp(8), dp(8), dp(8), dp(8))
-        setImageResource(R.drawable.ic_launcher)
+        setImageResource(Branding.icon(context))
         contentDescription = context.getString(R.string.navigation_artwork)
         setOnClickListener { listener?.invoke(R.id.nav_player) }
         val value = android.util.TypedValue()
         context.theme.resolveAttribute(android.R.attr.selectableItemBackground, value, true)
         setBackgroundResource(value.resourceId)
     }
-    private data class Item(val view: LinearLayout, val icon: ImageView, val label: TextView)
+    private data class Item(val view: LinearLayout, val icon: ImageView, val label: TextView, val resource: Int)
     private val items = mutableListOf<Item>()
     private val row = LinearLayout(context)
     private var vertical: Boolean? = null
@@ -67,8 +67,11 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
     private val widestLabel by lazy { ceil(items.maxOf { labelPaint.measureText(it.label.text.toString()) }).toInt() }
     private val labelHeight by lazy { ceil(labelPaint.fontSpacing).toInt() }
     private val inlineWidth get() = itemInset * 2 + dp(24 + 8) + widestLabel
-    private val itemHeight get() = if (labelsBesideIcons) maxOf(dp(48), itemInset * 2 + maxOf(dp(24), labelHeight))
-        else maxOf(dp(80), itemInset * 2 + dp(24 + 2) + labelHeight * 2)
+    private val itemHeight get() = when {
+        labelsBesideIcons -> maxOf(dp(48), itemInset * 2 + maxOf(iconSize(true), ceil(labelHeight * SELECTED_CONTROL_SCALE).toInt()))
+        vertical == false -> maxOf(dp(56), itemInset * 2 + iconSize(true) + dp(2) + ceil(labelHeight * SELECTED_CONTROL_SCALE).toInt())
+        else -> maxOf(dp(80), itemInset * 2 + dp(24 + 2) + labelHeight * 2)
+    }
 
     var selectedItemId: Int = R.id.nav_player
         set(value) {
@@ -129,7 +132,15 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
                     info.isSelected = host.isSelected
                 }
             })
-            items.add(Item(button, icon, label))
+            val resource = when (entry.itemId) {
+                R.id.nav_player -> R.drawable.ic_note
+                R.id.nav_library -> R.drawable.ic_library
+                R.id.nav_folders -> R.drawable.ic_folder
+                R.id.nav_queue -> R.drawable.ic_queue
+                R.id.nav_playlists -> R.drawable.ic_playlist
+                else -> R.drawable.ic_radio
+            }
+            items.add(Item(button, icon, label, resource))
             row.addView(button)
         }
         configure(vertical = false)
@@ -137,6 +148,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
     }
 
     fun setOnItemSelectedListener(value: (Int) -> Unit) { listener = value }
+    fun refreshIcons() = renderSelection()
 
     fun setScreenVisibility(visible: (Int) -> Boolean) {
         var changed = false
@@ -188,11 +200,11 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
             }
         } else if (vertical == false && MeasureSpec.getMode(widthSpec) != MeasureSpec.UNSPECIFIED) {
             val available = MeasureSpec.getSize(widthSpec) - gap * (visibleCount - 1)
-            val width = if (labelsBesideIcons) maxOf(inlineWidth, (available - dp(48)) / (visibleCount - 1))
-                else maxOf(dp(48), available / visibleCount)
+            val width = maxOf(if (labelsBesideIcons) inlineWidth else dp(48),
+                (available - dp(48)) / (visibleCount - 1))
             for (index in 0 until row.childCount) {
                 val child = row.getChildAt(index)
-                val itemWidth = if (index == 0 && labelsBesideIcons) dp(48) else width
+                val itemWidth = if (index == 0) dp(48) else width
                 if (child.layoutParams.width != itemWidth)
                     child.layoutParams = child.layoutParams.apply { this.width = itemWidth }
             }
@@ -276,7 +288,7 @@ class PlayerNavigationView @JvmOverloads constructor(context: Context, attrs: At
             }
             item.label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f * if (selected) SELECTED_CONTROL_SCALE else 1f)
             val color = if (selected) primary else foreground
-            item.icon.imageTintList = ColorStateList.valueOf(color)
+            PlayerIcons.image(item.icon, item.resource, primary)
             item.label.setTextColor(color)
             item.label.typeface = if (selected) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
             val fill = if (selected && isItemActiveIndicatorEnabled) GradientDrawable().apply {

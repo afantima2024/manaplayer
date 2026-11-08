@@ -57,7 +57,8 @@
                 android:ellipsize="end"
                 android:text="@string/paused"
                 android:textColor="?attr/colorPrimary"
-                android:textSize="14sp" />
+                android:textSize="14sp"
+                android:textStyle="bold" />
             <TextView
                 android:id="@+id/radioStreamStatus"
                 android:layout_width="match_parent"
@@ -203,11 +204,23 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/player_gap"
+        android:baselineAligned="false"
         android:orientation="vertical">
     <LinearLayout
         android:id="@+id/actionRow"
         android:layout_width="match_parent"
-        android:layout_height="48dp">
+        android:layout_height="48dp"
+        android:baselineAligned="false">
+        <com.macarmusic.app.ui.PlayerTextButton
+            android:id="@+id/switchPlaybackMode"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:layout_marginEnd="@dimen/player_gap"
+            android:text="@string/radio"
+            android:contentDescription="@string/resume_radio"
+            app:icon="@drawable/ic_radio" />
         <com.macarmusic.app.ui.PlayerTextButton
             android:id="@+id/favorite"
             style="@style/Widget.Material3.Button.OutlinedButton"
@@ -248,6 +261,7 @@
             android:layout_width="0dp"
             android:layout_height="48dp"
             android:layout_weight="1"
+            android:layoutDirection="ltr"
             android:contentDescription="@string/volume" />
         <TextView
             android:id="@+id/volumeValue"

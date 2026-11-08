@@ -33,6 +33,7 @@ public final class FixtureRadioNetwork extends URLStreamHandler {
     public final AtomicInteger manifests = new AtomicInteger();
     public final AtomicInteger segments = new AtomicInteger();
     public final List<String> requests = Collections.synchronizedList(new ArrayList<>());
+    public final AtomicInteger connectionAttempts = new AtomicInteger();
     public volatile int failStreams;
     public volatile String redirect;
     public volatile String customPlaylist;
@@ -42,6 +43,16 @@ public final class FixtureRadioNetwork extends URLStreamHandler {
     public final AtomicInteger logos = new AtomicInteger();
     public volatile java.util.concurrent.CountDownLatch logoStarted;
     public volatile java.util.concurrent.CountDownLatch logoRelease;
+    public final Map<String, String> subscriptionBodies = new java.util.concurrent.ConcurrentHashMap<>();
+    public final Map<String, String> subscriptionEtags = new java.util.concurrent.ConcurrentHashMap<>();
+    public final Map<String, Integer> subscriptionStatuses = new java.util.concurrent.ConcurrentHashMap<>();
+    public final AtomicInteger subscriptions = new AtomicInteger();
+    public final AtomicInteger subscriptionConditionals = new AtomicInteger();
+    public final List<String> subscriptionRequestHeaders = Collections.synchronizedList(new ArrayList<>());
+    public final AtomicInteger subscriptionInFlight = new AtomicInteger();
+    public final AtomicInteger maxSubscriptionInFlight = new AtomicInteger();
+    public volatile java.util.concurrent.CountDownLatch subscriptionStarted;
+    public volatile java.util.concurrent.CountDownLatch subscriptionRelease;
     private final byte[] audio;
     private final byte[] catalogue;
     private long liveStarted;
@@ -90,7 +101,18 @@ public final class FixtureRadioNetwork extends URLStreamHandler {
         logos.set(0);
         logoStarted = null;
         logoRelease = null;
+        subscriptionBodies.clear();
+        subscriptionEtags.clear();
+        subscriptionStatuses.clear();
+        subscriptions.set(0);
+        subscriptionConditionals.set(0);
+        subscriptionRequestHeaders.clear();
+        subscriptionInFlight.set(0);
+        maxSubscriptionInFlight.set(0);
+        subscriptionStarted = null;
+        subscriptionRelease = null;
         requests.clear();
+        connectionAttempts.set(0);
         catalogues.set(0);
         manifests.set(0);
         segments.set(0);
@@ -107,11 +129,14 @@ public final class FixtureRadioNetwork extends URLStreamHandler {
     }
 
     @Override protected URLConnection openConnection(URL address) throws IOException {
+        connectionAttempts.incrementAndGet();
         if (!"apppc.cnr.cn".equals(address.getHost()) &&
             !address.getHost().matches("ngcdn\\d{3}\\.cnr\\.cn") &&
             !"radio.example".equals(address.getHost()) && !"cdn.radio.example".equals(address.getHost()) &&
+            !"audio_station.radio.example".equals(address.getHost()) &&
             !"cnvod.cnr.cn".equals(address.getHost()) && !"p1crires.cri.cn".equals(address.getHost()) &&
-            !"sk.cri.cn".equals(address.getHost()))
+            !"piccpndks.v.kcdnvip.com".equals(address.getHost()) && !"piccpndali.v.myalicdn.com".equals(address.getHost()) &&
+            !"sk.cri.cn".equals(address.getHost()) && !subscriptionBodies.containsKey(address.toString()))
             throw new IOException("Unexpected fixture host");
         return new HttpsURLConnection(address) {
             private byte[] body;
@@ -119,10 +144,53 @@ public final class FixtureRadioNetwork extends URLStreamHandler {
             private String type;
             private String location;
             private boolean counted;
+            private boolean subscriptionCounted;
+            private String etag;
+            private final Map<String, List<String>> requestHeaders = new HashMap<>();
+            // Android 6's abstract URLConnection does not retain request properties.
+            @Override public void setRequestProperty(String key, String value) {
+                if (key == null) throw new NullPointerException("key");
+                requestHeaders.put(key, Collections.singletonList(value));
+            }
+            @Override public String getRequestProperty(String key) {
+                for (Map.Entry<String, List<String>> entry : requestHeaders.entrySet())
+                    if (entry.getKey().equalsIgnoreCase(key)) return entry.getValue().get(0);
+                return null;
+            }
+            @Override public Map<String, List<String>> getRequestProperties() {
+                return Collections.unmodifiableMap(requestHeaders);
+            }
             @Override public void connect() throws IOException {
                 if (body != null) return;
                 requests.add(getURL().getHost() + getURL().getPath());
-                if ("apppc.cnr.cn".equals(getURL().getHost())) {
+                if (subscriptionBodies.containsKey(getURL().toString())) {
+                    subscriptionRequestHeaders.add(getRequestProperties().toString());
+                    subscriptions.incrementAndGet();
+                    subscriptionCounted = true;
+                    int pending = subscriptionInFlight.incrementAndGet();
+                    int previous = maxSubscriptionInFlight.get();
+                    while (pending > previous && !maxSubscriptionInFlight.compareAndSet(previous, pending))
+                        previous = maxSubscriptionInFlight.get();
+                    if (subscriptionStarted != null) subscriptionStarted.countDown();
+                    if (subscriptionRelease != null) {
+                        try {
+                            if (!subscriptionRelease.await(20, java.util.concurrent.TimeUnit.SECONDS))
+                                throw new IOException("Fixture subscription wait timed out");
+                        } catch (InterruptedException error) {
+                            Thread.currentThread().interrupt();
+                            throw new IOException("Fixture subscription interrupted", error);
+                        }
+                    }
+                    body = subscriptionBodies.get(getURL().toString()).getBytes(StandardCharsets.UTF_8);
+                    type = "audio/x-mpegurl";
+                    etag = subscriptionEtags.get(getURL().toString());
+                    Integer failure = subscriptionStatuses.get(getURL().toString());
+                    status = failure == null ? 200 : failure;
+                    if (getRequestProperty("If-None-Match") != null) {
+                        subscriptionConditionals.incrementAndGet();
+                        if (status == 200 && etag != null && etag.equals(getRequestProperty("If-None-Match"))) status = 304;
+                    }
+                } else if ("apppc.cnr.cn".equals(getURL().getHost())) {
                     if (!"/national".equals(getURL().getPath()) || !"POST".equals(getRequestMethod()))
                         throw new IOException("Unexpected fixture catalogue request");
                     catalogues.incrementAndGet();
@@ -154,7 +222,7 @@ public final class FixtureRadioNetwork extends URLStreamHandler {
                     if (logoStarted != null) logoStarted.countDown();
                     if (logoRelease != null) {
                         try {
-                            if (!logoRelease.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                            if (!logoRelease.await(30, java.util.concurrent.TimeUnit.SECONDS))
                                 throw new IOException("Fixture logo wait timed out");
                         } catch (InterruptedException error) {
                             Thread.currentThread().interrupt();
@@ -181,6 +249,7 @@ public final class FixtureRadioNetwork extends URLStreamHandler {
                 if ("Location".equalsIgnoreCase(name)) return location;
                 if ("Content-Length".equalsIgnoreCase(name)) return body == null ? null : Integer.toString(body.length);
                 if ("Content-Type".equalsIgnoreCase(name)) return type;
+                if ("ETag".equalsIgnoreCase(name)) return etag;
                 return null;
             }
             @Override public Map<String, List<String>> getHeaderFields() {
@@ -191,6 +260,7 @@ public final class FixtureRadioNetwork extends URLStreamHandler {
             }
             @Override public void disconnect() {
                 if (counted) { counted = false; active.decrementAndGet(); }
+                if (subscriptionCounted) { subscriptionCounted = false; subscriptionInFlight.decrementAndGet(); }
             }
             @Override public boolean usingProxy() { return false; }
             @Override public String getCipherSuite() { return "Test fixture"; }

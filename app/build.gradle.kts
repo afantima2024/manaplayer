@@ -1,3 +1,12 @@
+import com.sun.source.tree.MemberSelectTree
+import com.sun.source.util.JavacTask
+import com.sun.source.util.TreeScanner
+import javax.tools.Diagnostic
+import javax.tools.DiagnosticCollector
+import javax.tools.JavaFileObject
+import javax.tools.ToolProvider
+import org.gradle.api.tasks.compile.JavaCompile
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,8 +22,9 @@ android {
         applicationId = "com.macarmusic.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 58
-        versionName = "1.36.0"
+        vectorDrawables.useSupportLibrary = true
+        versionCode = 86
+        versionName = "1.55.3"
         resourceConfigurations += listOf("en", "zh")
         testInstrumentationRunner = if (providers.gradleProperty("optimizedSmoke").orNull == "true") {
             "com.macarmusic.app.OptimizedSmokeInstrumentation"
@@ -63,6 +73,38 @@ val exportDebugApk by tasks.registering(Copy::class) {
 
 tasks.matching { it.name == "assembleDebug" }.configureEach {
     dependsOn(exportDebugApk)
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    if (name.endsWith("AndroidTestJavaWithJavac")) {
+        val compileTask = this
+        doFirst {
+            val smokeSource = compileTask.source.files.single { it.name == "OptimizedSmokeInstrumentation.java" }
+            val compiler = checkNotNull(ToolProvider.getSystemJavaCompiler()) { "A JDK is required to check optimized smoke bindings" }
+            val diagnostics = DiagnosticCollector<JavaFileObject>()
+            compiler.getStandardFileManager(diagnostics, null, Charsets.UTF_8).use { manager ->
+                val parser = compiler.getTask(null, manager, diagnostics, listOf("-proc:none"), null,
+                    manager.getJavaFileObjects(smokeSource)) as JavacTask
+                val trees = parser.parse().toList()
+                check(diagnostics.diagnostics.none { it.kind == Diagnostic.Kind.ERROR }) {
+                    "Cannot parse optimized smoke bindings: ${diagnostics.diagnostics}"
+                }
+                val forbidden = sortedSetOf<String>()
+                object : TreeScanner<Void?, Void?>() {
+                    override fun visitMemberSelect(node: MemberSelectTree, unused: Void?): Void? {
+                        val reference = node.toString()
+                        if (listOf("androidx.", "kotlin.", "kotlinx.", "com.google.android.material.").any(reference::startsWith)) {
+                            forbidden += reference
+                        }
+                        return super.visitMemberSelect(node, unused)
+                    }
+                }.scan(trees, null)
+                check(forbidden.isEmpty()) {
+                    "Optimized smoke must stay framework-only; R8-sensitive library references: ${forbidden.joinToString()}"
+                }
+            }
+        }
+    }
 }
 
 dependencies {

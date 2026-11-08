@@ -54,6 +54,16 @@ object AccentTheme {
 
     fun color(view: View, attribute: Int): Int = color(view.context, attribute)
 
+    fun primaryControlColor(view: View): Int =
+        (view.context.applicationContext as? MaCarMusicApp)?.displaySettings?.options?.value
+            ?.primaryControlColor?.or(Color.BLACK)
+            ?: color(view, com.google.android.material.R.attr.colorPrimaryContainer)
+
+    fun primaryControlInk(view: View, background: Int): Int {
+        val preferred = view.playerIndicatorColor(background)
+        return if (ColorUtils.calculateContrast(preferred, background) >= 4.5) preferred else contrasting(background)
+    }
+
     fun color(context: Context, attribute: Int): Int {
         fun native(value: Int) = MaterialColors.getColor(context, value, "AccentTheme")
         val custom = customColor(context) ?: return native(attribute)
@@ -73,10 +83,11 @@ object AccentTheme {
     }
 
     // Public tint APIs support older Android versions without runtime resource overlays.
-    fun tintControls(root: View) {
+    fun tintControls(root: View, readableOnSurface: Boolean = false) {
         val primary = customColor(root.context) ?: return
         val surface = MaterialColors.getColor(root, com.google.android.material.R.attr.colorSurface)
         val onSurface = MaterialColors.getColor(root, com.google.android.material.R.attr.colorOnSurface)
+        val ink = if (readableOnSurface && ColorUtils.calculateContrast(primary, surface) < 4.5) onSurface else primary
         val nativePrimary = MaterialColors.getColor(root, com.google.android.material.R.attr.colorPrimary)
         val enabledState = intArrayOf(android.R.attr.state_enabled)
         val disabled = ColorUtils.blendARGB(surface, onSurface, 0.38f)
@@ -85,45 +96,48 @@ object AccentTheme {
         fun checked(selected: Int, other: Int) = ColorStateList(arrayOf(
             intArrayOf(-android.R.attr.state_enabled), intArrayOf(android.R.attr.state_checked), intArrayOf()),
             intArrayOf(disabled, selected, other))
-        val foreground = enabled(primary)
-        val ripple = ColorStateList.valueOf(ColorUtils.setAlphaComponent(primary, 48))
+        val foreground = enabled(ink)
+        val fill = if (ink == primary) foreground else enabled(primary)
+        val ripple = ColorStateList.valueOf(ColorUtils.setAlphaComponent(ink, 48))
         fun visit(view: View) {
             when (view) {
                 is MaterialButton -> {
                     val category = SettingsCategory.pages.any { it.buttonId == view.id }
                     val filled = view.backgroundTintList?.getColorForState(enabledState, 0)
                         .let { it == nativePrimary || it == primary }
-                    view.setTextColor(if (category) checked(primary, onSurface)
+                    view.setTextColor(if (category) checked(ink, onSurface)
                         else if (filled) enabled(contrasting(primary)) else foreground)
-                    if (view.iconTint != null) view.iconTint = if (filled) enabled(contrasting(primary)) else foreground
-                    if (filled) view.backgroundTintList = foreground
-                    if (category) view.strokeColor = checked(primary, Color.TRANSPARENT)
+                    if (view.iconTint != null && view.getTag(R.id.playerIconSpec) == null)
+                        view.iconTint = if (filled) enabled(contrasting(primary)) else foreground
+                    if (filled) view.backgroundTintList = fill
+                    if (category) view.strokeColor = checked(ink, Color.TRANSPARENT)
                     view.rippleColor = ripple
                 }
                 is MaterialSwitch -> {
-                    view.trackTintList = checked(primary,
+                    view.trackTintList = checked(ink,
                         MaterialColors.getColor(view, com.google.android.material.R.attr.colorSurfaceVariant))
-                    view.thumbTintList = checked(contrasting(primary), onSurface)
+                    view.thumbTintList = checked(contrasting(ink), onSurface)
                 }
-                is CompoundButton -> view.buttonTintList = checked(primary, onSurface)
-                is CheckedTextView -> view.checkMarkTintList = checked(primary, onSurface)
+                is CompoundButton -> view.buttonTintList = checked(ink, onSurface)
+                is CheckedTextView -> view.checkMarkTintList = checked(ink, onSurface)
                 is SeekBar -> {
                     view.thumbTintList = foreground
                     view.progressTintList = foreground
-                    view.progressBackgroundTintList = ColorStateList.valueOf(ColorUtils.setAlphaComponent(primary, 64))
+                    view.progressBackgroundTintList = ColorStateList.valueOf(ColorUtils.setAlphaComponent(ink, 64))
                 }
                 is TextInputLayout -> {
                     view.hintTextColor = foreground
-                    view.boxStrokeColor = primary
+                    view.boxStrokeColor = ink
                 }
                 is Spinner -> view.backgroundTintList = foreground
                 is EditText -> {
                     view.backgroundTintList = foreground
-                    if (Build.VERSION.SDK_INT >= 29) view.textCursorDrawable?.setTint(primary)
+                    if (Build.VERSION.SDK_INT >= 29) view.textCursorDrawable?.setTint(ink)
                 }
                 is TextView -> if (view.textColors.getColorForState(enabledState, 0) == nativePrimary)
                     view.setTextColor(foreground)
-                is ImageView -> if (view.imageTintList?.getColorForState(enabledState, 0) == nativePrimary)
+                is ImageView -> if (view.getTag(R.id.playerIconSpec) == null &&
+                    view.imageTintList?.getColorForState(enabledState, 0) == nativePrimary)
                     view.imageTintList = foreground
             }
             if (view.id == R.id.lyricDragLine) view.setBackgroundColor(primary)
@@ -137,7 +151,7 @@ object AccentTheme {
     private fun customColor(context: Context): Int? =
         (context.applicationContext as? MaCarMusicApp)?.displaySettings?.options?.value?.customAccentColor?.or(Color.BLACK)
 
-    private fun contrasting(color: Int): Int =
+    internal fun contrasting(color: Int): Int =
         if (ColorUtils.calculateContrast(Color.WHITE, color) >= ColorUtils.calculateContrast(Color.BLACK, color))
             Color.WHITE else Color.BLACK
 }

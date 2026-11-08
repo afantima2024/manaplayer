@@ -3,6 +3,9 @@ package com.macarmusic.app.radio
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import androidx.appcompat.content.res.AppCompatResources
+import com.macarmusic.app.MaCarMusicApp
 import android.util.AtomicFile
 import android.util.LruCache
 import com.macarmusic.app.data.BoundedInput
@@ -21,8 +24,11 @@ import java.net.URL
 import java.security.MessageDigest
 
 class RadioLogoRepository(context: Context) {
+    enum class Download { SAVED, CACHED, NO_ADDRESS, CLEARED }
     private val directory = File(context.filesDir, "radio-logos")
+    private val app = context.applicationContext as MaCarMusicApp
     private val gate = Mutex()
+    private val downloads = Mutex()
     private var generation = 0L
     private val memory = object : LruCache<String, Bitmap>(1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
@@ -30,7 +36,22 @@ class RadioLogoRepository(context: Context) {
     private val mutableVersion = MutableStateFlow(0L)
     val version = mutableVersion.asStateFlow()
 
+    fun selected(station: RadioProgram): RadioStationLogo? = app.radio.options.value.stationLogos[station.id]
+    fun identity(station: RadioProgram) = "${station.id}:${selected(station)?.name ?: station.imageUri}"
+
     suspend fun cached(station: RadioProgram): Bitmap? = withContext(Dispatchers.IO) {
+        selected(station)?.let { logo ->
+            return@withContext gate.withLock {
+                val key = "bundled:${logo.name}"
+                memory.get(key) ?: Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888).also { bitmap ->
+                    requireNotNull(AppCompatResources.getDrawable(app, logo.image)).mutate().apply {
+                        setBounds(0, 0, 128, 128)
+                        draw(Canvas(bitmap))
+                    }
+                    memory.put(key, bitmap)
+                }
+            }
+        }
         val url = station.imageUri.takeIf { it.isNotEmpty() } ?: return@withContext null
         gate.withLock {
             memory.get(url) ?: File(directory, key(url)).takeIf(::hasCache)?.let { file ->
@@ -41,28 +62,37 @@ class RadioLogoRepository(context: Context) {
         }
     }
 
-    suspend fun download(station: RadioProgram) = withContext(Dispatchers.IO) {
-        val url = station.imageUri.takeIf { it.isNotEmpty() } ?: return@withContext
-        val epoch = gate.withLock {
-            if (hasCache(File(directory, key(url)))) return@withContext
-            generation
-        }
-        val bitmap = decode(fetch(url))
-        currentCoroutineContext().ensureActive()
-        gate.withLock {
-            if (generation != epoch) { bitmap.recycle(); return@withLock }
-            if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Cannot create radio logo cache")
-            val atomic = AtomicFile(File(directory, key(url)))
-            val output = atomic.startWrite()
+    suspend fun download(station: RadioProgram): Download = withContext(Dispatchers.IO) {
+        if (selected(station) != null) return@withContext Download.CACHED
+        val url = station.imageUri.takeIf { it.isNotEmpty() } ?: return@withContext Download.NO_ADDRESS
+        downloads.withLock {
+            val epoch = gate.withLock {
+                if (hasCache(File(directory, key(url)))) return@withContext Download.CACHED
+                generation
+            }
+            val bitmap = decode(fetch(url))
             try {
-                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) throw IOException("Cannot encode radio logo")
-                atomic.finishWrite(output)
-            } catch (error: IOException) {
-                atomic.failWrite(output)
+                currentCoroutineContext().ensureActive()
+                gate.withLock {
+                    if (generation != epoch) { bitmap.recycle(); return@withLock Download.CLEARED }
+                    if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Cannot create radio logo cache")
+                    val atomic = AtomicFile(File(directory, key(url)))
+                    val output = atomic.startWrite()
+                    try {
+                        if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) throw IOException("Cannot encode radio logo")
+                        atomic.finishWrite(output)
+                    } catch (error: IOException) {
+                        atomic.failWrite(output)
+                        throw error
+                    }
+                    memory.put(url, bitmap)
+                    mutableVersion.value++
+                    Download.SAVED
+                }
+            } catch (error: Exception) {
+                bitmap.recycle()
                 throw error
             }
-            memory.put(url, bitmap)
-            mutableVersion.value++
         }
     }
 

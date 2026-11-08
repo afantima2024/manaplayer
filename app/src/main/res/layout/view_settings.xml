@@ -107,20 +107,30 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/language" />
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/settingsSystemInfo"
-                        style="@style/SettingButton"
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/settingsAutoPlay"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/system_info" />
+                        android:minHeight="48dp"
+                        android:text="@string/autoplay_on_launch"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="16sp" />
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/settingsKeepScreenOn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="48dp"
+                        android:text="@string/keep_screen_on"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="16sp" />
                     <TextView
                         style="@style/SettingLabel"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/settings_transition"
-                        android:labelFor="@id/settingsTransition" />
+                        android:text="@string/notice_duration"
+                        android:labelFor="@id/settingsNoticeDuration" />
                     <com.macarmusic.app.ui.PlayerSpinner
-                        android:id="@+id/settingsTransition"
+                        android:id="@+id/settingsNoticeDuration"
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content" />
@@ -192,13 +202,6 @@
                                 style="@style/SettingChoice"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content" />
-                            <TextView
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:padding="8dp"
-                                android:text="@string/slideshow_help"
-                                android:textColor="?attr/colorOnSurfaceVariant"
-                                android:textSize="16sp" />
                         </LinearLayout>
                         <TextView
                             android:id="@+id/backgroundBlurValue"
@@ -234,14 +237,6 @@
                             android:layout_height="56dp"
                             android:max="100"
                             android:contentDescription="@string/background_tint_strength" />
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:paddingTop="8dp"
-                            android:paddingBottom="16dp"
-                            android:text="@string/background_help"
-                            android:textColor="?attr/colorOnSurfaceVariant"
-                            android:textSize="16sp" />
                     </LinearLayout>
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/settingsAccent"
@@ -249,6 +244,12 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/theme_accent" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsAppLogo"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/appearance_logo" />
                     <TextView
                         style="@style/SettingLabel"
                         android:layout_width="match_parent"
@@ -289,13 +290,26 @@
                         android:text="@string/navigation_show_playlists"
                         android:textColor="?attr/colorOnSurface"
                         android:textSize="16sp" />
-                    <TextView
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/settingsRadio"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:padding="8dp"
-                        android:text="@string/navigation_buttons_help"
-                        android:textColor="?attr/colorOnSurfaceVariant"
-                        android:textSize="14sp" />
+                        android:minHeight="48dp"
+                        android:text="@string/radio_enabled"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="16sp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsButtonIcons"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/appearance_icons" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsPrimaryControlColor"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/primary_control_color" />
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/settingsControlBlocks"
                         android:layout_width="match_parent"
@@ -355,13 +369,16 @@
                             android:textSize="18sp" />
                     </LinearLayout>
                     <TextView
+                        style="@style/SettingLabel"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingTop="8dp"
-                        android:paddingBottom="16dp"
-                        android:text="@string/control_blocks_help"
-                        android:textColor="?attr/colorOnSurfaceVariant"
-                        android:textSize="16sp" />
+                        android:text="@string/settings_transition"
+                        android:labelFor="@id/settingsTransition" />
+                    <com.macarmusic.app.ui.PlayerSpinner
+                        android:id="@+id/settingsTransition"
+                        style="@style/SettingChoice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content" />
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/settingsDefaultPlayer"
                         style="@style/SettingButton"
@@ -374,13 +391,6 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/home_widgets" />
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:paddingBottom="16dp"
-                        android:text="@string/widgets_help"
-                        android:textColor="?attr/colorOnSurfaceVariant"
-                        android:textSize="16sp" />
                     <TextView
                         android:id="@+id/widgetTransparencyValue"
                         style="@style/SettingLabel"
@@ -415,13 +425,12 @@
                         android:textColor="?attr/colorOnSurface"
                         android:textSize="16sp"
                         android:visibility="gone" />
-                    <TextView
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsSystemInfo"
+                        style="@style/SettingButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingBottom="16dp"
-                        android:text="@string/backup_help"
-                        android:textColor="?attr/colorOnSurfaceVariant"
-                        android:textSize="16sp" />
+                        android:text="@string/system_info" />
                 </LinearLayout>
                 <include
                     android:id="@+id/settingsRadioPanel"
@@ -445,13 +454,16 @@
                         android:layout_height="wrap_content"
                         android:text="@string/play_order" />
                     <TextView
+                        style="@style/SettingLabel"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:paddingTop="8dp"
-                        android:paddingBottom="16dp"
-                        android:text="@string/playback_settings_help"
-                        android:textColor="?attr/colorOnSurfaceVariant"
-                        android:textSize="16sp" />
+                        android:text="@string/main_time_mode"
+                        android:labelFor="@id/settingsMainTimeMode" />
+                    <com.macarmusic.app.ui.PlayerSpinner
+                        android:id="@+id/settingsMainTimeMode"
+                        style="@style/SettingChoice"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content" />
                     <TextView
                         style="@style/SettingLabel"
                         android:layout_width="match_parent"
@@ -464,16 +476,17 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content" />
                     <TextView
+                        android:id="@+id/miniPlayerTransparencyValue"
                         style="@style/SettingLabel"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/main_time_mode"
-                        android:labelFor="@id/settingsMainTimeMode" />
-                    <com.macarmusic.app.ui.PlayerSpinner
-                        android:id="@+id/settingsMainTimeMode"
-                        style="@style/SettingChoice"
+                        android:labelFor="@id/miniPlayerTransparency" />
+                    <SeekBar
+                        android:id="@+id/miniPlayerTransparency"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content" />
+                        android:layout_height="48dp"
+                        android:max="100"
+                        android:contentDescription="@string/mini_player_transparency" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/settingsSpectrumPanel"
@@ -507,6 +520,30 @@
                         android:text="@string/show_lyrics"
                         android:textColor="?attr/colorOnSurface"
                         android:textSize="18sp" />
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/settingsOnlineLyrics"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="64dp"
+                        android:text="@string/search_online_lyrics"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="18sp" />
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/settingsLyricDragSeek"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="64dp"
+                        android:text="@string/lyrics_drag_seek"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="18sp" />
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/settingsLyricSmoothScroll"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="64dp"
+                        android:text="@string/lyrics_smooth_scroll"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="18sp" />
                     <TextView
                         style="@style/SettingLabel"
                         android:layout_width="match_parent"
@@ -529,38 +566,6 @@
                         style="@style/SettingChoice"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content" />
-                    <com.google.android.material.materialswitch.MaterialSwitch
-                        android:id="@+id/settingsOnlineLyrics"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:minHeight="64dp"
-                        android:text="@string/search_online_lyrics"
-                        android:textColor="?attr/colorOnSurface"
-                        android:textSize="18sp" />
-                    <TextView
-                        android:id="@+id/lyricsProviderOrder"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:paddingTop="8dp"
-                        android:paddingBottom="8dp"
-                        android:textColor="?attr/colorOnSurface"
-                        android:textSize="16sp" />
-                    <com.google.android.material.materialswitch.MaterialSwitch
-                        android:id="@+id/settingsLyricDragSeek"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:minHeight="64dp"
-                        android:text="@string/lyrics_drag_seek"
-                        android:textColor="?attr/colorOnSurface"
-                        android:textSize="18sp" />
-                    <com.google.android.material.materialswitch.MaterialSwitch
-                        android:id="@+id/settingsLyricSmoothScroll"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:minHeight="64dp"
-                        android:text="@string/lyrics_smooth_scroll"
-                        android:textColor="?attr/colorOnSurface"
-                        android:textSize="18sp" />
                     <TextView
                         style="@style/SettingLabel"
                         android:id="@+id/lyricActiveSizeValue"
@@ -575,6 +580,12 @@
                         android:contentDescription="@string/lyric_active_size"
                         android:max="36"
                         android:progress="12" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/lyricActiveColor"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyric_active_color" />
                     <TextView
                         android:id="@+id/lyricOtherSizeValue"
                         style="@style/SettingLabel"
@@ -589,6 +600,12 @@
                         android:contentDescription="@string/lyric_other_size"
                         android:max="36"
                         android:progress="8" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/lyricOtherColor"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyric_other_color" />
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/settingsLyricKaraoke"
                         android:layout_width="match_parent"
@@ -604,18 +621,6 @@
                         android:layout_height="wrap_content"
                         android:text="@string/lyric_karaoke_color" />
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/lyricActiveColor"
-                        style="@style/SettingButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/lyric_active_color" />
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/lyricOtherColor"
-                        style="@style/SettingButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/lyric_other_color" />
-                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/lyricResetAppearance"
                         style="@style/SettingButton"
                         android:layout_width="match_parent"
@@ -629,6 +634,18 @@
                         android:textIsSelectable="true"
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:textSize="14sp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/lyricsCacheMove"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyrics_cache_move" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/lyricsCacheInternal"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/lyrics_cache_internal" />
                     <TextView
                         style="@style/SettingLabel"
                         android:layout_width="match_parent"
@@ -665,18 +682,6 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/lyrics_cache_clear" />
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/lyricsCacheMove"
-                        style="@style/SettingButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/lyrics_cache_move" />
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/lyricsCacheInternal"
-                        style="@style/SettingButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/lyrics_cache_internal" />
                     <ProgressBar
                         android:id="@+id/lyricsCacheProgress"
                         style="?android:attr/progressBarStyleHorizontal"
@@ -685,14 +690,6 @@
                         android:contentDescription="@string/lyrics_cache_busy"
                         android:indeterminate="true"
                         android:visibility="gone" />
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:paddingTop="8dp"
-                        android:paddingBottom="16dp"
-                        android:text="@string/lyrics_help"
-                        android:textColor="?attr/colorOnSurfaceVariant"
-                        android:textSize="16sp" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/settingsFoldersPanel"
@@ -701,17 +698,23 @@
                     android:orientation="vertical"
                     android:visibility="gone">
                     <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsAddFolder"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/add_folder" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsDeviceMusic"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/device_music" />
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/settingsFolders"
                         style="@style/SettingButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/select_folders" />
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/settingsPinFolders"
-                        style="@style/SettingButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/pin_folders" />
                     <TextView
                         android:id="@+id/settingsFolderSummary"
                         android:layout_width="match_parent"
@@ -720,31 +723,18 @@
                         android:paddingBottom="8dp"
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:textSize="16sp" />
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:paddingBottom="8dp"
-                        android:text="@string/multiple_folders_help"
-                        android:textColor="?attr/colorOnSurfaceVariant"
-                        android:textSize="16sp" />
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/settingsDeviceMusic"
-                        style="@style/SettingButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/device_music" />
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/settingsAddFolder"
-                        style="@style/SettingButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/add_folder" />
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/settingsPlayFolders"
                         style="@style/SettingButton"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/play_selected_folders" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/settingsPinFolders"
+                        style="@style/SettingButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/pin_folders" />
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/settingsManageFolders"
                         style="@style/SettingButton"

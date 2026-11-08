@@ -55,6 +55,8 @@ import com.macarmusic.app.widgets.HomeWidgetAction
 import com.macarmusic.app.radio.RadioCatalogState
 import com.macarmusic.app.radio.RadioCommands
 import com.macarmusic.app.radio.RadioProgram
+import com.macarmusic.app.radio.RadioNavigation
+import com.macarmusic.app.radio.RadioNavigationOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -62,10 +64,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -78,6 +82,7 @@ import java.io.IOException
 class PlaybackService : MediaLibraryService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val restored = CompletableDeferred<Unit>()
+    private val musicRestored = CompletableDeferred<Unit>()
     private lateinit var app: MaCarMusicApp
     private lateinit var player: ExoPlayer
     private lateinit var sessionPlayer: RadioSessionPlayer
@@ -91,6 +96,7 @@ class PlaybackService : MediaLibraryService() {
     private var systemSeekEnabled = false
     private var radioMode = false
     private var changingSource = false
+    private var errorPausePending = false
     private val sessionCommands = Mutex()
     private var appliedRadioCatalog: RadioCatalogState? = null
     private var radioEpoch = 0L
@@ -99,6 +105,10 @@ class PlaybackService : MediaLibraryService() {
     private var logoJob: Job? = null
     private var logoKey: String? = null
     private var trafficKey: String? = null
+    private var navigationPrograms: List<RadioProgram>? = null
+    private var navigationOptions: RadioNavigationOptions? = null
+    private var navigationLocale: java.util.Locale? = null
+    private var navigationItems = emptyList<MediaItem>()
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(LocalizedContext(newBase))
@@ -150,65 +160,78 @@ class PlaybackService : MediaLibraryService() {
             this, 0, Intent(this, MainActivity::class.java).apply {
                 action = Intent.ACTION_MAIN
                 addCategory(Intent.CATEGORY_APP_MUSIC)
+                putExtra(StartupPlayback.OPEN_PLAYER_ONLY, true)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        sessionPlayer = RadioSessionPlayer(player, ::cancelRadioWork)
+        sessionPlayer = RadioSessionPlayer(player, { navigationItems.map { it.mediaId } }, ::cancelRadioWork)
         session = MediaLibrarySession.Builder(this, sessionPlayer, SessionCallback())
             .setSessionActivity(activityIntent)
             .setBitmapLoader(LocalBitmapLoader(app.artwork, scope))
             .setMediaButtonPreferences(SystemMediaControls.buttons(this, enabled = false))
             .build()
+        scope.launch {
+            app.radioCatalogWarmed.first { it }
+            val catalog = app.radioCatalog.state.value
+            if (catalog.error == null) radioNavigationItems(catalog)
+        }
         setListener(object : Listener {
             override fun onForegroundServiceStartNotAllowedException() {
                 player.pause()
                 app.report(getString(R.string.foreground_failed))
             }
         })
-        scope.launch {
+        val savedMusic = scope.async {
             val saved = app.playback.read()
             app.repository.awaitReady()
             val library = app.repository.takeIf { it.isReadable }?.library?.value
-            val (snapshot, items) = withContext(Dispatchers.Default) {
-                val snapshot = if (library != null) PlaybackEdits.reconcile(saved, library.tracks) else saved
-                snapshot to snapshot.queue.map(Track::toMediaItem)
+            withContext(Dispatchers.Default) {
+                if (library != null) PlaybackEdits.reconcile(saved, library.tracks) else saved
             }
-            cachedQueue = snapshot.queue
-            currentCollection = snapshot.collection
-            app.playbackSettings.migrate(snapshot)
-            appliedOptions = app.playbackSettings.options.value
-            applyPlayerOptions(appliedOptions)
-            player.playWhenReady = false
-            val catalog = if (app.radio.options.value.let { it.enabled && it.active }) {
+        }
+        scope.launch {
+            val catalog = if (app.radio.options.value.active) {
                 app.radioCatalog.awaitReady()
                 app.radioCatalog.state.value
             } else null
             val radio = app.radio.options.value
-            val station = catalog?.find(radio.stationId).takeIf { radio.enabled && radio.active }
+            val station = catalog?.find(radio.stationId).takeIf { radio.active }
             if (station != null) {
-                app.radio.rememberMusic(snapshot)
                 radioMode = true
+                app.radio.select(station)
                 player.shuffleModeEnabled = false
                 player.repeatMode = Player.REPEAT_MODE_OFF
                 player.pauseAtEndOfMediaItems = true
                 player.setWakeMode(C.WAKE_MODE_NETWORK)
                 appliedRadioCatalog = catalog
-                val stations = checkNotNull(appliedRadioCatalog).programs
-                sessionPlayer.setRadioQueue(stations.map { it.mediaItem(this@PlaybackService) }, stations.indexOf(station))
-            } else if (snapshot.queue.isNotEmpty()) {
-                player.setMediaItems(items, snapshot.index, snapshot.positionMs)
+                // The current stream can restore before the local library and full station timeline.
+                sessionPlayer.setRadioQueue(listOf(station.mediaItem(this@PlaybackService)), 0)
+                finishRestoration()
             }
+            val snapshot = savedMusic.await()
+            cachedQueue = snapshot.queue
+            currentCollection = snapshot.collection
+            app.playbackSettings.migrate(snapshot)
+            appliedOptions = app.playbackSettings.options.value
+            if (station != null) app.radio.rememberMusic(snapshot)
+            else {
+                applyPlayerOptions(appliedOptions)
+                if (snapshot.queue.isNotEmpty()) {
+                    val items = withContext(Dispatchers.Default) { snapshot.queue.map(Track::toMediaItem) }
+                    player.setMediaItems(items, snapshot.index, snapshot.positionMs)
+                }
+            }
+            musicRestored.complete(Unit)
             if (radio.active && station == null) {
+                app.startupPlayback.cancel()
                 app.radio.leave()
-                if (radio.enabled) app.report(getString(R.string.radio_station_invalid))
+                app.report(getString(R.string.radio_station_invalid))
             }
-            cachedTimeline = player.currentTimeline
-            // Do not prepare or acquire audio focus until an explicit Play command.
-            restoring = false
-            persist()
-            restored.complete(Unit)
-            app.playbackReady.value = true
+            if (station == null) finishRestoration()
+            if (station != null) sessionCommands.withLock {
+                if (radioMode) sessionPlayer.updateRadioCatalog(radioNavigationItems(app.radioCatalog.state.value))
+            }
             app.homeWidgets.attach(sessionPlayer)
             notifyBrowsers()
             observeLibraryReferences()
@@ -219,6 +242,20 @@ class PlaybackService : MediaLibraryService() {
                 persist()
             }
         }
+    }
+
+    private fun finishRestoration() {
+        cachedTimeline = player.currentTimeline
+        restoring = false
+        persist()
+        restored.complete(Unit)
+        app.playbackReady.value = true
+        resumeStartupPlayback()
+    }
+
+    private fun resumeStartupPlayback() {
+        if (app.startupPlayback.consume(app.displaySettings.options.value.autoPlayOnLaunch) &&
+            player.mediaItemCount > 0 && !player.playWhenReady) resumePlayback()
     }
 
     private fun applyPlayerOptions(options: PlaybackOptions) {
@@ -321,34 +358,59 @@ class PlaybackService : MediaLibraryService() {
 
     private fun observeRadioSettings() {
         scope.launch {
-            app.radio.options.map { it.tuning.downloadLogos }.distinctUntilChanged().collect { enabled ->
-                if (!enabled) { logoJob?.cancel(); logoKey = null }
-                else if (radioMode) updateRadioLogo()
-            }
-        }
-        scope.launch {
-            app.radio.options.map { it.enabled }.distinctUntilChanged().collect { enabled ->
-                if (!enabled) sessionCommands.withLock {
-                    if (radioMode) {
-                        cancelRadioWork()
-                        player.pause()
-                        player.stop()
-                        try { returnToMusic() }
-                        catch (error: IOException) {
-                            Log.e(TAG, "Cannot restore music after disabling radio", error)
-                            app.report(getString(R.string.radio_command_failed, error.localizedMessage.orEmpty()))
-                        }
-                    }
+            app.radio.options.map { RadioNavigationOptions(it) }.distinctUntilChanged().collect {
+                sessionCommands.withLock {
+                    if (radioMode)
+                        sessionPlayer.updateRadioCatalog(radioNavigationItems(app.radioCatalog.state.value))
                 }
             }
         }
         scope.launch {
-            app.radio.options.map { it.enabled && it.active }.distinctUntilChanged().collectLatest { active ->
+            app.radio.options.map { it.tuning.downloadLogos to it.stationLogos }.distinctUntilChanged().collect { (enabled, _) ->
+                if (!enabled) {
+                    logoJob?.cancel()
+                    logoKey = null
+                } else if (radioMode) updateRadioLogo()
+            }
+        }
+        scope.launch {
+            app.radio.options.map { it.active }.distinctUntilChanged().collectLatest { active ->
                 if (active) app.radioCatalog.state.collect { catalog ->
                     if (!catalog.ready || catalog.error != null) return@collect
                     sessionCommands.withLock {
-                        if (!app.radio.options.value.enabled || !radioMode ||
+                        if (!radioMode ||
                             appliedRadioCatalog === catalog || catalog !== app.radioCatalog.state.value) return@withLock
+                        if (appliedRadioCatalog?.localRevision == catalog.localRevision) {
+                            val changed = appliedRadioCatalog?.programs !== catalog.programs
+                            appliedRadioCatalog = catalog
+                            if (changed) {
+                                sessionPlayer.updateRadioCatalog(radioNavigationItems(catalog))
+                                notifyBrowsers()
+                            }
+                            return@withLock
+                        }
+                        val current = currentRadioProgram()
+                        val edited = catalog.find(player.currentMediaItem?.mediaId)
+                        val retained = edited?.let {
+                            when {
+                                player.currentMediaItem?.hasSource(it.id, it.streamUri) == true -> it
+                                appliedRadioCatalog?.find(it.id)?.streamUri == it.streamUri ->
+                                    current?.copy(name = it.name, group = it.group, logoUri = it.logoUri)
+                                else -> null
+                            }
+                        }
+                        if (retained != null) {
+                            appliedRadioCatalog = catalog
+                            app.radio.select(retained)
+                            val navigation = radioNavigationItems(catalog)
+                            val items = if (navigation.any { it.mediaId == retained.id }) navigation.map {
+                                if (it.mediaId == retained.id) retained.mediaItem(this@PlaybackService) else it
+                            } else listOf(retained.mediaItem(this@PlaybackService)) + navigation
+                            sessionPlayer.updateRadioCatalog(items, updateCurrent = true,
+                                eligibleIds = navigation.map { it.mediaId })
+                            notifyBrowsers()
+                            return@withLock
+                        }
                         val station = catalog.find(player.currentMediaItem?.mediaId) ?: catalog.programs.firstOrNull()
                         if (station == null) {
                             cancelRadioWork()
@@ -361,13 +423,12 @@ class PlaybackService : MediaLibraryService() {
                             }
                             return@withLock
                         }
-                        val stations = catalog.programs
                         changingSource = true
                         try {
                             cancelRadioWork()
                             player.pause()
                             player.stop()
-                            sessionPlayer.setRadioQueue(stations.map { it.mediaItem(this@PlaybackService) }, stations.indexOf(station))
+                            setRadioQueue(catalog, station)
                             app.radio.select(station)
                             appliedRadioCatalog = catalog
                         } finally { changingSource = false }
@@ -381,6 +442,11 @@ class PlaybackService : MediaLibraryService() {
 
     private val playerListener = object : Player.Listener {
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            // Media3 can defer this callback until after onPlayerError's scoped guard has ended.
+            if (!playWhenReady && errorPausePending && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
+                errorPausePending = false
+                return
+            }
             if (!radioMode || changingSource || restoring || released) return
             if (!playWhenReady) {
                 cancelRadioWork()
@@ -419,18 +485,27 @@ class PlaybackService : MediaLibraryService() {
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION))
                 app.lyricsTrackChanged(player.currentMediaItem?.mediaId.takeUnless { radioMode })
             app.spectrum.setPlaying(player.isPlaying)
+            app.playbackActive.value = player.playWhenReady &&
+                (player.playbackState == Player.STATE_BUFFERING || player.playbackState == Player.STATE_READY)
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
                 events.contains(Player.EVENT_POSITION_DISCONTINUITY)
             ) app.spectrum.reset()
             if (restoring || released || changingSource) return
+            app.playbackProblem.value?.let { problem ->
+                val item = player.currentMediaItem
+                if (!problem.matches(item?.mediaId, item?.localConfiguration?.uri?.toString()) ||
+                    player.playbackState == Player.STATE_READY && player.playerError == null) {
+                    app.playbackProblem.compareAndSet(problem, null)
+                }
+            }
             val canSeek = SystemMediaControls.canSeek(player)
             if (systemSeekEnabled != canSeek) {
                 systemSeekEnabled = canSeek
                 session?.setMediaButtonPreferences(SystemMediaControls.buttons(this@PlaybackService, canSeek))
             }
             if (radioMode) {
-                app.radioCatalog.find(player.currentMediaItem?.mediaId)?.let(app.radio::select)
                 val station = currentRadioProgram()
+                (station ?: app.radioCatalog.find(player.currentMediaItem?.mediaId))?.let(app.radio::select)
                 val key = station?.let { "${it.id}:${it.streamUri}" }
                 if (trafficKey != key) {
                     trafficKey = key
@@ -462,6 +537,7 @@ class PlaybackService : MediaLibraryService() {
         override fun onPlayerError(error: PlaybackException) {
             val requested = player.playWhenReady
             val station = currentRadioProgram()
+            if (requested) errorPausePending = true
             changingSource = true
             try { player.pause() }
             finally { changingSource = false }
@@ -473,15 +549,16 @@ class PlaybackService : MediaLibraryService() {
                     app.inform(getString(R.string.radio_source_fallback, next + 1, station.sources.size))
                     radioFallback = scope.launch {
                         sessionCommands.withLock {
-                            if (radioEpoch != epoch || !radioMode || !app.radio.options.value.enabled) return@withLock
+                            if (radioEpoch != epoch || !radioMode) return@withLock
                             try {
                                 changingSource = true
                                 val selected = app.radioCatalog.selectSource(station.id, next, station.sources[next])
-                                if (radioEpoch == epoch && radioMode && app.radio.options.value.enabled) {
+                                if (radioEpoch == epoch && radioMode) {
                                     playRadio(selected, resetAttempts = false)
                                 }
                             } catch (failure: IOException) {
                                 Log.e(TAG, "Cannot switch radio source", failure)
+                                rememberPlaybackProblem(error)
                                 app.report(getString(R.string.radio_command_failed, failure.localizedMessage.orEmpty()))
                             } finally { changingSource = false }
                         }
@@ -490,6 +567,7 @@ class PlaybackService : MediaLibraryService() {
                 }
             }
             Log.e(TAG, "Playback stopped; automatic skipping is disabled", error)
+            rememberPlaybackProblem(error)
             app.report(getString(
                 if (radioMode) R.string.radio_failed else R.string.playback_failed,
                 player.currentMediaItem?.mediaMetadata?.title ?: getString(R.string.unnamed_file),
@@ -497,6 +575,14 @@ class PlaybackService : MediaLibraryService() {
             ))
             persist()
         }
+    }
+
+    private fun rememberPlaybackProblem(error: PlaybackException) {
+        val item = player.currentMediaItem ?: return
+        app.playbackProblem.value = com.macarmusic.app.model.PlaybackProblem(
+            item.mediaId, item.localConfiguration?.uri?.toString().orEmpty(),
+            item.mediaMetadata.title?.toString().orEmpty(), error.errorCodeName, radioMode,
+        )
     }
 
     private fun persist(rememberCollection: Boolean = false) {
@@ -549,8 +635,28 @@ class PlaybackService : MediaLibraryService() {
         appliedRadioCatalog = catalog
     }
 
-    private fun playRadio(station: RadioProgram, resetAttempts: Boolean = true) {
-        requireRadioEnabled()
+    private suspend fun radioNavigationItems(catalog: RadioCatalogState): List<MediaItem> {
+        val options = RadioNavigationOptions(app.radio.options.value)
+        val locale = resources.configuration.locale
+        if (navigationPrograms !== catalog.programs || navigationOptions != options || navigationLocale != locale) {
+            navigationItems = withContext(Dispatchers.Default) {
+                RadioNavigation.ordered(catalog.programs, options).map { it.mediaItem(this@PlaybackService) }
+            }
+            navigationPrograms = catalog.programs
+            navigationOptions = options
+            navigationLocale = locale
+        }
+        return navigationItems
+    }
+
+    private suspend fun setRadioQueue(catalog: RadioCatalogState, station: RadioProgram) {
+        val navigation = radioNavigationItems(catalog)
+        val items = navigation.takeIf { list -> list.any { it.mediaId == station.id } }
+            ?: (listOf(station.mediaItem(this)) + navigation)
+        sessionPlayer.setRadioQueue(items, items.indexOfFirst { it.mediaId == station.id }, navigation.map { it.mediaId })
+    }
+
+    private suspend fun playRadio(station: RadioProgram, resetAttempts: Boolean = true) {
         val catalog = app.radioCatalog.state.value
         val selected = catalog.find(station.id) ?: throw IOException(getString(R.string.radio_station_invalid))
         if (player.isActiveSource(selected.id, selected.streamUri)) return
@@ -562,16 +668,21 @@ class PlaybackService : MediaLibraryService() {
         trafficKey = "${selected.id}:${selected.streamUri}"
         app.radioTraffic.select(selected.id, selected.streamUri)
         enterRadio(selected, catalog)
+        val navigationReady = navigationPrograms === catalog.programs &&
+            navigationOptions == RadioNavigationOptions(app.radio.options.value) &&
+            navigationLocale == resources.configuration.locale
         changingSource = true
         try {
             player.pause()
-            val stations = catalog.programs
-            sessionPlayer.setRadioQueue(stations.map { it.mediaItem(this) }, stations.indexOf(selected))
+            if (navigationReady) setRadioQueue(catalog, selected)
+            else sessionPlayer.setRadioQueue(listOf(selected.mediaItem(this)), 0)
             player.prepare()
             player.play()
         } finally {
             changingSource = false
         }
+        // First use must not hold the stream behind the full station-navigation timeline.
+        if (!navigationReady) sessionPlayer.updateRadioCatalog(radioNavigationItems(catalog))
     }
 
     private fun currentRadioProgram(): RadioProgram? =
@@ -589,7 +700,7 @@ class PlaybackService : MediaLibraryService() {
     private fun updateRadioLogo() {
         if (!player.isPlaying || !app.radio.options.value.tuning.downloadLogos) return
         val station = currentRadioProgram() ?: return
-        val key = "${station.id}:${station.imageUri}"
+        val key = app.radioLogos.identity(station)
         if (key == logoKey) return
         logoJob?.cancel()
         logoKey = key
@@ -602,11 +713,7 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    private fun requireRadioEnabled() {
-        if (!app.radio.options.value.enabled) throw IOException(getString(R.string.radio_disabled))
-    }
-
-    private suspend fun returnToMusic() {
+    private suspend fun returnToMusic(resume: Boolean = false) {
         while (radioMode) {
             val saved = app.radio.savedMusic.value
                 ?: throw IOException(getString(R.string.playback_load_failed, "Missing saved music queue"))
@@ -617,6 +724,7 @@ class PlaybackService : MediaLibraryService() {
             }
             if (app.radio.savedMusic.value !== saved ||
                 app.repository.takeIf { it.isReadable }?.library?.value !== library) continue
+            if (resume && items.isEmpty()) throw IOException(getString(R.string.no_tracks_to_play))
             changingSource = true
             try {
                 cancelRadioWork()
@@ -642,6 +750,14 @@ class PlaybackService : MediaLibraryService() {
             persist()
             notifyBrowsers()
         }
+        if (resume) resumePlayback()
+    }
+
+    private fun resumePlayback() {
+        if (player.mediaItemCount == 0) throw IOException(getString(R.string.no_tracks_to_play))
+        if (player.playbackState == Player.STATE_ENDED) player.seekToDefaultPosition()
+        if (player.playbackState == Player.STATE_IDLE || player.playerError != null) player.prepare()
+        player.play()
     }
 
     private fun notifyBrowsers() {
@@ -656,10 +772,13 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
+        app.startupPlayback.cancel()
         persist()
         app.homeWidgets.detach(sessionPlayer)
         released = true
         app.playbackReady.value = false
+        app.playbackActive.value = false
+        app.radioPreparing.value = false
         scope.cancel()
         player.removeListener(playerListener)
         session?.release()
@@ -700,7 +819,9 @@ class PlaybackService : MediaLibraryService() {
             result.setAvailableSessionCommands(commands.buildUpon()
                 .add(SystemMediaControls.back).add(SystemMediaControls.forward).apply {
                     if (controller.uid == Process.myUid()) HomeWidgetAction.entries.forEach { add(it.command) }
-                    if (controller.uid == Process.myUid()) { add(RadioCommands.play); add(RadioCommands.music) }
+                    if (controller.uid == Process.myUid()) {
+                        add(RadioCommands.play); add(RadioCommands.music); add(RadioCommands.startup)
+                    }
                 }.build())
             return result.build()
         }
@@ -716,10 +837,19 @@ class PlaybackService : MediaLibraryService() {
             customCommand: SessionCommand,
             args: Bundle,
         ): ListenableFuture<SessionResult> {
+            if (customCommand == RadioCommands.startup) {
+                if (controller.uid != Process.myUid())
+                    return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
+                return afterRestore {
+                    resumeStartupPlayback()
+                    SessionResult(SessionResult.RESULT_SUCCESS)
+                }
+            }
             if (customCommand == RadioCommands.play || customCommand == RadioCommands.music) {
                 if (controller.uid != Process.myUid())
                     return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
-                val requested = if (customCommand == RadioCommands.play)
+                app.startupPlayback.cancel()
+                val requested = if (customCommand == RadioCommands.play && app.radioCatalogInitialized)
                     app.radioCatalog.state.value.find(args.getString(RadioCommands.STATION)) else null
                 val source = requested?.let {
                     it.sources.getOrNull(if (args.containsKey(RadioCommands.SOURCE)) args.getInt(RadioCommands.SOURCE) else it.sourceIndex)
@@ -727,21 +857,26 @@ class PlaybackService : MediaLibraryService() {
                 if (customCommand == RadioCommands.music || requested == null || !player.isActiveSource(requested.id, source))
                     cancelRadioWork()
                 return afterRestore(waitForLibrary = true) {
-                    if (customCommand == RadioCommands.music) returnToMusic()
+                    if (customCommand == RadioCommands.music) returnToMusic(resume = args.getBoolean(RadioCommands.RESUME, false))
                     else {
-                        requireRadioEnabled()
-                        app.radioCatalog.awaitReady()
-                        requireRadioEnabled()
-                        var station = app.radioCatalog.find(args.getString(RadioCommands.STATION))
-                            ?: throw IOException(getString(R.string.radio_station_invalid))
-                        if (args.containsKey(RadioCommands.SOURCE)) {
-                            val index = args.getInt(RadioCommands.SOURCE)
-                            if (index !in station.sources.indices) throw IOException(getString(R.string.radio_station_invalid))
-                            changingSource = true
-                            try { station = app.radioCatalog.selectSource(station.id, index, args.getString(RadioCommands.SOURCE_URI)) }
-                            finally { changingSource = false }
+                        // Silence Music before the service publishes the pending Radio UI.
+                        if (!radioMode) player.pause()
+                        app.radioPreparing.value = true
+                        try {
+                            withContext(Dispatchers.IO) { app.radioCatalog.awaitReady() }
+                            var station = app.radioCatalog.find(args.getString(RadioCommands.STATION))
+                                ?: throw IOException(getString(R.string.radio_station_invalid))
+                            if (args.containsKey(RadioCommands.SOURCE)) {
+                                val index = args.getInt(RadioCommands.SOURCE)
+                                if (index !in station.sources.indices) throw IOException(getString(R.string.radio_station_invalid))
+                                changingSource = true
+                                try { station = app.radioCatalog.selectSource(station.id, index, args.getString(RadioCommands.SOURCE_URI)) }
+                                finally { changingSource = false }
+                            }
+                            playRadio(station)
+                        } finally {
+                            app.radioPreparing.value = false
                         }
-                        playRadio(station)
                     }
                     SessionResult(SessionResult.RESULT_SUCCESS)
                 }
@@ -750,10 +885,12 @@ class PlaybackService : MediaLibraryService() {
                 if (controller.uid != Process.myUid()) {
                     return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
                 }
+                app.startupPlayback.cancel()
                 return afterRestore { action.execute(app, sessionPlayer) }
             }
             val offset = SystemMediaControls.offset(customCommand)
                 ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+            app.startupPlayback.cancel()
             return afterRestore {
                 if (SystemMediaControls.seek(player, offset)) SessionResult(SessionResult.RESULT_SUCCESS)
                 else {
@@ -765,8 +902,19 @@ class PlaybackService : MediaLibraryService() {
 
         override fun onPlayerCommandRequest(session: MediaSession, controller: MediaSession.ControllerInfo,
             playerCommand: Int): Int {
-            if (radioMode && !app.radio.options.value.enabled && playerCommand != Player.COMMAND_STOP)
+            if (app.radioPreparing.value && !radioMode &&
+                (playerCommand == Player.COMMAND_PLAY_PAUSE || playerCommand == Player.COMMAND_PREPARE)) {
                 return SessionError.ERROR_INVALID_STATE
+            }
+            when (playerCommand) {
+                Player.COMMAND_PLAY_PAUSE, Player.COMMAND_PREPARE, Player.COMMAND_STOP,
+                Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS,
+                Player.COMMAND_SEEK_TO_DEFAULT_POSITION, Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+                Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM, Player.COMMAND_SEEK_TO_PREVIOUS,
+                Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM, Player.COMMAND_SEEK_TO_NEXT,
+                Player.COMMAND_SEEK_TO_MEDIA_ITEM, Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD ->
+                    app.startupPlayback.cancel()
+            }
             if (radioMode && playerCommand in setOf(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
                     Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD,
                     Player.COMMAND_SET_REPEAT_MODE, Player.COMMAND_SET_SHUFFLE_MODE)) {
@@ -789,9 +937,7 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<LibraryResult<MediaItem>> = afterRestore(waitForLibrary = mediaId != BROWSER_ROOT) {
             val item = if (mediaId == BROWSER_ROOT) browserRoot() else {
                 if (RadioProgram.isRadio(mediaId)) {
-                    requireRadioEnabled()
                     app.radioCatalog.awaitReady()
-                    requireRadioEnabled()
                     app.radioCatalog.find(mediaId)?.mediaItem(this@PlaybackService)
                 } else (cachedQueue.firstOrNull { it.id == mediaId }
                     ?: app.repository.library.value.tracks.firstOrNull { it.id == mediaId })?.toMediaItem()
@@ -837,17 +983,16 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = afterRestore(waitForLibrary = true) {
             val items = resolveMediaItems(controller, mediaItems)
             val catalog = if (items.any { RadioProgram.isRadio(it.mediaId) }) {
-                requireRadioEnabled()
                 app.radioCatalog.state.value
             } else null
             val station = catalog?.find(items.getOrNull(startIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0)))?.mediaId)
             if (station != null) {
-                val current = items.map {
-                    (checkNotNull(catalog).find(it.mediaId) ?: throw IOException(getString(R.string.radio_station_invalid)))
-                        .mediaItem(this@PlaybackService)
-                }
+                val navigation = radioNavigationItems(checkNotNull(catalog))
+                val current = navigation.takeIf { list -> list.any { it.mediaId == station.id } }
+                    ?: (listOf(station.mediaItem(this@PlaybackService)) + navigation)
                 enterRadio(station, checkNotNull(catalog))
-                return@afterRestore MediaSession.MediaItemsWithStartPosition(current, startIndex, C.TIME_UNSET)
+                val selected = current.indexOfFirst { it.mediaId == station.id }
+                return@afterRestore MediaSession.MediaItemsWithStartPosition(current, selected, C.TIME_UNSET)
             }
             returnToMusic()
             app.playback.allowReplacingUnreadableQueue()
@@ -881,9 +1026,7 @@ class PlaybackService : MediaLibraryService() {
             items: List<MediaItem>,
         ): List<MediaItem> {
             if (items.any { RadioProgram.isRadio(it.mediaId) }) {
-                requireRadioEnabled()
                 app.radioCatalog.awaitReady()
-                requireRadioEnabled()
                 val catalog = app.radioCatalog.state.value
                 return items.map { item ->
                     val station = catalog.find(item.mediaId)
@@ -915,7 +1058,6 @@ class PlaybackService : MediaLibraryService() {
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = afterRestore {
-            if (!app.radio.options.value.enabled) returnToMusic()
             MediaSession.MediaItemsWithStartPosition(
                 if (radioMode) (0 until sessionPlayer.mediaItemCount).map(sessionPlayer::getMediaItemAt) else cachedQueue.map(Track::toMediaItem),
                 sessionPlayer.currentMediaItemIndex.coerceAtLeast(0),
@@ -938,7 +1080,7 @@ class PlaybackService : MediaLibraryService() {
         val job = scope.launch {
             try {
                 restored.await()
-                if (waitForLibrary) app.repository.awaitReady()
+                if (waitForLibrary) musicRestored.await()
                 // Source changes may map a large music queue off-main; later commands run afterwards.
                 sessionCommands.withLock { future.set(block()) }
             } catch (error: CancellationException) {

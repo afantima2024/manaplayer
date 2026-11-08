@@ -7,6 +7,16 @@ import java.nio.file.Paths
 import javax.xml.parsers.DocumentBuilderFactory
 
 class LocalizationTest {
+    @Test fun mainActivityHandlesLocaleDirectionAndAccompanyingScreenLayoutChanges() {
+        val file = Paths.get("src", "main", "AndroidManifest.xml").toFile()
+        val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file)
+        val activities = document.getElementsByTagName("activity")
+        val main = (0 until activities.length).map { activities.item(it) as Element }
+            .single { it.getAttribute("android:name") == ".ui.MainActivity" }
+        assertEquals(setOf("locale", "layoutDirection", "screenLayout"),
+            main.getAttribute("android:configChanges").split('|').toSet())
+    }
+
     private fun strings(directory: String, name: String = "strings.xml"): Map<String, List<String>> {
         val file = Paths.get("src", "main", "res", directory, name).toFile()
         val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file)
@@ -62,13 +72,49 @@ class LocalizationTest {
             assertEquals(key, placeholders.findAll(value.single()).map { it.value }.toList(),
                 placeholders.findAll(chinese.getValue(key).single()).map { it.value }.toList())
         }
-        assertEquals(37, english.keys.count { it.startsWith("radio_region_") })
+        assertEquals(38, english.keys.count { it.startsWith("radio_region_") })
     }
 
     @Test fun playerCopyDoesNotAdvertiseNetworkRestrictions() {
         val wording = Regex("no network|offline|internet|无需联网|无网络|离线", RegexOption.IGNORE_CASE)
         for ((name, values) in strings("values").toList() + strings("values-zh").toList()) {
             assertTrue("Unexpected promotional wording in $name", values.none { wording.containsMatchIn(it) })
+        }
+    }
+
+    @Test fun radioSubscriptionsHaveCompleteChineseCopyAndMatchingFormats() {
+        val english = strings("values", "radio_subscriptions.xml")
+        val chinese = strings("values-zh", "radio_subscriptions.xml")
+        assertEquals(english.keys, chinese.keys)
+        val placeholders = Regex("%\\d+\\$[ds]")
+        for ((key, value) in english) {
+            assertTrue(chinese.getValue(key).single().isNotBlank())
+            assertEquals(key, placeholders.findAll(value.single()).map { it.value }.toList(),
+                placeholders.findAll(chinese.getValue(key).single()).map { it.value }.toList())
+        }
+    }
+
+    @Test fun paletteAndStationMarkChoicesHaveCompleteLocalizedLabels() {
+        val english = strings("values", "radio_appearance.xml")
+        val chinese = strings("values-zh", "radio_appearance.xml")
+        assertEquals(english.keys, chinese.keys)
+        assertEquals(12, english.keys.count { it.startsWith("radio_mark_") })
+        assertEquals(7, english.keys.count { it.startsWith("appearance_icons_") })
+        assertTrue(english.values.flatten().all { it.isNotBlank() })
+        assertTrue(chinese.values.flatten().all { it.isNotBlank() })
+    }
+
+    @Test fun countryManagementHasMatchingChineseCopyAndPluralArguments() {
+        val english = strings("values", "radio_groups.xml")
+        val chinese = strings("values-zh", "radio_groups.xml")
+        assertEquals(english.keys, chinese.keys)
+        val placeholders = Regex("%\\d+\\$[ds]")
+        for ((key, values) in english) {
+            val expected = placeholders.findAll(values.first()).map { it.value }.toSet()
+            for (value in values + chinese.getValue(key)) {
+                assertTrue(key, value.isNotBlank())
+                assertEquals(key, expected, placeholders.findAll(value).map { it.value }.toSet())
+            }
         }
     }
 
@@ -94,6 +140,40 @@ class LocalizationTest {
             }
             assertTrue(localized.keys.none { it.startsWith("about_photo") || it.startsWith("photo_") })
             assertTrue(localized.getValue("app_logo").single().isNotBlank())
+        }
+    }
+
+    @Test fun aboutAndRadioHelpHaveNativeBoldLargerHeadingsAndOriginalCredits() {
+        val resources = mapOf(
+            "strings.xml" to setOf("about_intro", "about_body", "about_system_controls", "about_lyric_cache", "playback_mode_help"),
+            "radio.xml" to setOf("radio_help"),
+            "radio_appearance.xml" to setOf("radio_station_logos_help", "radio_bundled_defaults_help"),
+            "radio_subscriptions.xml" to setOf("radio_subscription_help"),
+        )
+        for (directory in listOf("values", "values-zh")) {
+            for ((filename, names) in resources) {
+                val document = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                    .parse(Paths.get("src", "main", "res", directory, filename).toFile())
+                val strings = document.getElementsByTagName("string")
+                val selected = (0 until strings.length).map { strings.item(it) as Element }
+                    .filter { it.getAttribute("name") in names }
+                assertEquals(names.size, selected.size)
+                for (string in selected) {
+                    val headings = string.getElementsByTagName("big")
+                    val paragraphs = string.textContent.split("\\n\\n")
+                    assertEquals("$directory/${string.getAttribute("name")}", paragraphs.size, headings.length)
+                    for (index in 0 until headings.length) {
+                        assertEquals("b", (headings.item(index).parentNode as Element).tagName)
+                    }
+                }
+            }
+            val intro = strings(directory).getValue("about_intro").single()
+            assertTrue(intro.contains("Ma^__^aM"))
+            assertTrue(intro.contains("GitHub Copilot"))
+            assertTrue(intro.indexOf("GitHub Copilot") > intro.indexOf("Ma^__^aM"))
+            assertTrue(intro.indexOf("GitHub Copilot") < intro.indexOf("Kotlin"))
+            assertTrue(intro.contains("Media3"))
+            assertFalse(Regex("TVBox|takagen99|AGPL", RegexOption.IGNORE_CASE).containsMatchIn(intro))
         }
     }
 

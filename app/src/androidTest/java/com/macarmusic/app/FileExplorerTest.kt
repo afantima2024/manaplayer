@@ -287,7 +287,7 @@ class FileExplorerTest {
         val original = runBlocking { app.radioCatalog.snapshot() }
         val options = app.radio.backup()
         try {
-            onMain { app.radio.setEnabled(true) }
+            onMain { app.radio.setPanelVisible(true) }
             runBlocking { app.radioCatalog.withReplacement(emptyList()) { Unit } }
             val custom = runBlocking {
                 app.radioCatalog.merge(RadioList.parse(("Export station,https://radio.example/one\n" +
@@ -668,7 +668,7 @@ class FileExplorerTest {
                     val row = locationRow(scenario, location)
                     remoteKey(KeyEvent.KEYCODE_DPAD_UP)
                     scenario.onActivity { assertTrue(row.requestFocus()) }
-                    remoteKey(KeyEvent.KEYCODE_DPAD_RIGHT)
+                    remoteKey(KeyEvent.KEYCODE_TAB)
                     scenario.onActivity {
                         assertSame(row.findViewById<View>(R.id.explorerRemoveLocation), it.currentFocus)
                         val button = it.currentFocus!!
@@ -678,8 +678,7 @@ class FileExplorerTest {
                     remoteKey(KeyEvent.KEYCODE_DPAD_LEFT)
                     scenario.onActivity { assertTrue(row.isFocused) }
                 }
-                remoteKey(KeyEvent.KEYCODE_DPAD_RIGHT)
-                remoteKey(KeyEvent.KEYCODE_DPAD_CENTER)
+                remoteKey(KeyEvent.KEYCODE_MENU)
                 screenshot("explorer-remove-location-$language")
                 onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click())
                 assertTrue(hasLocation(scenario, music))
@@ -1029,6 +1028,7 @@ class FileExplorerTest {
         ActivityScenario.launchActivityForResult<FileExplorerActivity>(
             FileExplorerActivity.intent(app, ExplorerMode.MUSIC_FILE)).use { scenario ->
             await { !model(scenario).state.value.loading }
+            val focusTrace = { focusState(scenario) }
             val rootPosition = model(scenario).state.value.items.indexOfFirst { it.location?.uri == music.toString() }
             assertTrue(rootPosition >= 0)
             focusFirstRow(scenario)
@@ -1037,13 +1037,13 @@ class FileExplorerTest {
             remoteKey(KeyEvent.KEYCODE_DPAD_CENTER)
             await { !model(scenario).state.value.loading &&
                 model(scenario).state.value.items.any { it.name == "Album" } }
-            await { remotePosition(scenario) >= 0 }
+            await(message = focusTrace) { remotePosition(scenario) >= 0 }
             assertEquals("New folder must keep remote focus in its list", 0, remotePosition(scenario))
             assertEquals("Album", model(scenario).state.value.items[0].name)
             remoteKey(KeyEvent.KEYCODE_DPAD_CENTER)
             await { !model(scenario).state.value.loading &&
                 model(scenario).state.value.items.any { it.name == "02 - Nested.WAV" } }
-            await { remotePosition(scenario) >= 0 }
+            await(message = focusTrace) { remotePosition(scenario) >= 0 }
             assertEquals(0, remotePosition(scenario))
             val selected = model(scenario).state.value.items.single().document!!.uri
             assertEquals(0, resolver.call(music, "scanFixtureState", null, null)!!.getInt("audioReads"))
@@ -1052,6 +1052,71 @@ class FileExplorerTest {
             remoteKey(KeyEvent.KEYCODE_DPAD_CENTER)
             assertEquals(Activity.RESULT_OK, scenario.result.resultCode)
             assertEquals(Uri.parse(selected), scenario.result.resultData!!.data)
+        }
+    }
+
+    @Test fun returningToLocationsRestoresTheOpenedFolderInsteadOfTheFirstRow() {
+        resolver.takePersistableUriPermission(music, read)
+        ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, ExplorerMode.MUSIC_FILE)).use { scenario ->
+            await { !model(scenario).state.value.loading }
+            val focusTrace = { focusState(scenario) }
+            val position = model(scenario).state.value.items.indexOfFirst { it.location?.uri == music.toString() }
+            assertTrue(position > 0)
+            focusFirstRow(scenario)
+            repeat(position) { remoteKey(KeyEvent.KEYCODE_DPAD_DOWN) }
+            assertEquals(position, remotePosition(scenario))
+            remoteKey(KeyEvent.KEYCODE_DPAD_CENTER)
+            await { !model(scenario).state.value.loading && model(scenario).state.value.items.any { it.name == "Album" } }
+            await(message = focusTrace) { remotePosition(scenario) >= 0 }
+            remoteKey(KeyEvent.KEYCODE_BACK)
+            await { !model(scenario).state.value.loading && model(scenario).state.value.path.isEmpty() }
+            await(message = focusTrace) { remotePosition(scenario) == position }
+            scenario.recreate()
+            await { !model(scenario).state.value.loading && remotePosition(scenario) == position }
+            assertEquals(0, resolver.call(music, "scanFixtureState", null, null)!!.getInt("audioReads"))
+            screenshot("focus1490-explorer-parent")
+        }
+    }
+
+    @Test fun leftRightOpensFoldersAndReturnsToTheRememberedParentWithoutChoosingFiles() {
+        resolver.takePersistableUriPermission(music, read)
+        ActivityScenario.launch<FileExplorerActivity>(FileExplorerActivity.intent(app, ExplorerMode.MUSIC_FILE)).use { scenario ->
+            await { !model(scenario).state.value.loading }
+            val position = model(scenario).state.value.items.indexOfFirst { it.location?.uri == music.toString() }
+            assertTrue(position >= 0)
+            focusFirstRow(scenario)
+            repeat(position) { remoteKey(KeyEvent.KEYCODE_DPAD_DOWN) }
+            remoteKey(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await { !model(scenario).state.value.loading && model(scenario).state.value.path.size == 1 }
+            await { remotePosition(scenario) == 0 }
+            assertEquals("Album", model(scenario).state.value.items[0].name)
+            remoteKey(KeyEvent.KEYCODE_DPAD_RIGHT)
+            await { !model(scenario).state.value.loading && model(scenario).state.value.path.size == 2 }
+            await { remotePosition(scenario) == 0 }
+            assertEquals("02 - Nested.WAV", model(scenario).state.value.items.single().name)
+            val before = model(scenario).state.value
+            remoteKey(KeyEvent.KEYCODE_DPAD_RIGHT)
+            assertEquals(before.path, model(scenario).state.value.path)
+            assertNull("Right must not choose or play a file", model(scenario).state.value.result)
+            focusFirstRow(scenario)
+            remoteKey(KeyEvent.KEYCODE_DPAD_LEFT)
+            await { !model(scenario).state.value.loading && model(scenario).state.value.path.size == 1 }
+            await { remotePosition(scenario) == 0 }
+            remoteKey(KeyEvent.KEYCODE_DPAD_LEFT)
+            await { !model(scenario).state.value.loading && model(scenario).state.value.path.isEmpty() }
+            await(message = { focusState(scenario) }) { remotePosition(scenario) == position }
+            assertEquals(0, resolver.call(music, "scanFixtureState", null, null)!!.getInt("audioReads"))
+            scenario.onActivity { activity ->
+                assertTrue(activity.findViewById<View>(R.id.playerDialogLogo).isShown)
+                app.inform("Message in the file chooser")
+            }
+            await { onMainResult {
+                val activity = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                    .filterIsInstance<FileExplorerActivity>().single()
+                activity.findViewById<View>(R.id.noticeBar).isShown
+            } }
+            screenshot("car154-folder-keys")
+            onMain { app.notice.value?.let { app.dismissNotice(it.id) } }
         }
     }
 
@@ -1078,8 +1143,12 @@ class FileExplorerTest {
             tap(scenario, R.id.explorerUp)
             await { !model(scenario).state.value.loading }
             instrumentation.setInTouchMode(true)
-            tapRow(scenario, "Album")
+            onView(withText("Album")).perform(click())
+            await { !model(scenario).state.value.loading &&
+                model(scenario).state.value.items.singleOrNull()?.name == "02 - Nested.WAV" }
             instrumentation.waitForIdleSync()
+            assertTrue("The real tap must put the explorer in touch mode",
+                onMainResult { activity.findViewById<View>(R.id.explorerList).isInTouchMode })
             assertEquals("Touch browsing must not create a keyboard selection", RecyclerView.NO_POSITION,
                 remotePosition(scenario))
         }
@@ -1391,6 +1460,22 @@ class FileExplorerTest {
             if (row != null) position = list.getChildAdapterPosition(row)
         }
         return position
+    }
+
+    private fun focusState(scenario: ActivityScenario<FileExplorerActivity>): String {
+        var state = ""
+        scenario.onActivity { activity ->
+            val list = activity.findViewById<RecyclerView>(R.id.explorerList)
+            val model = ViewModelProvider(activity)[FileExplorerViewModel::class.java]
+            val focus = activity.currentFocus
+            val row = focus?.let(list::findContainingItemView)
+            state = "focus=${focus?.id}/${row?.getTag(R.id.playerFocusKey)}, " +
+                "list=${list.isFocused}/${list.hasFocus()}/${list.descendantFocusability}, " +
+                "touch=${list.isInTouchMode}, loading=${model.state.value.loading}, " +
+                "rows=${list.adapter?.itemCount}/${list.childCount}, path=${model.state.value.path}, " +
+                "memory=${model.focusPositions}"
+        }
+        return state
     }
 
     private fun focusFirstRow(scenario: ActivityScenario<FileExplorerActivity>) {

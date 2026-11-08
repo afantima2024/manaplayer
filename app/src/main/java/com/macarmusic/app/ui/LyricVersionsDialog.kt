@@ -38,6 +38,7 @@ internal class LyricVersionsDialog(
     dismissed: () -> Unit,
 ) {
     private var state = LyricChoices("")
+    private var initialFocusSet = false
     private var menu: PlayerDialog? = null
     private var confirmation: PlayerDialog? = null
     private var buttons: BlockButtonStyler? = null
@@ -108,6 +109,11 @@ internal class LyricVersionsDialog(
         dialog.setCancelable(!value.busy)
         dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE)?.isEnabled = !value.busy
         adapter.notifyDataSetChanged()
+        if (!initialFocusSet && !value.loading && !value.busy && value.choices.isNotEmpty()) {
+            initialFocusSet = true
+            val position = value.choices.indexOfFirst { it.key == value.currentKey }.coerceAtLeast(0)
+            dialog.initialItemFocus(body.findViewById(R.id.lyricsVersionsList), adapter.focusKey(position), R.id.lyricsVersionChoose)
+        }
     }
 
     private fun actions(choice: LyricChoice, name: String) {
@@ -133,7 +139,7 @@ internal class LyricVersionsDialog(
             best(choice.key)
         }
         addAction(R.id.lyricsVersionDelete, R.string.lyrics_version_delete, choice.cached) { confirmRemoval(choice, name) }
-        AccentTheme.tintControls(content)
+        AccentTheme.tintControls(content, readableOnSurface = true)
         val options = display()
         BlockButtonStyler(content).apply(options.controlBlocks, options.blockOutline)
         val actionsDialog = AccentTheme.dialog(context).setTitle(name)
@@ -239,13 +245,14 @@ internal class LyricVersionsDialog(
             row.addView(more, LinearLayout.LayoutParams(dp(48), -1))
             row.addView(cell, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(4) })
             row.addView(best, LinearLayout.LayoutParams(dp(48), -1).apply { marginStart = dp(4) })
-            AccentTheme.tintControls(row)
+            AccentTheme.tintControls(row, readableOnSurface = true)
             normalBackground = choose.backgroundTintList
             normalText = choose.textColors
             styler = BlockButtonStyler(row)
         }
 
         fun bind(choice: LyricChoice, position: Int) {
+            row.setTag(R.id.playerFocusKey, adapter.focusKey(position))
             val name = choice.name.ifBlank { context.getString(R.string.lyrics_version_number, position + 1) }
             val labels = listOfNotNull(
                 R.string.lyrics_version_current.takeIf { state.currentKey == choice.key },
@@ -270,7 +277,8 @@ internal class LyricVersionsDialog(
             more.contentDescription = context.getString(R.string.options_for, name)
             more.setOnClickListener { actions(choice, name) }
             more.setOnLongClickListener(hold)
-            best.setIconResource(if (state.bestKey == choice.key) R.drawable.ic_favorite else R.drawable.ic_favorite_border)
+            PlayerIcons.button(best, if (state.bestKey == choice.key) R.drawable.ic_favorite else R.drawable.ic_favorite_border)
+            PlayerIcons.button(more, R.drawable.ic_more)
             best.isSelected = state.bestKey == choice.key
             best.contentDescription = context.getString(
                 if (state.bestKey == choice.key) R.string.lyrics_best_remove else R.string.lyrics_best_mark, name)
@@ -310,7 +318,8 @@ internal class LyricVersionsDialog(
         }
     }
 
-    private inner class VersionsAdapter : RecyclerView.Adapter<Holder>() {
+    private inner class VersionsAdapter : RecyclerView.Adapter<Holder>(), PlayerFocusItems {
+        override fun focusKey(position: Int) = "lyric:${state.choices[position].key}"
         private val rowIds = mutableMapOf<String, Long>()
         init { setHasStableIds(true) }
         override fun getItemId(position: Int) = rowIds.getOrPut(state.choices[position].key) { rowIds.size.toLong() }

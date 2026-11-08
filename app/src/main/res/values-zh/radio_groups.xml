@@ -1,0 +1,23 @@
+<resources>
+    <string name="radio_group_cctv_television">CCTV 电视</string>
+    <string name="radio_manage_groups">管理国家/地区</string>
+    <string name="radio_groups_restore">显示已隐藏的国家/地区（%1$d）</string>
+    <string name="radio_groups_help">长按国家/地区标题（包括滚动时置顶的标题），或按遥控器菜单键，即可多选国家或地区。两个分组窗口的“全选”和“取消全选”均放在左下方，与其他操作按钮同排。窄屏可横向滑动操作栏，或用遥控器左右键访问所有按钮。所选分组全部已隐藏时，操作按钮显示“取消隐藏所选”；否则显示“隐藏所选”。更改立即生效，窗口保持打开，方便反向操作。完成后选择“关闭”。\n\n隐藏只移除列表中的分组，保留固定快捷按钮、播放和已保存的电台。更新订阅后仍保持隐藏。通过“显示已隐藏的国家/地区”可恢复部分或全部分组。\n\n删除会移除所选电台及固定状态，不删除订阅本身。更新对应订阅可重新下载其电台；重置内置电台可恢复内置内容；本地导入的内容需重新导入。当前播放不会中断。</string>
+    <string name="radio_groups_select_title">国家/地区（已选 %1$d）</string>
+    <string name="radio_groups_show_title">显示隐藏分组（已选 %1$d）</string>
+    <string name="radio_groups_hide">隐藏所选</string>
+    <string name="radio_groups_show">取消隐藏所选</string>
+    <string name="radio_groups_delete">删除电台</string>
+    <string name="radio_group_hidden">已隐藏</string>
+    <plurals name="radio_group_stations">
+        <item quantity="other">%1$d 个电台</item>
+    </plurals>
+    <string name="radio_groups_delete_confirm">删除以下国家/地区的 %1$d 个电台条目：\n%2$s\n\n同时移除其固定状态和订阅缓存条目，但保留订阅本身及其他国家/地区。更新对应订阅可恢复其电台；重置内置电台可恢复内置内容；本地导入的内容需重新导入。当前播放继续，隐藏分组的设置保持不变。</string>
+    <string name="radio_groups_more">等另外 %1$d 个分组</string>
+    <string name="radio_groups_deleted">已删除 %1$d 个电台条目。可更新订阅或重置内置电台来恢复相应内容。</string>
+    <string name="radio_groups_hidden">已从分组列表隐藏所选国家/地区，固定快捷按钮和当前播放保持不变。</string>
+    <string name="radio_groups_shown">所选国家/地区已恢复显示。</string>
+    <string name="radio_groups_none_hidden">没有已隐藏的国家/地区。</string>
+    <string name="radio_groups_all_hidden">匹配的国家/地区已隐藏。可在广播设置中恢复显示。</string>
+    <string name="radio_groups_limit">隐藏分组数量已达上限，请先恢复部分分组的显示。</string>
+</resources>

@@ -33,7 +33,7 @@ class RadioCatalogRepositoryTest {
     }
 
     @Test fun committedCatalogReloadsAndIdenticalImportsDoNotWriteOrPublish() = check { repository, store, scope, errors ->
-        assertEquals(17, repository.state.value.programs.size)
+        assertEquals(RadioDefaults.corePrograms.size, repository.state.value.programs.size)
         val result = repository.merge(entries, emptyMap())
         assertEquals(RadioCatalogSnapshot(result.programs), RadioList.decode(store.text!!))
         val state = repository.state.value
@@ -58,7 +58,7 @@ class RadioCatalogRepositoryTest {
 
     @Test fun malformedSavedDataIsReportedAndCannotBeOverwritten() = check("{") { repository, store, _, errors ->
         assertEquals(1, errors.size)
-        assertEquals(17, repository.state.value.programs.size)
+        assertEquals(RadioDefaults.corePrograms.size, repository.state.value.programs.size)
         assertNotNull(repository.state.value.error)
         try { repository.merge(entries, emptyMap()); fail() } catch (_: IOException) { }
         try { repository.resetBuiltins(); fail() } catch (_: IOException) { }
@@ -165,7 +165,7 @@ class RadioCatalogRepositoryTest {
         val old = repository.find(CnrRadio.stations.first().id)!!
         repository.edit(old, old.copy(alternateUris = listOf("https://example.com/old")))
         val result = repository.merge(entries, emptyMap(), mode = RadioImportMode.REPLACE_ALL)
-        assertEquals(17, result.removed)
+        assertEquals(RadioDefaults.corePrograms.size, result.removed)
         assertEquals(result.programs, repository.state.value.programs)
         assertFalse(repository.snapshot().includeDefaults)
         val loaded = RadioCatalogRepository(store, scope, loadDefaults = { RadioDefaults.bundled }) { throw AssertionError(it) }

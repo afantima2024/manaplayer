@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Bundle
 import android.os.Process
 import android.os.SystemClock
 import android.provider.DocumentsContract
@@ -302,7 +303,7 @@ class KaraokeIntegrationTest {
             FixtureGrantActivity::class.java.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         await { app.checkUriPermission(root, Process.myPid(), Process.myUid(), Intent.FLAG_GRANT_READ_URI_PERMISSION) ==
             PackageManager.PERMISSION_GRANTED }
-        app.contentResolver.call(root, "setUnavailable", "false", null)
+        app.contentResolver.call(root, "setUnavailable", null, Bundle().apply { putBoolean("value", false) })
         app.contentResolver.call(root, "setLyricsMode", "scrollable", null)
         app.contentResolver.call(root, "setLyricReadDelay", "0", null)
         val tracks = runBlocking(Dispatchers.IO) {

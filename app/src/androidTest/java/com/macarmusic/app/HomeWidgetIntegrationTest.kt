@@ -65,7 +65,7 @@ class HomeWidgetIntegrationTest {
             app.checkUriPermission(root, Process.myPid(), Process.myUid(), Intent.FLAG_GRANT_READ_URI_PERMISSION) ==
                 PackageManager.PERMISSION_GRANTED
         }
-        app.contentResolver.call(root, "setUnavailable", "false", null)
+        app.contentResolver.call(root, "setUnavailable", null, Bundle().apply { putBoolean("value", false) })
         app.contentResolver.call(root, "setLyricsMode", "available", null)
         app.contentResolver.call(root, "setLyricReadDelay", "0", null)
         runBlocking { app.repository.awaitReady() }
@@ -147,6 +147,44 @@ class HomeWidgetIntegrationTest {
         click(2, "next")
         await { status().getString("lyric2")?.contains("Nested text fixture") == true }
         assertFalse(onMain { controller.playWhenReady })
+    }
+
+    @Test fun stoppedAndEndedMusicResumesFromEveryWidget() {
+        onMain { app.playbackSettings.setMuted(true) }
+        startHost()
+        for (kind in 0..3) for (state in listOf(Player.STATE_IDLE, Player.STATE_ENDED)) {
+            val name = "widget-$kind-$state"
+            onMain {
+                controller.pause()
+                controller.setMediaItems(tracks.map(Track::toMediaItem), if (state == Player.STATE_ENDED) 1 else 0, 5_000)
+                controller.prepare()
+                controller.play()
+            }
+            await { onMain { controller.isPlaying } &&
+                (0..3).all { status().getString("play$it") == app.text(R.string.pause) } }
+            onMain {
+                if (state == Player.STATE_IDLE) controller.stop() else controller.seekTo(controller.duration)
+            }
+            await { onMain { controller.playbackState == state } }
+            onMain {
+                android.util.Log.i("HomeWidgetIntegrationTest", "WIDGET_PLAYBACK $name-before-play: " +
+                    "state=${controller.playbackState}, playWhenReady=${controller.playWhenReady}, " +
+                    "error=${controller.playerError?.errorCode}, position=${controller.currentPosition}")
+                assertTrue("The fixture must retain play intent in $name", controller.playWhenReady)
+            }
+            await { (0..3).all { status().getString("play$it") == app.text(R.string.play) } }
+            val mediaId = onMain { controller.currentMediaItem?.mediaId }
+            val position = onMain { controller.currentPosition }
+            click(kind, "play")
+            await { onMain { controller.isPlaying } }
+            onMain {
+                assertEquals(mediaId, controller.currentMediaItem?.mediaId)
+                assertEquals(tracks.size, controller.mediaItemCount)
+                if (state == Player.STATE_ENDED) assertTrue(controller.currentPosition < 5_000)
+                else assertTrue(controller.currentPosition >= position)
+                android.util.Log.i("HomeWidgetIntegrationTest", "WIDGET_PLAYBACK $name-passed")
+            }
+        }
     }
 
     @Test fun updatesStopWithScreenOffOrOnlyPlayWidgetAndResumeAfterWake() {

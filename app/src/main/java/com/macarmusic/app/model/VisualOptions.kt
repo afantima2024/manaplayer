@@ -112,7 +112,7 @@ data class SpectrumColors(val low: Int, val middle: Int, val high: Int) {
 
     companion object {
         val CLASSIC = SpectrumColors(0x3dcf74, 0xfcd34d, 0xf04c44)
-        val FIRE = SpectrumColors(0xffdf69, 0xff9828, 0xed4529)
+        val FIRE = SpectrumColors(0x3dcf74, 0xfcd34d, 0xf04c44)
     }
 }
 
@@ -138,18 +138,18 @@ data class SlideshowOptions(
 
 @Serializable
 data class SpectrumOptions(
-    val enabled: Boolean = false,
-    val position: SpectrumPosition = SpectrumPosition.RIGHT,
+    val enabled: Boolean = true,
+    val position: SpectrumPosition = SpectrumPosition.LEFT,
     val style: SpectrumStyle = SpectrumStyle.BARS,
-    val palette: SpectrumPalette = SpectrumPalette.CLASSIC,
-    val bands: Int = 32,
+    val palette: SpectrumPalette = SpectrumPalette.FIRE,
+    val bands: Int = 8,
     val peaks: Boolean = true,
     val falloff: SpectrumDecay = SpectrumDecay.MEDIUM,
     val peakFalloff: SpectrumDecay = SpectrumDecay.SLOW,
     val refreshRate: Int = DEFAULT_REFRESH_RATE,
     val fireStyle: FireStyle = FireStyle.LED,
     @SerialName("fireColors") val colors: SpectrumColors = SpectrumColors.FIRE,
-    val barStyle: FireStyle = FireStyle.SMOOTH,
+    val barStyle: FireStyle = FireStyle.LED,
     val origin: SpectrumOrigin = SpectrumOrigin.BOTTOM,
 ) {
     init {

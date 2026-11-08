@@ -1,0 +1,24 @@
+<resources>
+    <string name="radio_group_cctv_television">CCTV Television</string>
+    <string name="radio_manage_groups">Manage countries / regions</string>
+    <string name="radio_groups_restore">Show hidden countries (%1$d)</string>
+    <string name="radio_groups_help">Long-press a country heading, including the sticky heading, or press the remote Menu key to select several countries or regions. Both country windows put Select all and Deselect all at the bottom left, in the same row as the other actions. On narrow screens, swipe the action row sideways or use remote left/right to reach every button. If every selected group is hidden, the action is Unhide selected; otherwise it is Hide selected. Changes apply immediately without closing the window, so you can reverse them. Choose Close when finished.\n\nHide removes groups from the list but keeps pinned shortcuts, playback and saved stations. Hidden groups stay hidden after subscription updates. Use Show hidden countries to restore some or all of them.\n\nDelete removes the selected station entries and pins, not subscription definitions. Refresh the relevant subscriptions to download their stations again, reset embedded stations to restore built-ins, or re-import your local file. Current playback is not interrupted.</string>
+    <string name="radio_groups_select_title">Countries / regions (%1$d)</string>
+    <string name="radio_groups_show_title">Show hidden countries (%1$d)</string>
+    <string name="radio_groups_hide">Hide selected</string>
+    <string name="radio_groups_show">Unhide selected</string>
+    <string name="radio_groups_delete">Delete stations</string>
+    <string name="radio_group_hidden">Hidden</string>
+    <plurals name="radio_group_stations">
+        <item quantity="one">%1$d station</item>
+        <item quantity="other">%1$d stations</item>
+    </plurals>
+    <string name="radio_groups_delete_confirm">Delete %1$d station entries in:\n%2$s\n\nThis also removes their pins and cached subscription entries. Subscription definitions and other countries are kept. Refresh the relevant subscriptions to restore their stations, reset embedded stations to restore built-ins, or re-import your local file. Current playback continues. Hidden-country preferences are not changed.</string>
+    <string name="radio_groups_more">, and %1$d more</string>
+    <string name="radio_groups_deleted">Deleted %1$d station entries. Refresh subscriptions or reset embedded stations to recover their entries.</string>
+    <string name="radio_groups_hidden">Selected countries are hidden from the grouped list. Pinned shortcuts and playback are unchanged.</string>
+    <string name="radio_groups_shown">Selected countries are visible again.</string>
+    <string name="radio_groups_none_hidden">No countries are hidden.</string>
+    <string name="radio_groups_all_hidden">Matching countries are hidden. Use Radio settings to show hidden countries.</string>
+    <string name="radio_groups_limit">The hidden-country list is full. Show unused groups before hiding more.</string>
+</resources>

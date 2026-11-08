@@ -1,4 +1,23 @@
 <resources>
+    <item name="screenLoading" type="id" />
+    <item name="recoveryText" type="id" />
+    <item name="recoveryRetry" type="id" />
+    <item name="recoveryReselect" type="id" />
+    <item name="playerIconSpec" type="id" />
+    <item name="appearanceMusic" type="id" />
+    <item name="appearanceRadio" type="id" />
+    <item name="iconsMonochrome" type="id" />
+    <item name="iconsColorful" type="id" />
+    <item name="iconsOcean" type="id" />
+    <item name="iconsAurora" type="id" />
+    <item name="iconsSunset" type="id" />
+    <item name="iconsOrchid" type="id" />
+    <item name="iconsLogo" type="id" />
+    <item name="iconsCopilotAurora" type="id" />
+    <item name="iconsCopilotSunrise" type="id" />
+    <item name="appearanceGrid" type="id" />
+    <item name="radioLogoBranded" type="id" />
+    <item name="radioLogoClassic" type="id" />
     <item name="explorerRoot" type="id" />
     <item name="explorerTitle" type="id" />
     <item name="explorerLocations" type="id" />
@@ -16,7 +35,10 @@
     <item name="explorerRemoveLocation" type="id" />
     <item name="playerDialogPanel" type="id" />
     <item name="playerDialogTitle" type="id" />
+    <item name="playerDialogLogo" type="id" />
     <item name="playerDialogList" type="id" />
+    <item name="playerDialogSelectAll" type="id" />
+    <item name="playerDialogDeselectAll" type="id" />
     <item name="lyricsDownloadProgress" type="id" />
     <item name="lyricsDownloadStatus" type="id" />
     <item name="lyricsDownloadCurrent" type="id" />
@@ -49,6 +71,7 @@
     <item type="id" name="navigationArtwork" />
     <item type="id" name="colorPreview" />
     <item type="id" name="colorGrid" />
+    <item type="id" name="colorNone" />
     <item type="id" name="customColorInput" />
     <item type="id" name="customColorLayout" />
     <item type="id" name="colorEditorPreview" />
@@ -63,6 +86,7 @@
     <item type="id" name="libraryAddSelected" />
     <item type="id" name="librarySelectAll" />
     <item type="id" name="libraryList" />
+    <item type="id" name="folderList" />
     <item type="id" name="playlistList" />
     <item type="id" name="libraryBrowse" />
     <item type="id" name="libraryBack" />
@@ -77,4 +101,6 @@
     <item type="id" name="aboutLogo" />
     <item type="id" name="aboutHeading" />
     <item type="id" name="aboutVersion" />
+    <item type="id" name="playerFocusKey" />
+    <item type="id" name="playerFocusScope" />
 </resources>

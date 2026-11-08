@@ -1,0 +1,28 @@
+<resources>
+    <string name="screen_loading">正在打开%1$s…</string>
+    <string name="recovery_retry">重试</string>
+    <string name="recovery_reselect_folder">重选文件夹</string>
+    <string name="recovery_reselect_file">重选文件</string>
+    <string name="recovery_select_same_folder">请重新选择“%1$s”以恢复访问权限。已保存的歌曲、收藏和播放列表会保留。如需添加其他文件夹，请使用“文件夹”页面。</string>
+    <string name="recovery_folder_ready">文件夹访问已恢复。如需继续已停止的播放，请点击“重试”。</string>
+    <string name="recovery_details">恢复详情</string>
+    <string name="recovery_help">播放或文件夹访问出错时，临时消息关闭后仍保留恢复栏。“重试”由您手动触发且次数有限；重新选择文件夹只恢复访问，不删除音乐库引用，也不自动开始播放。问题解决或更换出错的播放项后，恢复栏会消失。</string>
+    <string name="playback_mode_status">%1$s · %2$s</string>
+    <string name="playback_mode_switch_description">当前模式：%1$s。%2$s</string>
+    <string name="radio_switching">正在切换到电台…</string>
+    <string name="now_playing_window_title">%1$s - %2$s</string>
+    <string name="primary_control_color">播放高亮颜色</string>
+    <string name="no_highlights">不高亮</string>
+    <string name="primary_control_color_none">播放高亮颜色：不高亮</string>
+    <string name="primary_control_color_help">在“常规”中，选择“不高亮”或颜色块，用于播放/暂停、电台播放/停止、电台/音乐切换按钮，以及电台页和播放页的当前电台，也适用于紧凑播放按钮。“应用”保存选择，“取消”不作更改。“不高亮”只移除这些背景填充，不影响遥控焦点、当前电台标记或单独的固定电台样式。可通过 RGB 或 HEX 自定义颜色；“默认”恢复随日间/夜间主题变化的颜色。文字和单色图标保持清晰对比，更改颜色不改变彩色图标主题或按钮位置。颜色和“不高亮”选项均随本地备份保存。</string>
+    <string name="keep_screen_on">播放时保持屏幕常亮</string>
+    <string name="keep_screen_on_help">默认关闭，允许屏保和自动息屏。音频通过前台播放服务继续播放，仅在需要时保持 CPU 和电台 Wi-Fi 唤醒。开启后，播放期间应用或内置文件浏览器可见时保持屏幕常亮，不修改安卓系统设置，离开应用后也不会保持常亮。如果车机暂停安卓、切断 USB 或网络电源、清理后台应用或占用音频焦点，仍可能中断声音；播放器无法安全绕过这些设备策略。</string>
+    <string name="notice_duration">弹出消息显示时长</string>
+    <string name="notice_duration_seconds">%1$d 秒</string>
+    <string name="notice_duration_help">应用内临时消息默认在 5 秒后关闭。此设置统一应用于音乐、电台及选择或控制窗口中的提示和错误消息。新消息拥有独立的完整显示时长。选择、编辑、权限、进度和确认对话框不会自动关闭，等待您完成操作；安卓系统消息的显示时长由系统控制。</string>
+    <string name="mini_player_transparency">紧凑播放栏背景透明度</string>
+    <string name="mini_player_transparency_value">紧凑播放栏背景透明度：%1$d%%</string>
+    <string name="mini_player_transparency_help">在“播放”设置中，调整“正在播放”以外页面的紧凑播放栏背景：0% 为不透明，100% 为完全透明。文字、图片和播放按钮保持清晰且可操作。首次更改前，保留原来随主题变化的外观。此选项不影响“正在播放”页面或桌面小组件的透明度。</string>
+    <string name="directional_browsing">左右键浏览快捷操作</string>
+    <string name="directional_browsing_help">选中电台分类标题后，右键展开、左键收起；置顶分类标题也支持相同操作。在文件夹页面和内置文件浏览器中，右键进入选中的文件夹，左键返回上一级。在音乐库中，右键进入歌手或专辑，左键返回分组列表。回车仍用于打开或播放选中项。这些快捷键不会调整播放进度、播放文件，也不会因长按而连续进入文件夹。其他操作可使用行内选项按钮或菜单键。</string>
+</resources>

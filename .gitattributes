@@ -1,2 +1,4 @@
 gradlew text eol=lf
 *.bat text eol=crlf
+app/src/main/resources/radio/subscriptions/*.m3u text eol=lf
+app/src/main/resources/radio/subscriptions/manifest.json text eol=lf

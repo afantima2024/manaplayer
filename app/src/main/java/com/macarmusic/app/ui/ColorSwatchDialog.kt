@@ -18,7 +18,6 @@ import android.content.DialogInterface
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatSeekBar
 import androidx.appcompat.widget.AppCompatTextView
-import androidx.core.graphics.ColorUtils
 import androidx.core.view.isVisible
 import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.lifecycleScope
@@ -36,7 +35,8 @@ import java.io.IOException
 
 object ColorSwatchDialog {
     fun show(context: AppCompatActivity, title: String, initial: Int,
-        reset: (() -> Unit)? = null, save: (Int) -> Unit,
+        reset: (() -> Unit)? = null, none: (() -> Unit)? = null, initiallyNone: Boolean = false,
+        save: (Int) -> Unit,
     ) {
         val store = ColorSlotStore(context)
         val original = try {
@@ -50,8 +50,17 @@ object ColorSwatchDialog {
         }
         var draft = original
         var selected = initial
+        var noColor = none != null && initiallyNone
         var slot = draft.colors.indexOf(initial).takeIf { it >= 0 }
         val content = column(context)
+        val noneButton = none?.let {
+            MaterialButton(context).apply {
+                id = R.id.colorNone
+                setText(R.string.no_highlights)
+                isCheckable = true
+                content.addView(this)
+            }
+        }
         val preview = preview(context, R.id.colorPreview)
         val edit = MaterialButton(context).apply { id = R.id.colorEditSlot }
         val help = TextView(context).apply { setText(R.string.color_slots_help) }
@@ -77,13 +86,17 @@ object ColorSwatchDialog {
         }.apply { id = R.id.colorGrid }
         content.addView(grid)
         val swatches = mutableListOf<TextView>()
+        var shownDialog: PlayerDialog? = null
         fun refresh() {
             paintPreview(preview, selected)
-            edit.isVisible = slot != null || selected !in ColorSlots.RAINBOW
+            preview.isVisible = !noColor
+            noneButton?.isChecked = noColor
+            noneButton?.text = (if (noColor) "\u2713 " else "") + context.getString(R.string.no_highlights)
+            edit.isVisible = !noColor && (slot != null || selected !in ColorSlots.RAINBOW)
             edit.setText(if (slot != null) R.string.color_edit_slot else R.string.color_save_current)
             swatches.forEachIndexed { index, view ->
                 val value = if (index < 7) ColorSlots.RAINBOW[index] else draft.colors[index - 7]
-                view.isSelected = if (slot != null) index == slot!! + 7 else index < 7 && value == selected
+                view.isSelected = !noColor && (if (slot != null) index == slot!! + 7 else index < 7 && value == selected)
                 view.text = when {
                     view.isSelected -> "\u2713"
                     value == null -> (index - 6).toString()
@@ -94,6 +107,7 @@ object ColorSwatchDialog {
         lateinit var rebuild: () -> Unit
         fun define(index: Int) {
             rgbEditor(context, draft.colors.getOrNull(index) ?: selected) { color ->
+                noColor = false
                 draft = draft.define(index, color)
                 slot = index
                 selected = color
@@ -104,6 +118,7 @@ object ColorSwatchDialog {
             grid.removeAllViews()
             swatches.clear()
             fun add(view: TextView) {
+                view.installPlayerInputFocus()
                 grid.addView(view, GridLayout.LayoutParams(
                     GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f),
                 ).apply {
@@ -115,13 +130,14 @@ object ColorSwatchDialog {
                 val customIndex = index - 7
                 val swatch = AppCompatTextView(context).apply {
                     tag = if (index < 7) "rainbow:$index" else "custom:$customIndex"
+                    setTag(R.id.playerFocusKey, tag)
                     gravity = Gravity.CENTER
                     textSize = 24f
                     isClickable = true
                     isFocusable = true
                     val color = value?.or(Color.BLACK)
                     setTextColor(if (color == null) AccentTheme.color(this, com.google.android.material.R.attr.colorOnSurface)
-                        else contrasting(color))
+                        else AccentTheme.contrasting(color))
                     contentDescription = if (index < 7) context.getString(R.string.color_swatch_description, ColorHex.format(value!!))
                         else context.getString(R.string.color_slot_description, customIndex + 1,
                             value?.let(ColorHex::format) ?: context.getString(R.string.color_slot_empty))
@@ -134,9 +150,11 @@ object ColorSwatchDialog {
                     setOnClickListener {
                         if (value == null) define(customIndex)
                         else {
+                            noColor = false
                             selected = value
                             slot = customIndex.takeIf { it >= 0 }
                             refresh()
+                            shownDialog?.focusOn(swatches.firstOrNull { it.isSelected } ?: edit)
                         }
                     }
                 }
@@ -163,6 +181,10 @@ object ColorSwatchDialog {
         edit.setOnClickListener {
             define(slot ?: draft.colors.indexOf(null).takeIf { it >= 0 } ?: draft.colors.size)
         }
+        noneButton?.setOnClickListener {
+            noColor = true
+            refresh()
+        }
         rebuild()
         val builder = AccentTheme.dialog(context).setTitle(title)
             .setView(ScrollView(context).apply { addView(content) })
@@ -170,6 +192,8 @@ object ColorSwatchDialog {
             .setNegativeButton(R.string.cancel, null)
         if (reset != null) builder.setNeutralButton(R.string.use_default) { _, _ -> reset() }
         val dialog = builder.create()
+        shownDialog = dialog
+        dialog.focusOn(if (noColor) checkNotNull(noneButton) else swatches.firstOrNull { it.isSelected } ?: edit)
         var pending: Job? = null
         dialog.setOnShowListener {
             dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
@@ -179,7 +203,7 @@ object ColorSwatchDialog {
                     for (button in listOf(-1, -2, -3)) dialog.getButton(button)?.isEnabled = false
                     try {
                         if (draft != original) store.save(draft)
-                        save(selected)
+                        if (noColor) checkNotNull(none).invoke() else save(selected)
                         dialog.dismiss()
                     } catch (error: IOException) {
                         Log.e("ColorSwatchDialog", "Custom palette was not saved", error)
@@ -295,12 +319,11 @@ object ColorSwatchDialog {
     private fun paintPreview(view: TextView, rgb: Int) {
         val color = rgb or Color.BLACK
         view.setBackgroundColor(color)
-        view.setTextColor(contrasting(color))
+        view.setTextColor(AccentTheme.contrasting(color))
         view.text = view.context.getString(R.string.setting_value,
             view.context.getString(R.string.selected_color), ColorHex.format(rgb))
     }
 
-    private fun contrasting(color: Int) = if (ColorUtils.calculateLuminance(color) > 0.4) Color.BLACK else Color.WHITE
     private fun dp(context: Context, value: Int) = (value * context.resources.displayMetrics.density).toInt()
 
     private fun paletteError(context: Context, error: Exception) {

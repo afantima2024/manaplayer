@@ -11,6 +11,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import com.macarmusic.app.MaCarMusicApp
 import com.macarmusic.app.R
 import com.macarmusic.app.lyrics.LyricIssue
@@ -112,11 +113,11 @@ class HomeWidgets(private val app: MaCarMusicApp) {
         if (player != null) updatePlayer() else {
             val version = generation
             val saved = app.playback.read()
-            if (app.radio.options.value.let { it.enabled && it.active }) app.radioCatalog.awaitReady()
+            if (app.radio.options.value.active) app.radioCatalog.awaitReady()
             if (player == null && generation == version) {
                 state = WidgetPlayback.restored(saved, app.playbackSettings.muted.value)
                 val radio = app.radio.options.value
-                val station = if (radio.enabled && radio.active) app.radioCatalog.find(radio.stationId) else null
+                val station = if (radio.active) app.radioCatalog.find(radio.stationId) else null
                 station?.let {
                     val stations = app.radioCatalog.state.value.programs
                     val index = stations.indexOf(it)
@@ -141,12 +142,12 @@ class HomeWidgets(private val app: MaCarMusicApp) {
         }
         state = WidgetPlayback(
             track = track,
-            playing = source.playWhenReady && source.playbackState != Player.STATE_ENDED && source.playerError == null,
+            playing = !Util.shouldShowPlayButton(source, false) && source.playerError == null,
             advancing = source.isPlaying,
             positionMs = source.currentPosition.coerceAtLeast(0),
             durationMs = if (RadioProgram.isRadio(track?.id)) 0
                 else source.duration.takeIf { it > 0 } ?: track?.durationMs?.coerceAtLeast(0) ?: 0,
-            previous = track != null && if (RadioProgram.isRadio(track.id)) source.hasPreviousMediaItem()
+            previous = track != null && if (RadioProgram.isRadio(track.id)) source.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
                 else source.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS),
             next = track != null && source.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM),
             muted = app.playbackSettings.muted.value,

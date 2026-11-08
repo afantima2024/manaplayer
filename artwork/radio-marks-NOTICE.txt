@@ -1,0 +1,34 @@
+ManaMusicRadio station-mark artwork
+
+The eleven radio-program emblems (news, talk, pop, classic, piano, acoustic,
+jazz, world, ambient, folk and dance) are original artwork generated for
+this project by scripts\Generate-RadioMarks.py. Each uses an FM receiver,
+antenna and tuning dial with a distinct program symbol; these are not
+logos of actual broadcasters. Existing saved mark identifiers are retained.
+
+Button themes
+scripts\Generate-AppearanceAssets.py generates the shared day/night
+gradients. Logo gradient follows the colors of the supplied application
+mark. Copilot aurora and Copilot sunrise are original, Copilot-inspired
+color palettes on this application's own button shapes, not copies of
+the Copilot logo or a claim of endorsement.
+
+CCTV-13 logo
+Author: Chinese Central Television
+Source: https://commons.wikimedia.org/wiki/File:CCTV-13_Logo.svg
+Original SVG: https://upload.wikimedia.org/wikipedia/commons/0/06/CCTV-13_Logo.svg
+License: Creative Commons Attribution 4.0 International
+https://creativecommons.org/licenses/by/4.0/
+Adaptation: converted SVG paths to an Android vector and centered the mark
+on a light rounded tile. The broadcast mark is not modified otherwise.
+No endorsement by the broadcaster is implied; trademark rights are not
+granted by the artwork license. Attribution is also in the app's Help.
+
+Subscription snapshots
+Source: https://github.com/AlonDrilich/radio-playlists
+Worldwide Top 500, United States and Taiwan snapshots use the public-domain
+Radio Browser directory. The publishing repository uses the MIT license;
+its notice is retained in app\src\main\resources\radio\subscriptions\LICENSE.txt.
+The bundled manifest records the original URLs, refresh times and SHA-256
+hashes. These playlists contain references, not station audio or downloaded
+station images. Streams and broadcaster marks belong to their owners.

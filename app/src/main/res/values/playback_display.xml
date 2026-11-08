@@ -1,0 +1,28 @@
+<resources>
+    <string name="screen_loading">Opening %1$s…</string>
+    <string name="recovery_retry">Retry</string>
+    <string name="recovery_reselect_folder">Reselect folder</string>
+    <string name="recovery_reselect_file">Reselect file</string>
+    <string name="recovery_select_same_folder">Select “%1$s” again to restore its access. Saved songs, favorites and playlists are kept. Add a different folder from Folders instead.</string>
+    <string name="recovery_folder_ready">Folder access restored. Use Retry to resume stopped playback.</string>
+    <string name="recovery_details">Recovery details</string>
+    <string name="recovery_help">If playback or folder access fails, a recovery bar stays available after the timed popup closes. Retry is manual and bounded; reselecting a folder restores access without deleting library references or starting playback. The bar clears when the problem is resolved or its failed item is replaced.</string>
+    <string name="playback_mode_status">%1$s · %2$s</string>
+    <string name="playback_mode_switch_description">Current mode: %1$s. %2$s</string>
+    <string name="radio_switching">Switching to Radio…</string>
+    <string name="now_playing_window_title">%1$s - %2$s</string>
+    <string name="primary_control_color">Playback highlight color</string>
+    <string name="no_highlights">No highlights</string>
+    <string name="primary_control_color_none">Playback highlight color: No highlights</string>
+    <string name="primary_control_color_help">In General, choose No highlights or a color block for Play/Pause, Radio Play/Stop, the Radio/Music switch and the current station on the Radio and Playing pages, including the compact Play button. Apply saves the choice; Cancel leaves it unchanged. No highlights removes these background fills, not remote focus, the current-station indicator or separate pin styling. RGB/HEX custom colors are available; Default restores the automatic day/night theme color. Text and monochrome icons keep readable contrast; changing the color preserves colored icon themes and button positions. Both the color and No highlights choice are saved with local backups.</string>
+    <string name="keep_screen_on">Keep screen on while playing</string>
+    <string name="keep_screen_on_help">Off by default: allow the screen saver and screen timeout. Audio continues through the foreground playback service, with CPU and radio Wi-Fi wake locks only while needed. Turn this on to keep the screen awake during playback while this app or its file explorer is visible. It does not change Android settings or keep the screen on after leaving the app. A car unit that suspends Android, cuts USB or network power, kills background apps or takes audio focus can still interrupt sound; those device policies cannot be overridden safely by the player.</string>
+    <string name="notice_duration">Popup message duration</string>
+    <string name="notice_duration_seconds">%1$d seconds</string>
+    <string name="notice_duration_help">Transient in-app messages close after five seconds by default. This setting applies globally to information and error messages, including music, radio and selection/control windows. A newer message gets its own full timeout. Selection, editing, permission, progress and confirmation dialogs stay open until you finish; Android-owned messages follow Android timing.</string>
+    <string name="mini_player_transparency">Compact player background transparency</string>
+    <string name="mini_player_transparency_value">Compact player background transparency: %1$d%%</string>
+    <string name="mini_player_transparency_help">In Playback, adjust the background of the compact control panel shown outside Playing: 0% is opaque and 100% is transparent. Text, artwork and playback buttons remain fully visible and usable. Until you change this setting, the previous theme-dependent appearance is retained. The Playing screen and home-screen widget transparency are separate.</string>
+    <string name="directional_browsing">Left/right browsing shortcuts</string>
+    <string name="directional_browsing_help">On a Radio category heading, Right expands and Left collapses; the pinned heading supports the same keys. In Folders and the built-in file explorer, Right opens the focused folder and Left returns to its parent. In Library, Right opens an artist or album and Left returns to its group list. Enter still opens or plays the selected item. These shortcuts do not seek, play files or repeatedly enter folders when a key is held. Use the row options button or Menu key for other actions.</string>
+</resources>

@@ -1,6 +1,7 @@
 package com.macarmusic.app.ui
 
 import android.app.Application
+import android.os.Bundle
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -70,6 +71,8 @@ internal data class ExplorerState(
 internal class FileExplorerViewModel(application: Application, private val saved: SavedStateHandle) :
     AndroidViewModel(application) {
     private val app = application as MaCarMusicApp
+    internal val focusPositions: Bundle = saved.get<Bundle>("focusPositions")
+        ?: Bundle().also { saved["focusPositions"] = it }
     private val context = app.localizedContext
     private val documents = app.repository.documents
     private val resolver = context.contentResolver
@@ -143,7 +146,8 @@ internal class FileExplorerViewModel(application: Application, private val saved
         val request = ++generation
         val location = path.lastOrNull()
         mutableState.value = state.value.copy(path = path, items = emptyList(), loading = true,
-            error = null, canSelectFolder = false, selected = selections.map { it.uri }.toSet())
+            error = state.value.error.takeIf { state.value.path == path },
+            canSelectFolder = false, selected = selections.map { it.uri }.toSet())
         loadJob = viewModelScope.launch {
             guard {
                 val loaded = withContext(Dispatchers.IO) { load(location) }

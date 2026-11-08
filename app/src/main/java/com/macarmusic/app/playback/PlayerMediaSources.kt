@@ -37,7 +37,6 @@ class PlayerMediaSources(
     private val streams by lazy { CnrStreams() }
     override fun createMediaSource(mediaItem: MediaItem): MediaSource {
         if (RadioProgram.isRadio(mediaItem.mediaId)) {
-            if (!app.radio.options.value.enabled) throw IOException(app.text(com.macarmusic.app.R.string.radio_disabled))
             // Session callbacks create this non-parceled tag from a saved entry. Keep that snapshot
             // while constructing the queue; an import may publish a newer catalog on an IO thread.
             val station = mediaItem.localConfiguration?.tag as? RadioProgram

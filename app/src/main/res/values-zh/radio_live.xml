@@ -1,4 +1,11 @@
 <resources>
+    <string name="radio_move_pin">移动固定电台</string>
+    <string name="radio_move_pin_position">%1$d. %2$s</string>
+    <string name="radio_pin_order_changed">固定列表已改变，请重新移动该电台。</string>
+    <string name="radio_section_china">中国电台</string>
+    <string name="radio_section_international">国际电台</string>
+    <string name="radio_section_other">未分类分组</string>
+    <string name="radio_region_china">中国</string>
     <string name="radio_settings">电台设置</string>
     <string name="radio_settings_invalid">已保存的电台播放设置无效，暂用安全默认值，请检查电台设置。</string>
     <string name="radio_cri">中国国际广播电台</string>
@@ -11,8 +18,6 @@
     <string name="radio_pin_limit">%1$d 个快捷位置已满，请先取消固定一个电台。</string>
     <string name="radio_pins_empty">还没有固定电台。打开电台页，长按频道并选择“固定”。</string>
     <string name="radio_sources">播放源（%1$d）</string>
-    <string name="radio_source_count">%1$d 个源</string>
-    <string name="radio_list_station">%1$s · %2$d 个源</string>
     <string name="radio_source_item">播放源 %1$d\n%2$s</string>
     <string name="radio_source_position">播放源 %1$d/%2$d · %3$s</string>
     <string name="radio_source_previous">上一个播放源</string>
@@ -24,11 +29,11 @@
     <string name="radio_edit_group">分组（留空则识别地区）</string>
     <string name="radio_edit_sources">音频地址，每行一个（HTTP 不加密）</string>
     <string name="radio_edit_logo">台标地址（可选，留空使用内置默认地址）</string>
-    <string name="radio_station_saved">电台已保存，点击播放使用更新后的地址。</string>
+    <string name="radio_station_saved">电台已保存，当前播放源未变时继续收听，不会重新连接。</string>
     <string name="radio_import_addresses">导入前是否移除全部当前电台？</string>
     <string name="radio_import_append">保留并合并</string>
     <string name="radio_import_replace">替换全部电台</string>
-    <string name="radio_import_modes_help">保留并合并：保留全部当前电台和地址，按名称或已有 ID 匹配；相同 URL 跳过，不同 URL 加为该台的另一个播放源，新名称则新增电台。\n\n替换全部电台：移除当前列表，仅保留文件中的有效电台／播放源。未列出的电台（包括内置台）和旧地址均移除。重启及备份恢复后仍保持此选择，可通过“重置内置”恢复内置列表，仅保留仍存在的电台 ID 的固定状态。\n\n不删除原文件、本地音乐、音乐歌单或已下载台标。仅在电台列表实际改变时停止广播接收。取消不作任何修改。</string>
+    <string name="radio_import_modes_help">保留并合并：保留全部当前电台和地址，按名称或已有 ID 匹配；相同 URL 跳过，不同 URL 加为该台的另一个播放源，新名称则新增电台。\n\n替换全部电台：移除当前列表，仅保留文件中的有效电台／播放源。未列出的电台（包括内置台）和旧地址均移除。重启及备份恢复后仍保持此选择，可通过“重置内置”恢复内置列表，仅保留仍存在的电台 ID 的固定状态。\n\n不删除原文件、本地音乐、音乐歌单或已下载台标。当前播放源未变时继续收听；替换或移除当前播放源时暂停广播。取消不作任何修改。</string>
     <string name="radio_buffer">目标音频缓冲</string>
     <string name="radio_start_buffer">开始／恢复播放前缓冲</string>
     <string name="radio_seconds">%1$d 秒</string>
@@ -36,7 +41,7 @@
     <string name="radio_retries">网络请求重试次数</string>
     <string name="radio_retry_count">%1$d 次重试</string>
     <string name="radio_auto_source">失败后尝试其他播放源</string>
-    <string name="radio_retries_help">单个失败请求的重试次数有限；失效或被禁止的地址不会反复重试。自动切源默认关闭。开启后，每次主动播放最多尝试同一电台的每个地址一次，全部失败后停止，不会自动跳至其他电台。停止、关闭电台或返回音乐会取消恢复。</string>
+    <string name="radio_retries_help">单个失败请求的重试次数有限；失效或被禁止的地址不会反复重试。自动切源默认关闭。开启后，每次主动播放最多尝试同一电台的每个地址一次，全部失败后停止，不会自动跳至其他电台。停止或返回音乐会取消恢复；隐藏电台页面不会取消。</string>
     <string name="radio_download_logos">收听时下载台标</string>
     <string name="radio_clear_cache">清除全部电台台标缓存</string>
     <string name="radio_clear_cache_confirm">移除全部已下载的电台台标？不会更改电台、地址、固定状态、音乐或歌词。启用下载时，之后再次播放会重新获取台标。音频没有持久磁盘缓存。</string>
@@ -45,7 +50,7 @@
     <string name="radio_logo_cache_failed">无法读取台标缓存，请在电台设置中清除台标以便重新下载。</string>
     <string name="radio_show_status">显示接收速度和音频缓冲</string>
     <string name="radio_stream_status">接收 %1$.1f KB/s · 已缓冲 %2$.1f / %3$d 秒</string>
-    <string name="radio_status_help">播放页显示源序号及主机、近期每秒接收字节数，以及前方可播放音频的秒数。这是实际流量，不是网络测速，也不保证永不卡顿。HLS 分片按批次下载，有缓冲时显示 0 KB/s 属于正常现象。仅在播放页可见时每秒更新一次。台标仅在收听相应电台时下载，保存在磁盘中直到手动清除，并使用小型内存解码缓存。不打包台标，不因浏览电台而下载。</string>
+    <string name="radio_status_help">播放页显示源序号及主机、近期每秒接收字节数，以及前方可播放音频的秒数。这是实际流量，不是网络测速，也不保证永不卡顿。HLS 分片按批次下载，有缓冲时显示 0 KB/s 属于正常现象。仅在播放页可见时每秒更新一次。远程台标在收听时或通过“下载全部固定电台台标”下载，保存在磁盘中直到手动清除，并使用小型内存解码缓存。内置台标无需下载，浏览电台不下载台标。</string>
     <string name="radio_group_national">全国电台</string>
     <string name="radio_group_other">其他</string>
     <string name="radio_group_expanded">已展开</string>

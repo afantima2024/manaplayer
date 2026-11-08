@@ -73,7 +73,18 @@ class SpectrumView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private val foreground get() = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface)
     private val accent get() = AccentTheme.color(this, com.google.android.material.R.attr.colorPrimary)
     private val themeColors by lazy { (accent and 0xffffff).let { SpectrumColors(it, it, it) } }
-    private val logo by lazy { requireNotNull(AppCompatResources.getDrawable(context, R.drawable.ic_launcher)) }
+    private var logoResource = Branding.icon(context)
+    private var logoDrawable: android.graphics.drawable.Drawable? = null
+    private val logo get() = logoDrawable ?: requireNotNull(AppCompatResources.getDrawable(context, logoResource))
+        .also { logoDrawable = it }
+
+    fun setLogo(value: com.macarmusic.app.model.AppLogo) {
+        val resource = Branding.icon(value)
+        if (logoResource == resource) return
+        logoResource = resource
+        logoDrawable = null
+        if (options.style == SpectrumStyle.OFF) invalidate()
+    }
 
     @SuppressLint("ClickableViewAccessibility") // performClick is dispatched by onSingleTapConfirmed, not ACTION_UP.
     override fun onTouchEvent(event: MotionEvent): Boolean {

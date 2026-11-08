@@ -17,10 +17,15 @@ import kotlin.math.roundToInt
 class PlayerLayout @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : ScrollView(context, attrs) {
     private val content by lazy { getChildAt(0) as LinearLayout }
     private val cover by lazy { findViewById<View>(R.id.cover) }
+    private val lyrics by lazy { findViewById<View>(R.id.lyricsList) }
+    private val lyricsFooter by lazy { findViewById<View>(R.id.lyricsFooter) }
+    private val retryLyrics by lazy { findViewById<View>(R.id.retryLyrics) }
     private val controls by lazy { findViewById<View>(R.id.controls) }
     private val metadata by lazy { findViewById<View>(R.id.metadataRow) }
     private val gap get() = resources.getDimensionPixelSize(R.dimen.player_gap)
-    private var appliedControls: Triple<Boolean, Boolean, Boolean>? = null
+    private data class ControlsConfiguration(val compact: Boolean, val compactPortrait: Boolean, val movedControls: Int,
+        val inlineActionWidth: Int, val actionGap: Int, val iconOnly: Boolean)
+    private var appliedControls: ControlsConfiguration? = null
     var compactControls = false
         private set
 
@@ -57,7 +62,13 @@ class PlayerLayout @JvmOverloads constructor(context: Context, attrs: AttributeS
                 controlsWidth = this.width
             }
         }
-        configureCompact(height < dp(if (landscape) 420 else 760), controlsWidth)
+        val compact = height < dp(if (landscape) 420 else 760)
+        val verticalGap = if (compact && !landscape) dp(4) else gap
+        configureCompact(compact, !landscape, controlsWidth)
+        if (!landscape) (cover.layoutParams as LinearLayout.LayoutParams).apply {
+            topMargin = if (content.indexOfChild(cover) > 0) verticalGap else 0
+            bottomMargin = if (content.indexOfChild(cover) == 0) verticalGap else 0
+        }
         isFillViewport = false
         cover.layoutParams.height = 0
         controls.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -70,8 +81,21 @@ class PlayerLayout @JvmOverloads constructor(context: Context, attrs: AttributeS
         val minimumControls = controls.measuredHeight
         val coverParams = cover.layoutParams as LinearLayout.LayoutParams
         val coverHeight = if (landscape) available else {
-            minOf((available * 0.4f).roundToInt(), content.measuredWidth,
-                (available - minimumControls - gap).coerceAtLeast(dp(72)))
+            val artworkHeight = minOf((available * 0.4f).roundToInt(), content.measuredWidth,
+                (available - minimumControls - coverParams.topMargin - coverParams.bottomMargin).coerceAtLeast(dp(72)))
+            // Preserve readable content at large font sizes; the outer scroller handles short screens.
+            val fontScale = resources.configuration.fontScale.coerceAtLeast(1f)
+            val minimumArtworkHeight = when {
+                cover.findViewById<View>(R.id.radioQuickStations)?.isVisible == true ->
+                    dp(72) + cover.paddingTop + cover.paddingBottom
+                lyrics.isVisible -> {
+                    val contentWidth = (cover.measuredWidth - cover.paddingLeft - cover.paddingRight).coerceAtLeast(0)
+                    dp((48 * fontScale).roundToInt()) + cover.paddingTop + cover.paddingBottom +
+                        visibleHeight(lyricsFooter, contentWidth) + visibleHeight(retryLyrics, contentWidth)
+                }
+                else -> dp(72)
+            }
+            artworkHeight.coerceAtLeast(minimumArtworkHeight)
         }
         val controlsHeight = if (landscape) available else {
             available - coverHeight - coverParams.topMargin - coverParams.bottomMargin
@@ -90,19 +114,37 @@ class PlayerLayout @JvmOverloads constructor(context: Context, attrs: AttributeS
         content.forceLayout()
     }
 
-    private fun configureCompact(compact: Boolean, width: Int) {
-        val narrowTransport = width < dp(7 * 48) + 6 * gap
-        val actionWidth = dp(if (narrowTransport) 192 else 96) + (if (narrowTransport) 3 else 1) * gap
-        val compactFooter = compact && width >= actionWidth + gap + dp(112)
-        val configuration = Triple(compact, narrowTransport, compactFooter)
+    private fun visibleHeight(view: View, width: Int): Int {
+        if (!view.isVisible) return 0
+        view.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+        return view.measuredHeight
+    }
+
+    private fun configureCompact(compact: Boolean, portrait: Boolean, width: Int) {
+        val compactPortrait = compact && portrait
+        val verticalGap = if (compactPortrait) dp(4) else gap
+        val movedControls = if (width >= dp(5 * 48) && width < dp(7 * 48)) 2 else 0
+        val actionCount = 3 + movedControls
+        val minimumActionWidth = dp(actionCount * 48) + (actionCount - 1) * gap
+        // Include mute, value and SeekBar padding; a squeezed track can put its thumb beyond its bounds.
+        val compactFooter = compact && width >= minimumActionWidth + gap + dp(240)
+        val volumeWidth = (width * .42f).roundToInt().coerceIn(dp(240), dp(320))
+        val actionWidth = if (compactFooter) (width - gap - volumeWidth).coerceAtLeast(minimumActionWidth) else width
+        val actionGap = minOf(gap, ((actionWidth - dp(actionCount * 48)) / (actionCount - 1)).coerceAtLeast(0))
+        val compactActions = movedControls > 0 ||
+            (actionWidth - (actionCount - 1) * actionGap) / actionCount < dp((176 * resources.configuration.fontScale).roundToInt())
+        val configuration = ControlsConfiguration(compact, compactPortrait, movedControls, actionWidth.takeIf { compactFooter } ?: 0,
+            actionGap, compactActions)
         if (appliedControls == configuration) return
         appliedControls = configuration
-        compactControls = compact
+        compactControls = compactActions
         val transport = findViewById<TransportRow>(R.id.transportRow)
         transport.buttonHeightDp = if (compact) 48 else 64
         val actions = findViewById<LinearLayout>(R.id.actionRow)
-        val target = if (narrowTransport) actions else transport
         for ((id, start) in listOf(R.id.shuffle to true, R.id.repeat to false)) {
+            val move = if (start) movedControls == 2 else movedControls > 0
+            val target = if (move) actions else transport
             val button = findViewById<View>(id)
             if (button.parent !== target) {
                 (button.parent as ViewGroup).removeView(button)
@@ -112,7 +154,14 @@ class PlayerLayout @JvmOverloads constructor(context: Context, attrs: AttributeS
         }
         for (index in 0 until actions.childCount) {
             (actions.getChildAt(index).layoutParams as LinearLayout.LayoutParams).marginEnd =
-                if (index < actions.childCount - 1) gap else 0
+                if (index < actions.childCount - 1) actionGap else 0
+        }
+        for (id in intArrayOf(R.id.seekBlock, R.id.transportRow, R.id.footerRow)) {
+            (findViewById<View>(id).layoutParams as LinearLayout.LayoutParams).topMargin = verticalGap
+        }
+        for (id in intArrayOf(R.id.artist, R.id.status, R.id.radioStreamStatus, R.id.playbackOptions)) {
+            (findViewById<View>(id).layoutParams as LinearLayout.LayoutParams).topMargin =
+                if (compactPortrait) 0 else dp(4)
         }
         for (id in intArrayOf(R.id.shuffle, R.id.previous, R.id.rewind, R.id.play, R.id.forward, R.id.next, R.id.repeat)) {
             findViewById<View>(id).apply {
@@ -124,6 +173,7 @@ class PlayerLayout @JvmOverloads constructor(context: Context, attrs: AttributeS
             findViewById<TextView>(id).apply {
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
                 maxLines = lines
+                includeFontPadding = !compactPortrait
             }
         }
         text(R.id.title, if (compact) 20f else 24f, if (compact) 1 else 2)
@@ -131,6 +181,7 @@ class PlayerLayout @JvmOverloads constructor(context: Context, attrs: AttributeS
         text(R.id.album, if (compact) 12f else 14f, 1)
         text(R.id.status, if (compact) 12f else 14f, 1)
         text(R.id.playbackOptions, if (compact) 12f else 14f, if (compact) 1 else 2)
+        text(R.id.radioStreamStatus, if (compact) 12f else 14f, if (compact) 2 else 3)
         findViewById<View>(R.id.spectrum).minimumHeight = dp(if (compact) 96 else 132)
         findViewById<LinearLayout>(R.id.footerRow).orientation =
             if (compactFooter) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
@@ -140,16 +191,16 @@ class PlayerLayout @JvmOverloads constructor(context: Context, attrs: AttributeS
             if (compactFooter) 0 else ViewGroup.LayoutParams.MATCH_PARENT, dp(48), if (compactFooter) 1f else 0f,
         ).apply {
             marginStart = if (compactFooter) gap else 0
-            topMargin = if (compactFooter) 0 else gap
+            topMargin = if (compactFooter) 0 else verticalGap
         }
-        for (id in intArrayOf(R.id.favorite, R.id.details)) {
+        for (id in intArrayOf(R.id.favorite, R.id.switchPlaybackMode, R.id.details)) {
             findViewById<MaterialButton>(id).apply {
-                text = if (compact) "" else contentDescription
+                text = if (compactControls) "" else contentDescription
                 minimumWidth = dp(48)
                 gravity = android.view.Gravity.CENTER
-                iconGravity = if (compact) MaterialButton.ICON_GRAVITY_TEXT_START else MaterialButton.ICON_GRAVITY_START
-                iconPadding = if (compact) 0 else dp(8)
-                setPaddingRelative(dp(if (compact) 12 else 16), paddingTop, dp(if (compact) 12 else 16), paddingBottom)
+                iconGravity = if (compactControls) MaterialButton.ICON_GRAVITY_TEXT_START else MaterialButton.ICON_GRAVITY_START
+                iconPadding = if (compactControls) 0 else dp(8)
+                setPaddingRelative(dp(if (compactControls) 12 else 16), paddingTop, dp(if (compactControls) 12 else 16), paddingBottom)
             }
         }
     }

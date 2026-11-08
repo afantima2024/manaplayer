@@ -5,6 +5,35 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VisualOptionsTest {
+    @Test fun startupPlaybackIsOptInAndSurvivesBackupSerializationAndNormalization() {
+        val json = kotlinx.serialization.json.Json
+        assertFalse(DisplayOptions().autoPlayOnLaunch)
+        assertFalse(json.decodeFromString<DisplayOptions>("{}").autoPlayOnLaunch)
+        for (enabled in listOf(false, true)) {
+            val options = DisplayOptions(autoPlayOnLaunch = enabled, blockOutline = BlockOutline(BlockStyle.NONE))
+            val restored = json.decodeFromString<DisplayOptions>(json.encodeToString(DisplayOptions.serializer(), options))
+            assertEquals(options, restored)
+            assertEquals(enabled, restored.normalized().autoPlayOnLaunch)
+        }
+    }
+
+    @Test fun appearanceDefaultsUseTheLogoGradientAndAllNineChoicesRoundTrip() {
+        val json = kotlinx.serialization.json.Json
+        val legacy = json.decodeFromString<DisplayOptions>("{}")
+        assertEquals(AppLogo.MUSIC, legacy.appLogo)
+        assertEquals(ButtonIconStyle.LOGO, legacy.buttonIcons)
+        assertEquals(9, ButtonIconStyle.entries.size)
+        assertEquals(ButtonIconStyle.MONOCHROME,
+            json.decodeFromString<DisplayOptions>("""{"buttonIcons":"MONOCHROME"}""").buttonIcons)
+        for (logo in AppLogo.entries) for (icons in ButtonIconStyle.entries) {
+            val options = DisplayOptions(appLogo = logo, buttonIcons = icons)
+            assertEquals(options, json.decodeFromString<DisplayOptions>(
+                json.encodeToString(DisplayOptions.serializer(), options)))
+            assertEquals(logo, options.copy(blockOutline = BlockOutline(BlockStyle.NONE)).normalized().appLogo)
+            assertEquals(icons, options.copy(blockOutline = BlockOutline(BlockStyle.NONE)).normalized().buttonIcons)
+        }
+    }
+
     @Test fun optionalNavigationPagesDefaultToVisibleAndRoundTripIndependently() {
         val json = kotlinx.serialization.json.Json
         val legacy = json.decodeFromString<DisplayOptions>("{}")
@@ -23,10 +52,10 @@ class VisualOptionsTest {
         }
     }
 
-    @Test fun spectrumOriginsAndBandCountsPreserveExistingDefaultsAndRoundTrip() {
+    @Test fun spectrumOriginsAndBandCountsRoundTripWithoutMovingTheWindow() {
         val json = kotlinx.serialization.json.Json
         assertEquals(SpectrumOrigin.BOTTOM, SpectrumOptions().origin)
-        assertEquals(SpectrumPosition.RIGHT, SpectrumOptions().position)
+        assertEquals(SpectrumPosition.LEFT, SpectrumOptions().position)
         assertEquals(listOf(3, 8, 16, 32), SpectrumOptions.BAND_COUNTS)
         for (origin in SpectrumOrigin.entries) for (bands in SpectrumOptions.BAND_COUNTS) {
             val options = SpectrumOptions(origin = origin, bands = bands)
@@ -34,7 +63,7 @@ class VisualOptionsTest {
                 json.encodeToString(SpectrumOptions.serializer(), options)))
             assertEquals(origin, options.nextMode().origin)
             assertEquals(bands, options.nextMode().bands)
-            assertEquals(SpectrumPosition.RIGHT, options.nextMode().position)
+            assertEquals(SpectrumPosition.LEFT, options.nextMode().position)
         }
         assertEquals(SpectrumOrigin.BOTTOM, json.decodeFromString<SpectrumOptions>("{}").origin)
         for (bands in listOf(0, 1, 2, 4, 7, 17, 64)) {
@@ -49,7 +78,7 @@ class VisualOptionsTest {
         assertEquals(TransitionStyle.FADE, options.slideshow.transition)
         assertEquals(TransitionStyle.FADE, options.settingsTransition)
         assertEquals(PlaybackTimeMode.ELAPSED, options.timeMode)
-        assertFalse(options.spectrum.enabled)
+        assertTrue(options.spectrum.enabled)
         assertTrue(options.controlBlocks)
         assertEquals(BlockOutline(), options.blockOutline)
         assertEquals(LyricAppearance(), options.lyricAppearance)
@@ -57,12 +86,36 @@ class VisualOptionsTest {
         assertEquals(LyricSide.START, options.portraitLyrics)
         assertEquals(ThemeAccent.DEFAULT, options.themeAccent)
         assertNull(options.customAccentColor)
-        assertEquals(FireStyle.SMOOTH, options.spectrum.barStyle)
+        assertNull(options.primaryControlColor)
+        assertEquals(FireStyle.LED, options.spectrum.barStyle)
         assertEquals(NavigationPosition.BOTTOM, options.navigationPosition)
         assertEquals(FireStyle.LED, options.spectrum.fireStyle)
         assertEquals(PlaybackTimeMode.ELAPSED, options.mainTimeMode)
         assertFalse(options.lyricsDragSeek)
         assertTrue(options.lyricsSmoothScroll)
+    }
+
+    @Test fun spectrumDefaultsAreLeftEightBottomLedFireBandsAtFifteenFrames() {
+        val options = SpectrumOptions()
+        assertTrue(options.enabled)
+        assertEquals(SpectrumPosition.LEFT, options.position)
+        assertEquals(SpectrumOrigin.BOTTOM, options.origin)
+        assertEquals(SpectrumStyle.BARS, options.style)
+        assertEquals(SpectrumPalette.FIRE, options.palette)
+        assertEquals(8, options.bands)
+        assertEquals(15, options.refreshRate)
+        assertEquals(FireStyle.LED, options.rendering)
+        assertEquals(SpectrumColors(0x3dcf74, 0xfcd34d, 0xf04c44), options.colors)
+        assertEquals(options, kotlinx.serialization.json.Json.decodeFromString<SpectrumOptions>("{}"))
+        val saved = kotlinx.serialization.json.Json.decodeFromString<SpectrumOptions>(
+            """{"enabled":false,"position":"RIGHT","palette":"CLASSIC","bands":32,"refreshRate":60,"barStyle":"SMOOTH",
+                "fireColors":{"low":16768873,"middle":16750632,"high":15549737}}""")
+        assertFalse(saved.enabled)
+        assertEquals(SpectrumPosition.RIGHT, saved.position)
+        assertEquals(32, saved.bands)
+        assertEquals(60, saved.refreshRate)
+        assertEquals(FireStyle.SMOOTH, saved.rendering)
+        assertEquals(SpectrumColors(0xffdf69, 0xff9828, 0xed4529), saved.colors)
     }
 
     @Test fun customColorsAcceptExactlySixHexDigitsAndRoundTrip() {
@@ -92,12 +145,29 @@ class VisualOptionsTest {
         }
     }
 
+    @Test fun primaryControlColorDefaultsToThemeAndAcceptsOnlyRgb() {
+        val json = kotlinx.serialization.json.Json
+        assertNull(json.decodeFromString<DisplayOptions>("{}").primaryControlColor)
+        assertTrue(json.decodeFromString<DisplayOptions>("{}").primaryControlHighlightEnabled)
+        for (enabled in listOf(true, false)) for (color in listOf(null, 0, 0xffffff, 0x13579b)) {
+            val options = DisplayOptions(primaryControlColor = color, primaryControlHighlightEnabled = enabled)
+            assertEquals(options, json.decodeFromString<DisplayOptions>(json.encodeToString(DisplayOptions.serializer(), options)))
+        }
+        assertFalse(json.decodeFromString<DisplayOptions>("""{"primaryControlHighlightEnabled":false}""").primaryControlHighlightEnabled)
+        for (color in listOf(-1, 0x1000000)) {
+            assertThrows(IllegalArgumentException::class.java) { DisplayOptions(primaryControlColor = color) }
+            assertThrows(IllegalArgumentException::class.java) {
+                json.decodeFromString<DisplayOptions>("""{"primaryControlColor":$color}""")
+            }
+        }
+    }
+
     @Test fun fireBlendsContinuouslyBetweenThreeEditableAnchors() {
         val colors = SpectrumColors.FIRE
         assertEquals(20, (0 until 20).map { colors.colorAt((it + 0.5f) / 20) }.toSet().size)
-        assertEquals(0xffdf69, colors.colorAt(0f))
-        assertEquals(0xff9828, colors.colorAt(0.5f))
-        assertEquals(0xed4529, colors.colorAt(1f))
+        assertEquals(0x3dcf74, colors.colorAt(0f))
+        assertEquals(0xfcd34d, colors.colorAt(0.5f))
+        assertEquals(0xf04c44, colors.colorAt(1f))
         assertEquals(colors.low, colors.colorAt(-1f))
         assertEquals(colors.high, colors.colorAt(2f))
         val gray = SpectrumColors(0x000000, 0x808080, 0xffffff)
@@ -215,7 +285,8 @@ class VisualOptionsTest {
     @Test fun themeAndClassicBothHaveSmoothAndLedRendering() {
         for (palette in listOf(SpectrumPalette.CLASSIC, SpectrumPalette.THEME)) {
             val options = SpectrumOptions(palette = palette)
-            assertEquals(FireStyle.SMOOTH, options.rendering)
+            assertEquals(FireStyle.LED, options.rendering)
+            assertEquals(FireStyle.SMOOTH, options.withRendering(FireStyle.SMOOTH).rendering)
             assertEquals(FireStyle.LED, options.withRendering(FireStyle.LED).rendering)
             assertEquals(FireStyle.LED, options.fireStyle)
         }

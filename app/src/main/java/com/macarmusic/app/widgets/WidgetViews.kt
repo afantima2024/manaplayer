@@ -26,9 +26,39 @@ import com.macarmusic.app.model.WidgetPresentation
 import com.macarmusic.app.ui.MainActivity
 import com.macarmusic.app.ui.AccentTheme
 import com.macarmusic.app.ui.TimeText
+import com.macarmusic.app.ui.Branding
+import com.macarmusic.app.ui.PlayerIcons
+import com.macarmusic.app.model.ButtonIconStyle
 import com.macarmusic.app.radio.RadioProgram
 
 object WidgetViews {
+    private data class IconKey(val resource: Int, val pixels: Int, val enabled: Boolean, val style: ButtonIconStyle)
+    private val iconBitmaps by lazy { android.util.LruCache<IconKey, Bitmap>(12) }
+
+    private fun button(context: Context, display: DisplayOptions, views: RemoteViews, id: Int, resource: Int, enabled: Boolean = true) {
+        if (display.buttonIcons == ButtonIconStyle.MONOCHROME) {
+            views.setImageViewResource(id, resource)
+            return
+        }
+        val size = (40 * context.resources.displayMetrics.density).toInt().coerceIn(24, 128)
+        val key = IconKey(resource, size, enabled, display.buttonIcons)
+        val image = iconBitmaps[key] ?: run {
+            val configuration = Configuration(context.resources.configuration).apply {
+                uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or Configuration.UI_MODE_NIGHT_YES
+            }
+            val theme = ContextThemeWrapper(context.createConfigurationContext(configuration), R.style.Theme_ManaPlayer)
+            val drawable = PlayerIcons.drawable(theme, resource, display.buttonIcons, Color.WHITE).apply {
+                state = if (enabled) intArrayOf(android.R.attr.state_enabled) else intArrayOf(-android.R.attr.state_enabled)
+                setBounds(0, 0, size, size)
+            }
+            Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also {
+                drawable.draw(android.graphics.Canvas(it))
+                iconBitmaps.put(key, it)
+            }
+        }
+        views.setImageViewBitmap(id, image)
+    }
+
     fun full(context: Context, kind: HomeWidgetKind, id: Int, state: WidgetPlayback,
         cover: Bitmap?, lyric: CharSequence, display: DisplayOptions = DisplayOptions()): RemoteViews = RemoteViews(context.packageName, kind.layout).apply {
         setInt(R.id.widget_background, "setImageAlpha", WidgetPresentation.backgroundAlpha(display.widgetTransparency))
@@ -38,7 +68,7 @@ object WidgetViews {
             listOf(it.title, it.artist).filter(String::isNotBlank).joinToString(" - ")
         } ?: context.getString(R.string.widget_select_music))
         val radio = RadioProgram.isRadio(state.track?.id)
-        setImageViewResource(R.id.widget_play, if (state.playing && radio) R.drawable.ic_stop
+        button(context, display, this, R.id.widget_play, if (state.playing && radio) R.drawable.ic_stop
             else if (state.playing) R.drawable.ic_pause else R.drawable.ic_play)
         setContentDescription(R.id.widget_play, context.getString(if (state.playing && radio) R.string.radio_stop
             else if (state.playing) R.string.pause else R.string.play))
@@ -53,11 +83,13 @@ object WidgetViews {
         setContentDescription(R.id.widget_next, context.getString(R.string.next))
         setBoolean(R.id.widget_previous, "setEnabled", state.previous)
         setBoolean(R.id.widget_next, "setEnabled", state.next)
-        setInt(R.id.widget_previous, "setImageAlpha", if (state.previous) 255 else 90)
-        setInt(R.id.widget_next, "setImageAlpha", if (state.next) 255 else 90)
+        setInt(R.id.widget_previous, "setImageAlpha", if (state.previous || display.buttonIcons != ButtonIconStyle.MONOCHROME) 255 else 90)
+        setInt(R.id.widget_next, "setImageAlpha", if (state.next || display.buttonIcons != ButtonIconStyle.MONOCHROME) 255 else 90)
+        button(context, display, this, R.id.widget_previous, R.drawable.ic_previous, state.previous)
+        button(context, display, this, R.id.widget_next, R.drawable.ic_next, state.next)
         setOnClickPendingIntent(R.id.widget_previous, action(context, kind, id, HomeWidgetAction.PREVIOUS))
         setOnClickPendingIntent(R.id.widget_next, action(context, kind, id, HomeWidgetAction.NEXT))
-        setImageViewResource(R.id.widget_mute, if (state.muted) R.drawable.ic_volume_off else R.drawable.ic_volume_on)
+        button(context, display, this, R.id.widget_mute, if (state.muted) R.drawable.ic_volume_off else R.drawable.ic_volume_on)
         setContentDescription(R.id.widget_mute, context.getString(if (state.muted) R.string.unmute_player else R.string.mute_player))
         setOnClickPendingIntent(R.id.widget_mute, action(context, kind, id, HomeWidgetAction.MUTE))
         setOnClickPendingIntent(R.id.widget_progress, open)
@@ -65,7 +97,7 @@ object WidgetViews {
         if (kind == HomeWidgetKind.ARTWORK) {
             setViewVisibility(R.id.widget_artwork, View.VISIBLE)
             if (cover != null) setImageViewBitmap(R.id.widget_artwork, cover)
-            else setImageViewResource(R.id.widget_artwork, if (radio) R.drawable.ic_radio else R.drawable.ic_launcher)
+            else setImageViewResource(R.id.widget_artwork, if (radio) Branding.radio(context) else Branding.icon(display.appLogo))
         }
         if (kind == HomeWidgetKind.LYRICS) {
             setOnClickPendingIntent(R.id.widget_lyric, open)
@@ -145,6 +177,7 @@ object WidgetViews {
 
     private fun openPlayer(context: Context): PendingIntent = PendingIntent.getActivity(context, 100,
         Intent(context, MainActivity::class.java).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_MUSIC)
+            .putExtra(com.macarmusic.app.playback.StartupPlayback.OPEN_PLAYER_ONLY, true)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 

@@ -1,0 +1,70 @@
+<resources>
+    <item type="id" name="radioSubscriptionRows" />
+    <item type="id" name="radioSubscriptionProgress" />
+    <item type="id" name="radioSubscriptionName" />
+    <item type="id" name="radioSubscriptionUrl" />
+    <string name="radio_subscriptions">Radio subscriptions</string>
+    <string name="radio_subscription_intro">Startup uses saved lists. Choose manual or periodic updates in Settings > Radio > Subscription refresh. Close this window to keep using the app during an update.</string>
+    <string name="radio_refresh_interval">Subscription refresh</string>
+    <string name="radio_refresh_manual">Manual</string>
+    <string name="radio_refresh_monthly">Monthly (30 days)</string>
+    <string name="radio_refresh_weekly">Weekly (7 days)</string>
+    <string name="radio_refresh_daily">Daily (24 hours)</string>
+    <string name="radio_refresh_help">Manual by default. Automatic updates wait until the player is ready and you have used the app in the foreground for at least one minute. Never during startup, at boot or in the background. Only overdue, enabled lists are downloaded. Failed or cancelled automatic attempts wait for the next interval; Update still works anytime. Playback connection and buffering are separate.</string>
+    <string name="radio_subscription_help"><b><big>Managing subscriptions</big></b>\nAdd trusted radio-only TXT/M3U playlist URLs. Each subscription keeps a separate last-good list. Enable, disable, edit, remove or update one list independently. Matching names or stream URLs share a station; different addresses become playing sources. Local stations are not deleted by subscription updates.\n\n<b><big>Manual or periodic updates</big></b>\nManual is the default. Add and update, Update and Update all remain available anytime, one download at a time. Settings > Radio > Subscription refresh also offers Monthly (30 days), Weekly (7 days) and Daily (24 hours). Automatic updates wait until the player is ready and the app has stayed in the foreground for at least one minute. They never run during startup, at boot or while the app is in the background. Only overdue, enabled lists are downloaded; failures and cancelled attempts wait for the next interval rather than retrying on each launch. Backgrounding the app or choosing Manual cancels an automatic update; last-good caches are retained.\n\n<b><big>Playback stays independent</big></b>\nYou can close the subscription window and keep using the app. Updates do not test every stream or download logos. A current broadcast keeps its connection even if removed from a refreshed list; select a station again to use new addresses. Starting playback still needs a stream connection and buffering; CNR also obtains an expiring playback URL. These are not subscription-list refreshes.\n\n<b><big>Subscription limits and trusted sources</big></b>\nUp to 10 subscriptions, 1 MiB per download and 5,000 cached source entries in total. HTTP lists and audio are unencrypted. Only use publishers you trust; availability and regional restrictions vary.</string>
+    <string name="radio_subscription_empty">No subscriptions yet. Choose a preset or add your own playlist URL.</string>
+    <string name="radio_subscription_add">Add subscription</string>
+    <string name="radio_subscription_presets">Choose preset</string>
+    <string name="radio_subscription_preset_added">%1$s (Added)</string>
+    <string name="radio_subscription_preset_disabled">%1$s (Added, disabled)</string>
+    <string name="radio_subscription_custom">Custom playlist URL</string>
+    <string name="radio_subscription_name">Subscription name</string>
+    <string name="radio_subscription_url">Direct TXT / M3U playlist URL</string>
+    <string name="radio_subscription_add_update">Add and update</string>
+    <string name="radio_subscription_edit">Edit subscription</string>
+    <string name="radio_subscription_edit_help">Changing the URL keeps the last-good list until Update succeeds. This form does not change individual station addresses. Use a playlist URL, not an HLS audio manifest or a webpage. The Hacks Tools FM page address is converted to its published download URL.</string>
+    <string name="radio_subscription_bad_name">Enter a name of 1 to 80 characters without line breaks.</string>
+    <string name="radio_subscription_update">Update</string>
+    <string name="radio_subscription_update_all">Update all</string>
+    <string name="radio_subscription_cancel">Cancel update</string>
+    <string name="radio_subscription_cancelling">Cancelling the download...</string>
+    <string name="radio_subscription_cancelled">Update cancelled. Completed updates and previous cached lists are kept.</string>
+    <string name="radio_subscription_enable">Enable cached list</string>
+    <string name="radio_subscription_disable">Disable cached list</string>
+    <string name="radio_subscription_enabled">Enabled</string>
+    <string name="radio_subscription_disabled">Disabled</string>
+    <string name="radio_subscription_remove">Remove subscription</string>
+    <string name="radio_subscription_remove_confirm">Remove %1$s and its cached list? Manual stations, other subscriptions and the current broadcast are kept. Channels supplied only by this list disappear from selection.</string>
+    <string name="radio_subscription_saved">Subscription saved. Cached lists are used without a startup download.</string>
+    <string name="radio_subscription_removed">Subscription removed. Other station sources are kept.</string>
+    <string name="radio_subscription_changed">This subscription changed while the operation was running. Open it again and retry.</string>
+    <string name="radio_subscription_duplicate">This playlist URL is already subscribed. Edit or update the existing subscription.</string>
+    <string name="radio_subscription_limit">Up to 10 subscriptions are supported. Remove one before adding another.</string>
+    <string name="radio_subscription_none_enabled">No enabled subscriptions to update. Add or enable a list first.</string>
+    <string name="radio_subscription_summary">%1$s\n%2$s - %3$d stations / %4$d sources\nChecked: %5$s\n%6$s</string>
+    <string name="radio_subscription_never">Not updated yet</string>
+    <string name="radio_subscription_updated">List updated: %1$s</string>
+    <string name="radio_subscription_failed">Update failed; last-good list kept. %1$s</string>
+    <string name="radio_subscription_progress">Updating %1$s (%2$d / %3$d)</string>
+    <string name="radio_subscription_done">Subscriptions: %1$d updated, %2$d unchanged, %3$d failed. Unavailable entries: %4$d. Details are in Radio subscriptions.</string>
+    <string name="radio_subscription_unavailable">%1$d entries have blank addresses or unsupported stream protocols and are not selectable.</string>
+    <string name="radio_subscription_ignored_logos">%1$d invalid logo addresses ignored; station audio is kept.</string>
+    <string name="radio_subscription_network_error">Network connection failed or timed out. Try Update again.</string>
+    <string name="radio_subscription_http_error">The playlist server returned HTTP %1$d.</string>
+    <string name="radio_subscription_invalid_list">The download is empty, invalid UTF-8, incomplete, a webpage or an HLS manifest, rather than a valid station list.</string>
+    <string name="radio_subscription_cache_limit">The download or combined catalog exceeds the limits: 1 MiB per download, 5,000 cached subscription sources, 5,000 visible stations and 32 sources per station. No partial list is applied.</string>
+    <string name="radio_subscription_insecure">An HTTPS playlist redirected to an insecure address. The update was rejected.</string>
+    <string name="radio_subscription_china">China - Fanmingming radio</string>
+    <string name="radio_subscription_china_help">Fanmingming public radio-only M3U, including CNR and regional stations. Blank addresses and unsupported protocols such as RTMP are reported and omitted. Invalid logos are ignored without dropping valid audio. Some old URLs may not play. No station audio or logos are downloaded when adding this list.</string>
+    <string name="radio_subscription_us">United States - 72FM / Radio Browser</string>
+    <string name="radio_subscription_hongkong">Hong Kong - 72FM / Radio Browser</string>
+    <string name="radio_subscription_taiwan">Taiwan - 72FM / Radio Browser</string>
+    <string name="radio_subscription_uk">United Kingdom - 72FM / Radio Browser</string>
+    <string name="radio_subscription_directory_help">72FM publishes a weekly playlist of up to 300 community-voted stations from Radio Browser public-domain directory data. These are third-party lists, not broadcaster endorsements. Some streams may be unavailable in your region.</string>
+    <string name="radio_subscription_world">Worldwide top 500 - 72FM / Radio Browser</string>
+    <string name="radio_subscription_world_help">A weekly top-500 playlist ranked by Radio Browser community votes, with country groups. This overlaps the US and UK lists; matching stations and addresses are combined rather than duplicated.</string>
+    <string name="radio_subscription_cctv">CCTV television audio</string>
+    <string name="radio_subscription_cctv_help">CCTV-1–17, CCTV-5+ and CCTV-4 Europe/Americas audio feeds from the community-maintained Kimentanm / aptv list. This preset keeps only CCTV audio CDN addresses and places them under CCTV Television. Other entries and remote logos are excluded. These are television soundtracks, not separate FM stations. No video, background refresh or startup stream checks. Availability and broadcast rights vary by region.</string>
+    <string name="radio_subscription_import_replace">Replace all also disables subscriptions, keeping their URLs and caches so they can be enabled again explicitly. Otherwise a subscription could immediately put removed channels back.</string>
+    <string name="radio_subscription_retired_station">This station is no longer in the enabled lists. Its current broadcast continues until you stop it or choose another station.</string>
+</resources>

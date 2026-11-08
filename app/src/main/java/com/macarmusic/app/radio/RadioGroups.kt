@@ -2,13 +2,32 @@ package com.macarmusic.app.radio
 
 import android.content.Context
 import androidx.annotation.StringRes
+import androidx.core.os.ConfigurationCompat
 import com.macarmusic.app.R
+import java.util.Locale
 
-data class RadioGroup(val id: String, @StringRes val label: Int = 0, val imported: String = "") {
-    fun title(context: Context): String = if (label != 0) context.getString(label) else imported
+enum class RadioSection(@StringRes val label: Int) {
+    CHINA(R.string.radio_section_china),
+    INTERNATIONAL(R.string.radio_section_international),
+    OTHER(R.string.radio_section_other),
+}
+
+data class RadioGroup(val id: String, @StringRes val label: Int = 0, val imported: String = "",
+    val section: RadioSection = RadioSection.OTHER, val order: Int = 0, val countryCode: String = "") {
+    fun title(context: Context): String = when {
+        label != 0 -> context.getString(label)
+        countryCode.isNotEmpty() -> Locale("", countryCode).getDisplayCountry(
+            ConfigurationCompat.getLocales(context.resources.configuration)[0] ?: Locale.getDefault())
+        else -> imported
+    }
+
+    companion object {
+        fun validId(value: String) = value.isNotBlank() && value.length <= 272 && value.none(Char::isISOControl)
+    }
 }
 
 object RadioGroups {
+    const val CCTV_TELEVISION = "CCTV Television"
     private data class Region(val id: String, val label: Int, val names: List<String>)
     private fun region(id: String, label: Int, names: String) = Region(id, label, names.split('|') + id)
     private val regions = listOf(
@@ -48,19 +67,109 @@ object RadioGroups {
         region("taiwan", R.string.radio_region_taiwan, "台湾|台灣|台北|臺北|高雄|台中|臺中|中广|中廣|ICRT"),
         region("singapore", R.string.radio_region_singapore, "新加坡|Capital958|Class95|CNA938"),
         region("united states", R.string.radio_region_usa, "美国|美國|KEXP|SomaFM|MSNBC|NPR News|KVSP|Power FM"),
-        region("united kingdom", R.string.radio_region_uk, "英国|英國|BBC World Service|Classic FM|LBC|Times Radio"),
+        region("united kingdom", R.string.radio_region_uk, "英国|英國|BBC|Classic FM|LBC|Times Radio"),
     )
     private val nationalNames = listOf("CNR", "CRI ", "China Plus Radio", "EasyFM", "HitFM", "NEWSPlus",
         "华语环球", "世界华声", "南海之声", "轻松调频")
     private val singaporeNames = setOf("capital fm", "class fm", "gold fm", "hao fm")
-    val national = RadioGroup("national", R.string.radio_group_national)
+    val national = RadioGroup("national", R.string.radio_group_national, section = RadioSection.CHINA)
+    val cctvTelevision = RadioGroup("cctv television", R.string.radio_group_cctv_television,
+        section = RadioSection.CHINA, order = 1)
+    private val china = RadioGroup("china", R.string.radio_region_china, section = RadioSection.CHINA, order = 2)
     val other = RadioGroup("other", R.string.radio_group_other)
+    private val regionGroups = regions.mapIndexed { index, region ->
+        val international = region.id in setOf("singapore", "united states", "united kingdom")
+        RadioGroup(region.id, region.label,
+            section = if (international) RadioSection.INTERNATIONAL else RadioSection.CHINA,
+            order = if (international) when (region.id) { "united states" -> 0; "united kingdom" -> 1; else -> 2 }
+                else index + 3)
+    }.associateBy { it.id }
+    private val importedRegions by lazy {
+        buildMap {
+            for (region in regions) {
+                val group = regionGroups.getValue(region.id)
+                region.names.forEach { put(RadioList.key(it), group) }
+            }
+            putAliases("CN|China|中国|中國|中国大陆|中國大陸", china)
+            putAliases("CNR|CRI|National|National stations|全国|全国电台|中央电台|央广", national)
+            putAliases("CCTV|CCTV Television|CCTV 电视|CCTV 電視|央视电视|央視電視|央视电视伴音|央視電視伴音", cctvTelevision)
+            putAliases("US|USA|United States of America", regionGroups.getValue("united states"))
+            putAliases("UK|GB|Great Britain", regionGroups.getValue("united kingdom"))
+            putAliases("HK|Hong Kong SAR China|香港特别行政区", regionGroups.getValue("hong kong"))
+            putAliases("TW|Taiwan (Province of China)", regionGroups.getValue("taiwan"))
+            putAliases("MO|Macau SAR China|Macao SAR China", regionGroups.getValue("macao"))
+        }
+    }
+    private fun MutableMap<String, RadioGroup>.putAliases(names: String, group: RadioGroup) {
+        // Avoid large constant reference arrays: Android 6 x86 AOT miscompiles their write barrier after R8 lambda merging.
+        names.split('|').forEach { put(RadioList.key(it), group) }
+    }
+    private val countries by lazy {
+        buildMap {
+            for (code in Locale.getISOCountries()) {
+                val locale = Locale("", code)
+                val group = when (code) {
+                    "CN" -> china
+                    "HK" -> regionGroups.getValue("hong kong")
+                    "MO" -> regionGroups.getValue("macao")
+                    "TW" -> regionGroups.getValue("taiwan")
+                    "US" -> regionGroups.getValue("united states")
+                    "GB" -> regionGroups.getValue("united kingdom")
+                    "SG" -> regionGroups.getValue("singapore")
+                    else -> RadioGroup("country:${code.lowercase(Locale.ROOT)}", countryCode = code,
+                        section = RadioSection.INTERNATIONAL, order = 2)
+                }
+                for (language in listOf(Locale.ENGLISH, Locale.SIMPLIFIED_CHINESE, Locale.TRADITIONAL_CHINESE))
+                    put(RadioList.key(locale.getDisplayCountry(language)), group)
+            }
+        }
+    }
+    val order = compareBy<RadioGroup>({ it.section.ordinal }, { it.order }, { it.id })
+
+    val defaultVisibleIds = setOf("united states", "united kingdom", "singapore", "national", "cctv television", "china",
+        "beijing", "sichuan", "taiwan", "hong kong", "macao", "guangdong")
+
+    fun defaultHiddenGroups(stations: List<RadioProgram>): Set<String> =
+        (regionGroups.keys + countries.values.map { it.id } + stations.map { of(it).id } + other.id)
+            .toSet() - defaultVisibleIds
+
+    fun grouped(stations: List<RadioProgram>): List<Map.Entry<RadioGroup, List<RadioProgram>>> =
+        stations.groupBy(::of).entries.sortedWith { a, b -> order.compare(a.key, b.key) }
+
+    fun named(id: String): RadioGroup = when (id) {
+        national.id -> national
+        cctvTelevision.id -> cctvTelevision
+        china.id -> china
+        other.id -> other
+        else -> regionGroups[id] ?: if (id.startsWith("country:") && id.substringAfter(':').uppercase(Locale.ROOT) in Locale.getISOCountries())
+            RadioGroup(id, countryCode = id.substringAfter(':').uppercase(Locale.ROOT),
+                section = RadioSection.INTERNATIONAL, order = 2)
+        else RadioGroup(id, imported = id.removePrefix("import:"))
+    }
+
+    private fun regionOf(name: String) = regions.firstOrNull {
+        it.names.any { alias -> name.contains(alias, ignoreCase = true) }
+    }
+
+    private fun isCctv(station: RadioProgram) =
+        station.id == RadioDefaults.CCTV_ID || station.sources.any(RadioSubscriptions::isCctvAudio)
+
     fun of(station: RadioProgram): RadioGroup {
-        if (station.group.isNotBlank()) return RadioGroup("import:${RadioList.key(station.group)}", imported = station.group)
+        if (station.group.isNotBlank()) {
+            val key = RadioList.key(station.group)
+            importedRegions[key]?.let {
+                // Older cached CCTV feeds used National; regroup without rewriting station IDs or user caches.
+                return if ((it == national || it == china) && isCctv(station)) cctvTelevision else it
+            }
+            countries[key]?.let { return it }
+            val region = regionOf(key)?.let { regionGroups.getValue(it.id) }
+            return RadioGroup("import:$key", imported = station.group,
+                section = region?.section ?: RadioSection.OTHER, order = 100)
+        }
         val name = RadioList.key(station.name)
+        if (station.id == RadioDefaults.CCTV_ID || station.builtin == null && isCctv(station)) return cctvTelevision
         if (station.builtin != null || nationalNames.any { name.contains(it, ignoreCase = true) }) return national
-        if (name in singaporeNames) return RadioGroup("singapore", R.string.radio_region_singapore)
-        val region = regions.firstOrNull { it.names.any { alias -> name.contains(alias, ignoreCase = true) } }
-        return region?.let { RadioGroup(it.id, it.label) } ?: other
+        if (name in singaporeNames) return regionGroups.getValue("singapore")
+        return regionOf(name)?.let { regionGroups.getValue(it.id) } ?: other
     }
 }

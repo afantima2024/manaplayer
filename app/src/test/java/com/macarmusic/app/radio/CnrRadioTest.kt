@@ -28,16 +28,18 @@ class CnrRadioTest {
         }
     }
 
-    @Test fun stationLogosAreRemoteReferencesAndNeverBundled() {
+    @Test fun originalCnrAndCriLogosRemainRemoteReferencesAlongsideTheNewCctvMark() {
         val sources = File("src/main/assets/cnr-logo-sources.txt").readText()
-        assertEquals(17, RadioDefaults.stations.map { it.logoUri }.toSet().size)
-        for (station in RadioDefaults.stations) {
+        val remote = RadioDefaults.stations.filter { it.logoUri.isNotEmpty() }
+        assertEquals(17, remote.map { it.logoUri }.toSet().size)
+        for (station in remote) {
             assertFalse(File("src/main/res/drawable-nodpi/radio_cnr_${station.code}.webp").exists())
             assertTrue(sources.contains(station.logoUri))
             assertEquals(station.logoUri, station.program.imageUri)
         }
-        assertEquals(8, RadioDefaults.pins.size)
-        assertEquals(8, RadioDefaults.pins.distinct().size)
+        assertEquals(9, RadioDefaults.pins.size)
+        assertEquals(9, RadioDefaults.pins.distinct().size)
+        assertEquals(RadioDefaults.CCTV_ID, RadioDefaults.pins.first())
         assertTrue(RadioDefaults.pins.all { RadioDefaults.find(it) != null })
         assertEquals("https://sk.cri.cn/905.m3u8", RadioDefaults.find(RadioDefaults.CRI_ID)?.uri)
     }

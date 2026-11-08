@@ -19,9 +19,18 @@ data class RadioListEntry(
     val clearGroup: Boolean = false, val clearLogo: Boolean = false,
 )
 enum class RadioImportMode { APPEND, REPLACE, REPLACE_ALL }
-data class RadioCatalogSnapshot(val programs: List<RadioProgram>, val includeDefaults: Boolean = true)
+data class RadioCatalogSnapshot(
+    val programs: List<RadioProgram>,
+    val includeDefaults: Boolean = true,
+    val subscriptions: List<RadioSubscription> = emptyList(),
+    val sourceSelections: Map<String, String> = emptyMap(),
+    val removedDefaults: Set<String> = emptySet(),
+    val bundledRevision: Int = 0,
+    val initializeBundledSettings: Boolean = false,
+)
 data class RadioListIssue(val line: Int, val message: Int)
-data class ParsedRadioList(val entries: List<RadioListEntry>, val issues: List<RadioListIssue>, val invalid: Int)
+data class ParsedRadioList(val entries: List<RadioListEntry>, val issues: List<RadioListIssue>, val invalid: Int,
+    val unavailableStations: Int = 0, val ignoredLogos: Int = 0)
 class RadioListException(val messageId: Int) : IOException("Invalid radio list ($messageId)")
 data class RadioListMerge(
     val programs: List<RadioProgram>, val added: Int, val updated: Int, val unchanged: Int, val duplicates: Int,
@@ -32,16 +41,26 @@ object RadioList {
     const val MAX_BYTES = 1024 * 1024
     const val MAX_PROGRAMS = 5000
     const val MAX_SOURCES = 32
-    private const val MAX_SAVED_BYTES = 4 * MAX_BYTES
+    private const val MAX_SAVED_BYTES = 8 * MAX_BYTES
     private val json = Json { encodeDefaults = true }
     private val attributes = Regex("""([a-zA-Z][\w-]*)\s*=\s*"((?:\\.|[^"\\])*)"""")
     private val escapedAttribute = Regex("""\\(["\\])""")
+    private val whitespace = Regex("\\s+")
+    private val unsupportedProtocols = setOf("rtmp", "rtmps", "rtsp", "rtsps", "mms", "mmsh", "udp", "srt")
 
     @Serializable private data class Saved(
-        val version: Int = 3, val programs: List<RadioProgram>, val includeDefaults: Boolean = true,
+        val version: Int = 6, val programs: List<RadioProgram>, val includeDefaults: Boolean = true,
+        val subscriptions: List<RadioSubscription> = emptyList(),
+        val sourceSelections: Map<String, String> = emptyMap(),
+        val removedDefaults: Set<String> = emptySet(),
+        val bundledRevision: Int = 0,
+        val initializeBundledSettings: Boolean = false,
     )
 
-    fun parse(input: InputStream, checkCancelled: () -> Unit = {}): ParsedRadioList {
+    fun parse(input: InputStream, subscription: Boolean = false, checkCancelled: () -> Unit = {}): ParsedRadioList =
+        parseText(readText(input, checkCancelled), subscription, checkCancelled)
+
+    internal fun readText(input: InputStream, checkCancelled: () -> Unit): String {
         val bytes = ByteArrayOutputStream()
         val buffer = ByteArray(8192)
         while (true) {
@@ -55,15 +74,18 @@ object RadioList {
             Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes.toByteArray())).toString()
         } catch (_: CharacterCodingException) { throw RadioListException(R.string.radio_list_encoding) }
-        return parseText(text.removePrefix("\uFEFF"), checkCancelled)
+        return text.removePrefix("\uFEFF")
     }
 
-    private fun parseText(text: String, checkCancelled: () -> Unit): ParsedRadioList {
+    internal fun parseText(text: String, subscription: Boolean, checkCancelled: () -> Unit): ParsedRadioList {
         val entries = mutableListOf<RadioListEntry>()
         val issues = mutableListOf<RadioListIssue>()
         var invalid = 0
+        var unavailable = 0
+        var ignoredLogos = 0
         var pending: RadioListEntry? = null
         var pendingLine = 0
+        var pendingBlank = false
         var extended = false
         var textGroup = ""
         fun issue(line: Int, message: Int) {
@@ -71,32 +93,53 @@ object RadioList {
             if (issues.size < 20) issues.add(RadioListIssue(line, message))
         }
         fun add(entry: RadioListEntry, line: Int) {
-            val uri = RadioAddress.canonical(entry.uri)
+            if (subscription && entry.uri.substringBefore("://").lowercase(Locale.ROOT) in
+                unsupportedProtocols && "://" in entry.uri) {
+                unavailable++
+                if (entries.size + unavailable > MAX_PROGRAMS) throw RadioListException(R.string.radio_list_too_many)
+                return
+            }
+            // URL fragments are client-side labels, never part of an HTTP audio request.
+            val stream = if (subscription) entry.uri.substringBefore('#') else entry.uri
+            val uri = RadioAddress.canonical(stream)?.takeIf {
+                entry.uri.length <= 8192 && entry.uri.none(Char::isISOControl)
+            }
             val name = entry.name.trim()
             val id = entry.id?.trim()?.takeIf(String::isNotEmpty)
+            val invalidLogo = entry.logoUri.isNotEmpty() && RadioAddress.parse(entry.logoUri) == null
             val problem = when {
                 !validText(name, 256) || !validText(entry.group, 256, empty = true) -> R.string.radio_list_bad_name
                 uri == null -> R.string.radio_list_bad_url
-                entry.logoUri.isNotEmpty() && RadioAddress.parse(entry.logoUri) == null -> R.string.radio_list_bad_url
+                invalidLogo && !subscription -> R.string.radio_list_bad_url
                 id != null && (!validText(id, 256) || id.startsWith("radio:") && !RadioProgram.validId(id)) ->
                     R.string.radio_list_bad_id
                 else -> null
             }
             if (problem != null) issue(line, problem) else {
-                entries.add(entry.copy(name = name, uri = checkNotNull(uri), id = id, group = entry.group.trim()))
-                if (entries.size > MAX_PROGRAMS) throw RadioListException(R.string.radio_list_too_many)
+                if (invalidLogo) ignoredLogos++
+                entries.add(entry.copy(name = name, uri = checkNotNull(uri), id = id, group = entry.group.trim(),
+                    logoUri = if (invalidLogo) "" else entry.logoUri))
+                if (entries.size + unavailable > MAX_PROGRAMS) throw RadioListException(R.string.radio_list_too_many)
             }
         }
         for ((index, raw) in text.lineSequence().withIndex()) {
             checkCancelled()
             val lineNumber = index + 1
             val line = raw.trim()
-            if (line.isEmpty()) continue
+            if (line.isEmpty()) { if (pending != null) pendingBlank = true; continue }
             if (line.startsWith("#EXT-X-", true)) throw RadioListException(R.string.radio_list_hls_manifest)
             if (line.equals("#EXTM3U", true)) { extended = true; continue }
             if (line.startsWith("#EXTINF:", true)) {
                 extended = true
-                if (pending != null) issue(pendingLine, R.string.radio_list_missing_url)
+                if (pending != null) {
+                    // Some feeds publish explicit blank placeholders between complete entries.
+                    // A final unfinished entry still fails below, protecting a truncated download.
+                    if (subscription && pendingBlank) {
+                        unavailable++
+                        if (entries.size + unavailable > MAX_PROGRAMS) throw RadioListException(R.string.radio_list_too_many)
+                    } else issue(pendingLine, R.string.radio_list_missing_url)
+                }
+                pendingBlank = false
                 val comma = separator(line)
                 if (comma < 0) {
                     pending = null
@@ -137,7 +180,11 @@ object RadioList {
             }
         }
         if (pending != null) issue(pendingLine, R.string.radio_list_missing_url)
-        return ParsedRadioList(entries, issues, invalid)
+        return ParsedRadioList(entries, issues, invalid, unavailable, ignoredLogos)
+    }
+
+    internal fun entryTitle(line: String): String? = separator(line).takeIf { it >= 0 }?.let {
+        line.substring(it + 1).trim()
     }
 
     private fun separator(line: String): Int {
@@ -153,7 +200,7 @@ object RadioList {
     }
 
     fun key(value: String): String = Normalizer.normalize(value.trim(), Normalizer.Form.NFKC)
-        .lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
+        .lowercase(Locale.ROOT).replace(whitespace, " ")
 
     fun merge(current: List<RadioProgram>, entries: List<RadioListEntry>, aliases: Map<String, String>,
         mode: RadioImportMode = RadioImportMode.REPLACE,
@@ -225,9 +272,10 @@ object RadioList {
         return output.toByteArray()
     }
 
-    fun catalog(saved: List<RadioProgram>, defaults: List<RadioProgram> = RadioDefaults.corePrograms): List<RadioProgram> {
+    fun catalog(saved: List<RadioProgram>, defaults: List<RadioProgram> = RadioDefaults.corePrograms,
+        removedDefaults: Set<String> = emptySet()): List<RadioProgram> {
         val overrides = saved.associateByTo(linkedMapOf()) { it.id }
-        return defaults.map { overrides.remove(it.id) ?: it } + overrides.values
+        return defaults.filterNot { it.id in removedDefaults }.map { overrides.remove(it.id) ?: it } + overrides.values
     }
 
     fun resetBuiltins(saved: List<RadioProgram>, defaults: List<RadioProgram> = RadioDefaults.corePrograms): List<RadioProgram> {
@@ -247,9 +295,18 @@ object RadioList {
         }
     }
 
-    fun encode(programs: List<RadioProgram>, includeDefaults: Boolean = true): String {
+    fun encode(programs: List<RadioProgram>, includeDefaults: Boolean = true,
+        subscriptions: List<RadioSubscription> = emptyList(), sourceSelections: Map<String, String> = emptyMap(),
+        removedDefaults: Set<String> = emptySet(), bundledRevision: Int = 0,
+        initializeBundledSettings: Boolean = false): String {
         validate(programs)
-        return json.encodeToString(Saved(programs = programs, includeDefaults = includeDefaults)).also {
+        RadioSubscriptions.validate(subscriptions, sourceSelections)
+        require(bundledRevision in 0..RadioBundledDefaults.REVISION) { "Invalid bundled subscription revision" }
+        require(!initializeBundledSettings || bundledRevision > 0) { "Bundled settings require an installed catalog" }
+        require(removedDefaults.size <= MAX_PROGRAMS && removedDefaults.all(RadioProgram::validId)) { "Invalid removed station IDs" }
+        return json.encodeToString(Saved(programs = programs, includeDefaults = includeDefaults,
+            subscriptions = subscriptions, sourceSelections = sourceSelections, removedDefaults = removedDefaults,
+            bundledRevision = bundledRevision, initializeBundledSettings = initializeBundledSettings)).also {
             require(it.toByteArray(Charsets.UTF_8).size <= MAX_SAVED_BYTES) { "Saved radio list is too large" }
         }
     }
@@ -257,9 +314,19 @@ object RadioList {
     fun decode(value: String): RadioCatalogSnapshot {
         require(value.toByteArray(Charsets.UTF_8).size <= MAX_SAVED_BYTES) { "Saved radio list is too large" }
         val saved = json.decodeFromString<Saved>(value)
-        require(saved.version in 1..3) { "Unsupported radio list version" }
+        require(saved.version in 1..6 && saved.bundledRevision in 0..RadioBundledDefaults.REVISION) {
+            "Unsupported radio list version"
+        }
+        require(!saved.initializeBundledSettings || saved.bundledRevision > 0) {
+            "Bundled settings require an installed catalog"
+        }
         validate(saved.programs)
-        return RadioCatalogSnapshot(saved.programs, saved.includeDefaults)
+        RadioSubscriptions.validate(saved.subscriptions, saved.sourceSelections)
+        require(saved.removedDefaults.size <= MAX_PROGRAMS && saved.removedDefaults.all(RadioProgram::validId)) {
+            "Invalid removed station IDs"
+        }
+        return RadioCatalogSnapshot(saved.programs, saved.includeDefaults, saved.subscriptions, saved.sourceSelections,
+            saved.removedDefaults, saved.bundledRevision, saved.initializeBundledSettings)
     }
 
     private fun validText(value: String, max: Int, empty: Boolean = false): Boolean =

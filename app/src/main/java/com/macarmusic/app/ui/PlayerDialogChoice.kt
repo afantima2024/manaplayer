@@ -45,10 +45,9 @@ internal class PlayerDialogChoice @JvmOverloads constructor(context: Context, pr
     override fun setChecked(value: Boolean) {
         if (checked == value) return
         checked = value
-        isSelected = value
         surface.color = if (value) AccentTheme.color(this, com.google.android.material.R.attr.colorPrimaryContainer)
             else android.graphics.Color.TRANSPARENT
-        mark?.invalidateSelf()
+        mark?.updateContrast()
         refreshDrawableState()
     }
 
@@ -59,8 +58,13 @@ internal class PlayerDialogChoice @JvmOverloads constructor(context: Context, pr
     }
 
     private inner class ChoiceMark : Drawable() {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = primary }
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = playerIndicatorColor() }
         private val tick = Path().apply { moveTo(6f, 12f); lineTo(10f, 16f); lineTo(18f, 8f) }
+        fun updateContrast() {
+            paint.color = playerIndicatorColor(if (checked) surface.color
+                else AccentTheme.color(this@PlayerDialogChoice, com.google.android.material.R.attr.colorSurface))
+            invalidateSelf()
+        }
         override fun getIntrinsicWidth() = (24 * density + 0.5f).toInt()
         override fun getIntrinsicHeight() = intrinsicWidth
         override fun draw(canvas: Canvas) {

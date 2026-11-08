@@ -16,13 +16,11 @@
                 android:padding="2dp" android:scaleType="centerCrop" android:visibility="gone"
                 android:tint="#88000000" android:tintMode="src_atop" tools:ignore="UseAppTint"
                 android:importantForAccessibility="no" android:contentDescription="@null" />
-            <!-- RemoteViews uses framework tinting, not AppCompat attributes. -->
             <ImageButton
                 android:id="@+id/widget_play"
                 android:layout_width="match_parent" android:layout_height="match_parent"
                 android:background="@drawable/widget_button" android:padding="6dp"
-                android:src="@drawable/ic_play" android:scaleType="centerInside" android:tint="#FF80E5D0"
-                tools:ignore="UseAppTint"
+                android:src="@drawable/ic_play" android:scaleType="centerInside"
                 android:contentDescription="@string/play" />
         </FrameLayout>
         <ImageButton

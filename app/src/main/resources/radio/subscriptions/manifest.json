@@ -1,0 +1,26 @@
+[
+  {
+    "key": "world",
+    "url": "https://raw.githubusercontent.com/AlonDrilich/radio-playlists/main/top/top-500.m3u",
+    "checkedAtMs": 1793627492998,
+    "sha256": "c58ee54f158a648144d2955dbab7160ccf30fbaeb2c70705ba3285062a21c31a"
+  },
+  {
+    "key": "us",
+    "url": "https://raw.githubusercontent.com/AlonDrilich/radio-playlists/main/countries/us.m3u",
+    "checkedAtMs": 1793627493626,
+    "sha256": "da2271e3d7e3a9ba048cb5a4b9a20c452d941527630bd1d915a0d794e1f84dc4"
+  },
+  {
+    "key": "tw",
+    "url": "https://raw.githubusercontent.com/AlonDrilich/radio-playlists/main/countries/tw.m3u",
+    "checkedAtMs": 1793627494186,
+    "sha256": "6540cbc284eaf63cd2c86db7a324a5f265731d273bc095dc949d0e52a451da0e"
+  },
+  {
+    "key": "cctv",
+    "url": "https://raw.githubusercontent.com/Kimentanm/aptv/master/m3u/radio.m3u",
+    "checkedAtMs": 1793688035295,
+    "sha256": "334b93aa6ca86a3713163f0239f967c508fedd5087e974583e22951064e85a7f"
+  }
+]

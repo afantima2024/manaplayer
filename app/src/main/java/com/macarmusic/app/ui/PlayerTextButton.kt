@@ -12,6 +12,7 @@ class PlayerTextButton @JvmOverloads constructor(
     style: Int = com.google.android.material.R.attr.materialButtonStyle,
 ) : MaterialButton(context, attrs, style) {
     private val balance = ColorDrawable(Color.TRANSPARENT)
+    private val labelIconPadding = iconPadding
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         balanceIcon()
@@ -29,8 +30,13 @@ class PlayerTextButton @JvmOverloads constructor(
         val drawables = compoundDrawablesRelative
         if (!labeled) {
             if (drawables[2] === balance) setCompoundDrawablesRelative(drawables[0], null, null, null)
+            if (leading != null) {
+                if (iconGravity != ICON_GRAVITY_TEXT_START) iconGravity = ICON_GRAVITY_TEXT_START
+                if (iconPadding != 0) iconPadding = 0
+            }
             return
         }
+        if (iconPadding != labelIconPadding) iconPadding = labelIconPadding
         if (iconGravity != ICON_GRAVITY_START) iconGravity = ICON_GRAVITY_START
         val size = (iconSize.takeIf { it > 0 } ?: requireNotNull(leading).intrinsicWidth).coerceAtLeast(0)
         val resized = balance.bounds.width() != size

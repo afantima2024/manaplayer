@@ -147,13 +147,14 @@ internal class OnlineLyricsDialog(
             row.gravity = Gravity.CENTER_VERTICAL
             row.addView(choose, LinearLayout.LayoutParams(0, -2, 1f))
             row.addView(source, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(4) })
-            AccentTheme.tintControls(row)
+            AccentTheme.tintControls(row, readableOnSurface = true)
             styler = BlockButtonStyler(row)
         }
 
         fun bind(position: Int) {
             val search = checkNotNull(state)
             val candidate = search.candidates[position]
+            row.setTag(R.id.playerFocusKey, adapter.focusKey(position))
             val title = listOf(candidate.title, candidate.artist).filter(String::isNotBlank).joinToString(" - ")
             choose.text = context.getString(R.string.setting_value, title, context.getString(R.string.lyrics_provider_duration,
                 candidate.durationMs.takeIf { it > 0 }?.let(TimeText::format) ?: context.getString(R.string.lyrics_time_unknown)))
@@ -167,7 +168,8 @@ internal class OnlineLyricsDialog(
         }
     }
 
-    private inner class MatchesAdapter : RecyclerView.Adapter<Holder>() {
+    private inner class MatchesAdapter : RecyclerView.Adapter<Holder>(), PlayerFocusItems {
+        override fun focusKey(position: Int) = checkNotNull(state).candidates[position].key.let { "online:${it.route}:${it.id}" }
         private val ids = mutableMapOf<LyricCandidateId, Long>()
         init { setHasStableIds(true) }
         override fun getItemId(position: Int) = ids.getOrPut(checkNotNull(state).candidates[position].key) { ids.size.toLong() }
